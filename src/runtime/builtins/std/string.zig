@@ -25,6 +25,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "to_int", Binding{ .native = &strToInt } },
     .{ "to_float", Binding{ .native = &strToFloat } },
     .{ "find", Binding{ .native = &strFind } },
+    .{ "find_reverse", Binding{ .native = &strFindReverse } },
+    .{ "compare", Binding{ .native = &strCompare } },
     .{ "contains", Binding{ .native = &strContains } },
     .{ "starts_with", Binding{ .native = &strStartsWith } },
     .{ "ends_with", Binding{ .native = &strEndsWith } },
@@ -32,6 +34,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "byte_at", Binding{ .native = &strByteAt } },
     .{ "char_at", Binding{ .native = &strCharAt } },
     .{ "trim", Binding{ .native = &strTrim } },
+    .{ "trim_start", Binding{ .native = &strTrimStart } },
+    .{ "trim_end", Binding{ .native = &strTrimEnd } },
     .{ "split", Binding{ .native = &strSplit } },
     .{ "replace", Binding{ .native = &strReplace } },
     .{ "upper", Binding{ .native = &strUpper } },
@@ -39,6 +43,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "slice", Binding{ .native = &strSlice } },
     .{ "repeat", Binding{ .native = &strRepeat } },
     .{ "from_bytes", Binding{ .native = &stringFrom } },
+    .{ "from_codepoint", Binding{ .native = &strFromCodepoint } },
 });
 
 fn stringFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -46,6 +51,21 @@ fn stringFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (!std.unicode.utf8ValidateSlice(text)) return fail(StringError.InvalidUtf8);
     const result = try vm.allocString(text.len);
     @memcpy(result.mutableSlice(), bytesArg(args, 0));
+    return stringResult(result);
+}
+
+fn strFromCodepoint(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const codepoint = args[0].int64;
+    const is_invalid_scalar = codepoint < 0 or codepoint > 0x10FFFF or (codepoint >= 0xD800 and codepoint <= 0xDFFF);
+    if (is_invalid_scalar) {
+        return fail(StringError.InvalidUtf8);
+    }
+    var encoded: [4]u8 = undefined;
+    const len = std.unicode.utf8Encode(@intCast(codepoint), &encoded) catch {
+        return fail(StringError.InvalidUtf8);
+    };
+    const result = try vm.allocString(len);
+    @memcpy(result.mutableSlice(), encoded[0..len]);
     return stringResult(result);
 }
 
@@ -103,10 +123,44 @@ fn strToFloat(_: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn strFind(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
     const needle = bytesArg(args, 1);
-    if (needle.len == 0) return ok(v.NULL_VALUE);
-    const index = std.mem.indexOf(u8, bytesArg(args, 0), needle) orelse return ok(v.NULL_VALUE);
+    const start = args[2].int64;
+    const has_no_search_range = needle.len == 0 or start < 0 or start >= text.len;
+    if (has_no_search_range) {
+        return ok(v.NULL_VALUE);
+    }
+    const index = std.mem.indexOfPos(u8, text, @intCast(start), needle) orelse return ok(v.NULL_VALUE);
     return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
+}
+
+fn strFindReverse(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const needle = bytesArg(args, 1);
+    const has_no_search_range = needle.len == 0 or needle.len > text.len;
+    if (has_no_search_range) {
+        return ok(v.NULL_VALUE);
+    }
+    var start = text.len - needle.len;
+    if (args[2].int64 != 0) {
+        const requested_start = v.HeapValue.getParentPtr(v.NullBox, args[2].heap_obj).value.int64;
+        if (requested_start < 0) {
+            return ok(v.NULL_VALUE);
+        }
+        start = @min(start, @as(usize, @intCast(requested_start)));
+    }
+    const search_end = start + needle.len;
+    const index = std.mem.lastIndexOf(u8, text[0..search_end], needle) orelse return ok(v.NULL_VALUE);
+    return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
+}
+
+fn strCompare(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const order = std.mem.order(u8, bytesArg(args, 0), bytesArg(args, 1));
+    return ok(.{ .int64 = switch (order) {
+        .lt => -1,
+        .eq => 0,
+        .gt => 1,
+    } });
 }
 
 fn strContains(_: *VM, args: []v.Value) anyerror!NativeResult {
@@ -130,17 +184,23 @@ fn strCount(_: *VM, args: []v.Value) anyerror!NativeResult {
     return ok(.{ .int64 = @intCast(std.mem.count(u8, bytesArg(args, 0), needle)) });
 }
 
-fn strByteAt(_: *VM, args: []v.Value) anyerror!NativeResult {
+fn strByteAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const text = bytesArg(args, 0);
     const index = args[1].int64;
-    if (index < 0 or index >= text.len) return fail(StringError.OutOfRange);
-    return ok(.{ .int64 = text[@intCast(index)] });
+    const is_out_of_range = index < 0 or index >= text.len;
+    if (is_out_of_range) {
+        return ok(v.NULL_VALUE);
+    }
+    const byte = text[@intCast(index)];
+    return ok(try vm.allocNullBox(.{ .int64 = byte }, .int64));
 }
 
 fn strCharAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const text = bytesArg(args, 0);
     const wanted = args[1].int64;
-    if (wanted < 0) return fail(StringError.OutOfRange);
+    if (wanted < 0) {
+        return ok(v.NULL_VALUE);
+    }
     var characters = Pieces{ .text = text, .separator = "" };
     var position: i64 = 0;
     while (characters.next()) |character| : (position += 1) {
@@ -150,22 +210,41 @@ fn strCharAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
         @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..character.len]);
         return stringResult(result);
     }
-    return fail(StringError.OutOfRange);
+    return ok(v.NULL_VALUE);
 }
 
 fn strTrim(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return copyTrimmedString(vm, args, .both);
+}
+
+fn copyTrimmedString(vm: *VM, args: []v.Value, comptime side: enum { both, start, end }) !NativeResult {
     const text = bytesArg(args, 0);
-    const trimmed = std.mem.trim(u8, text, ascii_whitespace);
+    const trimmed = switch (side) {
+        .both => std.mem.trim(u8, text, ascii_whitespace),
+        .start => std.mem.trimStart(u8, text, ascii_whitespace),
+        .end => std.mem.trimEnd(u8, text, ascii_whitespace),
+    };
     const start = @intFromPtr(trimmed.ptr) - @intFromPtr(text.ptr);
-    const result = try vm.allocString(trimmed.len);
-    @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..trimmed.len]);
+    const len = trimmed.len;
+    const result = try vm.allocString(len);
+    @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..len]);
     return stringResult(result);
+}
+
+fn strTrimStart(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return copyTrimmedString(vm, args, .start);
+}
+
+fn strTrimEnd(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return copyTrimmedString(vm, args, .end);
 }
 
 fn strSplit(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var piece_count: usize = 0;
     var total: usize = 0;
-    var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+    const limit = args[2].int64;
+    const remaining: ?usize = if (limit < 0) null else @intCast(limit);
+    var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1), .remaining = remaining };
     while (pieces.next()) |piece| {
         piece_count += 1;
         total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(piece.len));
@@ -177,7 +256,7 @@ fn strSplit(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const allocator = vm.getCurrentHeapAllocator();
     const array = try v.Array.init(allocator, .string, capacity);
     vm.increaseHeapAllocationCount(v.Array.calc_size(capacity));
-    pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+    pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1), .remaining = remaining };
     while (pieces.next()) |piece| {
         const bytes = try v.Bytes.init(allocator, piece, .string);
         vm.increaseHeapAllocationCount(v.Bytes.calc_size(piece.len));
@@ -191,7 +270,8 @@ fn strReplace(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const old = bytesArg(args, 1);
     if (old.len == 0) return ok(args[0]);
     const matches = std.mem.count(u8, text, old);
-    const total = text.len - matches * old.len + matches * bytesArg(args, 2).len;
+    const added = std.math.mul(usize, matches, bytesArg(args, 2).len) catch return error.OutOfMemory;
+    const total = std.math.add(usize, text.len - matches * old.len, added) catch return error.OutOfMemory;
     const result = try vm.allocString(total);
     _ = std.mem.replace(u8, bytesArg(args, 0), bytesArg(args, 1), bytesArg(args, 2), result.mutableSlice());
     return stringResult(result);
@@ -232,8 +312,8 @@ fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn joinParts(parts_value: *v.Value) []const v.Value {
-    parts_value.heap_obj = parts_value.heap_obj.followRelocated();
-    const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj);
+    const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj).newestCopy();
+    parts_value.heap_obj = &array.obj;
     return array.getDataPtr()[0..array.len];
 }
 
@@ -279,14 +359,26 @@ const Pieces = struct {
     text: []const u8,
     separator: []const u8,
     index: ?usize = 0,
+    remaining: ?usize = null,
 
     fn next(self: *Pieces) ?[]const u8 {
         const start = self.index orelse return null;
-        if (self.separator.len == 0) {
-            if (start >= self.text.len) {
-                self.index = null;
+        if (self.remaining) |remaining| {
+            if (remaining == 0) {
                 return null;
             }
+            self.remaining = remaining - 1;
+        }
+        const is_empty_character_split = self.separator.len == 0 and start >= self.text.len;
+        if (is_empty_character_split) {
+            self.index = null;
+            return null;
+        }
+        if (self.remaining == 0) {
+            self.index = null;
+            return self.text[start..];
+        }
+        if (self.separator.len == 0) {
             var end = start + 1;
             while (!isCharBoundary(self.text, end)) end += 1;
             self.index = end;

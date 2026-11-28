@@ -1,0 +1,20 @@
+import "std/io"
+
+struct Point
+    x: int
+    y: int
+end
+
+func main() -> void
+    io::println("hello")
+    io::print("no ")
+    io::print("newline")
+    io::println("")
+    let name = "Dusk"
+    io::println(name)
+    let numbers = [1, 2, 3]
+    let maybe: ?int = null
+    io::println("${42} ${1.5} ${true} ${numbers} ${maybe} ${Point(x = 1, y = 2)}")
+    io::eprintln("this goes to stderr")
+    io::eprint("so does this")
+end

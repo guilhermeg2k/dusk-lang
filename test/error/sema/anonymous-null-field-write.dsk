@@ -1,0 +1,4 @@
+func main() -> void
+    let mut p = @(a = null)
+    p.a = 5
+end

@@ -34,9 +34,10 @@ pub const TypeTable = struct {
                     .boolean => .{ .boolean = {} },
                     .void => .{ .void = {} },
                     .null => .{ .null = {} },
-                    .dynamic => .{ .dynamic = {} },
+                    .unknown => .{ .unknown = {} },
                     .meta => .{ .meta = {} },
                     .cell => .{ .cell = {} },
+                    .resource => .{ .resource = {} },
                 },
                 .is_nullable = false,
             });
@@ -77,7 +78,13 @@ pub const TypeTable = struct {
         const type_from = self.getTypePtrById(from);
         const type_to = self.getTypePtrById(to);
 
-        if (type_from.kind == .dynamic or type_to.kind == .dynamic) return true;
+        if (type_to.kind == .unknown) {
+            return type_to.is_nullable and (type_from.kind == .null or type_from.kind == .unknown);
+        }
+        if (type_from.kind == .unknown) {
+            const holds_only_null = type_from.is_nullable;
+            return !holds_only_null or type_to.is_nullable;
+        }
         if (type_from.is_nullable and !type_to.is_nullable) return false;
         if (type_from.kind == .byte and type_to.kind == .int and type_from.is_nullable == type_to.is_nullable) return true;
 
@@ -100,23 +107,97 @@ pub const TypeTable = struct {
         }
 
         if (type_from.kind == .@"struct" and type_to.kind == .@"struct") {
-            const from_s = type_from.kind.@"struct";
-            const to_s = type_to.kind.@"struct";
-            const from_is_anon = std.mem.eql(u8, from_s.identifier, "@");
-            const to_is_anon = std.mem.eql(u8, to_s.identifier, "@");
-
-            if (from_is_anon and !to_is_anon) {
-                for (to_s.fields_in_order) |field| {
-                    if (from_s.fields.get(field.identifier) == null) return false;
-                }
-                return true;
-            }
+            return self.canReuseAnonymousStructAs(type_from.kind.@"struct", type_to.kind.@"struct");
         }
 
         //note: wrong?
         if (type_from.kind == .function and type_to.kind == .function) return false;
 
         return false;
+    }
+
+    pub fn isAnonymousStructForNamedStruct(self: *Self, from: TypeId, to: TypeId) bool {
+        const kind_from = self.getTypePtrById(from).kind;
+        const kind_to = self.getTypePtrById(to).kind;
+        if (kind_from != .@"struct" or kind_to != .@"struct") {
+            return false;
+        }
+        const from_is_anonymous = std.mem.eql(u8, kind_from.@"struct".identifier, "@");
+        const to_is_anonymous = std.mem.eql(u8, kind_to.@"struct".identifier, "@");
+        return from_is_anonymous and !to_is_anonymous;
+    }
+
+    pub fn fieldNameList(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
+        var names: std.ArrayList(u8) = .empty;
+        for (self.getTypePtrById(id).kind.@"struct".fields_in_order, 0..) |field, i| {
+            if (i > 0) {
+                try names.appendSlice(allocator, ", ");
+            }
+            try names.appendSlice(allocator, field.identifier);
+        }
+        return names.toOwnedSlice(allocator);
+    }
+
+    fn canReuseAnonymousStructAs(self: *Self, from: Struct, to: Struct) bool {
+        const from_is_anonymous = std.mem.eql(u8, from.identifier, "@");
+        const to_is_anonymous = std.mem.eql(u8, to.identifier, "@");
+        if (!from_is_anonymous or to_is_anonymous) {
+            return false;
+        }
+        if (from.fields_in_order.len != to.fields_in_order.len) {
+            return false;
+        }
+        for (from.fields_in_order, to.fields_in_order) |from_field, to_field| {
+            if (!std.mem.eql(u8, from_field.identifier, to_field.identifier)) {
+                return false;
+            }
+            if (!self.isSameFieldLayout(from_field.type_id, to_field.type_id)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    fn isSameFieldLayout(self: *Self, from: TypeId, to: TypeId) bool {
+        if (from == to) {
+            return true;
+        }
+        const type_from = self.getTypePtrById(from);
+        const type_to = self.getTypePtrById(to);
+        if (!type_from.is_nullable or !type_to.is_nullable) {
+            return false;
+        }
+        if (type_from.kind == .unknown) {
+            return true;
+        }
+        const inner_from = self.typeIdByNullableTypeId.get(from) orelse return false;
+        const inner_to = self.typeIdByNullableTypeId.get(to) orelse return false;
+        const kind_from = self.getTypePtrById(inner_from).kind;
+        const kind_to = self.getTypePtrById(inner_to).kind;
+        if (kind_from != .@"struct" or kind_to != .@"struct") {
+            return false;
+        }
+        return self.canReuseAnonymousStructAs(kind_from.@"struct", kind_to.@"struct");
+    }
+
+    pub fn containsUnknownType(self: *Self, id: TypeId) bool {
+        const type_ptr = self.getTypePtrById(id);
+        return switch (type_ptr.kind) {
+            .unknown => true,
+            .array => |item| self.containsUnknownType(item),
+            .@"struct" => |structure| {
+                if (!std.mem.eql(u8, structure.identifier, "@")) {
+                    return false;
+                }
+                for (structure.fields_in_order) |field| {
+                    if (self.containsUnknownType(field.type_id)) {
+                        return true;
+                    }
+                }
+                return false;
+            },
+            else => false,
+        };
     }
 
     pub fn syntaxName(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
@@ -136,9 +217,10 @@ pub const TypeTable = struct {
             .boolean => "bool",
             .void => "void",
             .null => "null",
-            .dynamic => "dynamic",
+            .unknown => "unknown",
             .meta => "meta",
             .cell => "cell",
+            .resource => "resource",
             .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
             .map => |m| std.fmt.allocPrint(allocator, "map[{s}, {s}]", .{ try self.syntaxName(m.key, allocator), try self.syntaxName(m.value, allocator) }),
             .function => |f| f.identifier,
@@ -165,9 +247,10 @@ pub const TypeTable = struct {
             .boolean => if (t.is_nullable) "nullable boolean" else "boolean",
             .void => if (t.is_nullable) "nullable void" else "void",
             .null => if (t.is_nullable) "nullable null" else "null",
-            .dynamic => if (t.is_nullable) "nullable dynamic" else "dynamic",
+            .unknown => if (t.is_nullable) "null" else "unknown",
             .meta => "Meta Symbol",
             .cell => "cell",
+            .resource => if (t.is_nullable) "nullable resource" else "resource",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
             },
@@ -259,6 +342,11 @@ pub const TypeTable = struct {
     pub fn addType(self: *Self, typ: Type) !TypeId {
         try self.types.append(self.allocator, typ);
         return @intCast(self.types.items.len - 1);
+    }
+
+    pub fn syncNullableCopy(self: *Self, type_id: TypeId) void {
+        const nullable_id = self.nullableTypeIdByTypeId.get(type_id) orelse return;
+        self.getTypePtrById(nullable_id).kind = self.getTypePtrById(type_id).kind;
     }
 
     pub fn getOrAddNullable(self: *Self, typeId: TypeId) !TypeId {
@@ -398,9 +486,10 @@ pub const PrimitiveType = enum {
     boolean,
     void,
     null,
-    dynamic,
+    unknown,
     meta,
     cell,
+    resource,
 };
 
 pub const Struct = struct {
@@ -521,10 +610,11 @@ pub const Type = struct {
         boolean,
         void,
         null,
-        dynamic,
+        unknown,
 
         meta,
         cell,
+        resource,
 
         function: Func,
         func_type: FuncType,

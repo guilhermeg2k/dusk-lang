@@ -1,9 +1,10 @@
-import std/string
+import "std/string"
+import "std/io"
 
 func main() -> void
     let mut text = ""
     for 0..199999: i do
         text = string::concat(text, "ab")
     end
-    echo(string::len(text))
+    io::println("${string::len(text)}")
 end

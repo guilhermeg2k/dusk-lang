@@ -1,0 +1,112 @@
+import "std/buffer"
+import "std/http"
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/task"
+import "std/url"
+
+func main() -> !void
+    let base = try url::parse("https://example.com/a/b")
+    assert((try url::resolve(base, "https://other.com/x/../y")).to_string() == "https://other.com/y")
+    assert((try url::resolve(base, "//cdn.example.com/p/q/../r")).to_string() == "https://cdn.example.com/p/r")
+
+    let mut server = try http::listen("127.0.0.1", 0)
+    let port = server.port()
+    let serve_task = spawn(func() -> void
+        server.serve(func(req: http::Request) -> http::HttpError!http::Response
+            if req.path == "/bad-reason" then
+                let mut r = http::text("ok")
+                r.reason = "OK\r\nX-Injected: evil"
+                return r
+            end
+            if req.path == "/empty-loc" then
+                let mut r = http::status(302)
+                r.headers.set("Location", "")
+                return r
+            end
+            if req.path == "/etag" then
+                let mut r = http::text(string::repeat("hello world ", 200) catch "")
+                r.headers.set("ETag", "\"abc123\"")
+                return r
+            end
+            if req.path == "/stream-head" then
+                return http::stream(func(mut out: http::BodyWriter) -> io::IoError!void
+                    try out.write("streamed body")
+                end, content_type = http::ContentType.TEXT)
+            end
+            return http::text("ok:${req.path}")
+        end)
+    end)
+
+    let resp_bad = try http::request("http://127.0.0.1:$port/bad-reason")
+    assert(resp_bad.status == 500)
+    assert(!resp_bad.headers.has("x-injected"))
+
+    let mut opened_empty = try http::open("http://127.0.0.1:$port/empty-loc")
+    assert(opened_empty.status == 302)
+    opened_empty.close()
+    opened_empty.close()
+
+    let mut s1 = try http::open("http://127.0.0.1:$port/hello")
+    assert((try s1.read_all()) == "ok:/hello")
+    s1.close()
+    s1.close()
+    let after_close = s1.read_bytes(4) catch null
+    assert(after_close == null)
+
+    let client_zero = http::Client(max_connections_per_host = 0)
+    let resp_zero = try client_zero.request("http://127.0.0.1:$port/zero")
+    assert(resp_zero.status == 200 and (try resp_zero.text()) == "ok:/zero")
+
+    let resp_etag = try http::request("http://127.0.0.1:$port/etag")
+    assert(resp_etag.status == 200)
+    assert((resp_etag.headers.get("etag") orelse "") == "W/\"abc123\"")
+
+    let mut raw = try net::tcp_connect("127.0.0.1", port)
+    defer raw.close()
+    try raw.write("HEAD /stream-head HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    let head1 = try raw.read_line()
+    assert(head1 == "HTTP/1.1 200 OK")
+    for true do
+        let line = try raw.read_line()
+        if line == null or line == "" then
+            break
+        end
+    end
+    try raw.write("GET /after-head HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    let head2 = try raw.read_line()
+    assert(head2 == "HTTP/1.1 200 OK")
+
+    let mut raw_nul = try net::tcp_connect("127.0.0.1", port)
+    defer raw_nul.close()
+    try raw_nul.write("GET /a%00b HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+    let nul_status = try raw_nul.read_line()
+    assert(nul_status == "HTTP/1.1 400 Bad Request")
+
+    let mut raw_no_host = try net::tcp_connect("127.0.0.1", port)
+    defer raw_no_host.close()
+    try raw_no_host.write("GET / HTTP/1.1\r\nConnection: close\r\n\r\n")
+    let no_host_status = try raw_no_host.read_line()
+    assert(no_host_status == "HTTP/1.1 400 Bad Request")
+
+    let mut raw_ae = try net::tcp_connect("127.0.0.1", port)
+    defer raw_ae.close()
+    try raw_ae.write("GET /etag HTTP/1.1\r\nHost: localhost\r\nAccept-Encoding: *\r\nAccept-Encoding: gzip;q=0\r\nConnection: close\r\n\r\n")
+    let mut saw_gzip = false
+    for true do
+        let line = try raw_ae.read_line()
+        if line == null or line == "" then
+            break
+        end
+        if line: text then
+            if string::lower(text) == "content-encoding: gzip" then
+                saw_gzip = true
+            end
+        end
+    end
+    assert(!saw_gzip)
+
+    server.close()
+    await(serve_task)
+end

@@ -1,3 +1,5 @@
+import "std/io"
+
 error Failure
     Bad
 end
@@ -22,20 +24,20 @@ func integer() -> int
 end
 
 func main() -> !void
-    echo(try template(5))
-    echo(template(-1) catch "fallback")
-    echo("caught=${number(-1) catch 8}")
-    echo(early(true))
-    echo(early(false))
+    io::println("${try template(5)}")
+    io::println("${template(-1) catch "fallback"}")
+    io::println("caught=${number(-1) catch 8}")
+    io::println("${early(true)}")
+    io::println("${early(false)}")
     assert(integer() == 9)
     let mut visits = 0
     for 1..4: i do
         let text = "${if i == 2 then continue else i end}"
         visits = visits + 1
-        echo(text)
+        io::println("${text}")
     end
     assert(visits == 3)
-    echo("${when 3
+    io::println("${when 3
         1 then "one" end
         else then "other" end
     end}")

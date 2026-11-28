@@ -1,5 +1,6 @@
-import @/util
+import "@/util"
+import "std/io"
 
 func main() -> void
-    echo(util::divide(1, 0))
+    io::println("${util::divide(1, 0)}")
 end

@@ -1,0 +1,5 @@
+import "std/time"
+
+func main() -> void
+    let value = time::monotonic_ns(1)
+end

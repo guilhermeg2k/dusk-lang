@@ -1,10 +1,12 @@
+import "std/io"
+
 struct Point2D
     x: int
     y: int
 end
 
 func print_point(point: Point2D) -> void
-    echo(point)
+    io::println("${point}")
 end
 
 func main() -> void

@@ -1,7 +1,9 @@
+import "std/io"
+
 func first[T](items: []T) -> T
     return items[0]
 end
 func main() -> void
     let f: func([]int) -> int = first
-    echo(f)
+    io::println("${f}")
 end

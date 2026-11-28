@@ -1,3 +1,5 @@
+import "std/io"
+
 func main() -> void
-    let value = if true then echo(1) else 2 end
+    let value = if true then io::println("${1}") else 2 end
 end

@@ -6,6 +6,7 @@ pub const RuntimeError = error{
     ByteOutOfRange,
     IndexOutOfBounds,
     NegativeBufferSize,
+    InvalidReadSize,
     UnhandledError,
     CallDepthExceeded,
     DivisionByZero,
@@ -15,11 +16,16 @@ pub const RuntimeError = error{
     AssertionFailed,
     TaskAwaitsItself,
     AllTasksWaiting,
-    NegativeSleep,
     UnhandledTaskError,
+    OutputFailed,
+    ClockOutOfRange,
+    TlsAlreadyStarted,
+    HttpInvalidCompressionLevel,
 };
 
 pub const RuntimeErrorReporter = struct {
+    pub var stdout_to_flush_first: ?*std.Io.Writer = null;
+
     pub noinline fn arrayOutOfBounds(index: i64, len: usize) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.ArrayOutOfBounds, "index {d} is out of bounds for array of length {d}", .{ index, len });
@@ -28,6 +34,21 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn indexOutOfBounds(index: i64, len: usize) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.IndexOutOfBounds, "index {d} is out of bounds for length {d}", .{ index, len });
+    }
+
+    pub noinline fn tlsAlreadyStarted() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.TlsAlreadyStarted, "start_tls or accept_tls on a connection that already uses TLS", .{});
+    }
+
+    pub noinline fn httpInvalidCompressionLevel(level: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.HttpInvalidCompressionLevel, "http server compression_level must be from 0 to 9: {d}", .{level});
+    }
+
+    pub noinline fn invalidReadSize(max: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.InvalidReadSize, "read size must be at least 1: {d}", .{max});
     }
 
     pub noinline fn negativeBufferSize(len: i64) RuntimeError {
@@ -85,11 +106,6 @@ pub const RuntimeErrorReporter = struct {
         return report(RuntimeError.AllTasksWaiting, "all tasks are waiting: nothing can wake them up", .{});
     }
 
-    pub noinline fn negativeSleep(ms: i64) RuntimeError {
-        @branchHint(.cold);
-        return report(RuntimeError.NegativeSleep, "sleep time can't be negative: {d}", .{ms});
-    }
-
     pub noinline fn unhandledTaskError(error_name: []const u8) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.UnhandledTaskError, "unhandled error in task: {s}", .{error_name});
@@ -116,6 +132,16 @@ pub const RuntimeErrorReporter = struct {
         }
     }
 
+    pub noinline fn cantWriteOutput(stream_name: []const u8, failure: anyerror) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.OutputFailed, "can't write to {s}: {s}", .{ stream_name, @errorName(failure) });
+    }
+
+    pub noinline fn clockOutOfRange(clock_name: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.ClockOutOfRange, "{s} clock reading doesn't fit in int", .{clock_name});
+    }
+
     fn report(err: RuntimeError, comptime fmt: []const u8, args: anytype) RuntimeError {
         print("error: " ++ fmt ++ "\n", args);
         return err;
@@ -123,6 +149,9 @@ pub const RuntimeErrorReporter = struct {
 
     fn print(comptime fmt: []const u8, args: anytype) void {
         if (@import("builtin").is_test) return;
+        if (stdout_to_flush_first) |stdout| {
+            stdout.flush() catch {};
+        }
         std.debug.print(fmt, args);
     }
 };

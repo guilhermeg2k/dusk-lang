@@ -1,0 +1,6 @@
+import "std/array"
+
+func main() -> void
+    let mut numbers = [2, 1]
+    array::sort_by(numbers, func(a, b) -> return a - b)
+end

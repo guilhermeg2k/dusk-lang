@@ -1,4 +1,5 @@
-import std/array: append
+import "std/array": append
+import "std/io"
 
 let LIMIT: int = 100000
 
@@ -34,5 +35,5 @@ func main() -> void
         k = k + 1
     end
 
-    echo(count)
+    io::println("${count}")
 end

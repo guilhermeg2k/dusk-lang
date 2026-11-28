@@ -1,0 +1,256 @@
+import "std/array": append, len
+import "std/string"
+
+error Oops
+    Bad
+    Worse
+end
+
+struct Log
+    lines: []string = []
+
+    func add(mut self: @, line: string) -> void
+        append(self.lines, line)
+    end
+
+    func text(self: @) -> string
+        return string::join(self.lines, sep = ",")
+    end
+end
+
+struct Box
+    value: int = 0
+end
+
+func order(mut log: Log) -> void
+    log.add("start")
+    defer log.add("first declared")
+    defer log.add("second declared")
+    if true then
+        defer log.add("inner block")
+        log.add("in block")
+    end
+    log.add("after block")
+end
+
+func returned_before_cleanup(mut box: Box) -> int
+    box.value = 1
+    defer box.value = 100
+    return box.value
+end
+
+func read_at_exit(mut log: Log) -> void
+    let mut step = "starting"
+    defer log.add("stopped at $step")
+    step = "loading"
+    step = "saving"
+end
+
+func maybe(should_fail: bool) -> Oops!int
+    if should_fail then
+        return Oops.Bad
+    end
+    return 5
+end
+
+func steps(mut log: Log, should_fail: bool) -> Oops!int
+    defer log.add("defer")
+    errdefer log.add("errdefer")
+    let value = try maybe(should_fail)
+    log.add("value $value")
+    return value
+end
+
+func returns_error(mut log: Log) -> Oops!void
+    errdefer log.add("errdefer on return")
+    defer log.add("defer on return")
+    return Oops.Worse
+end
+
+func catch_paths(mut log: Log, gives_up: bool) -> Oops!int
+    errdefer log.add("errdefer")
+    defer log.add("defer")
+    let value = maybe(true) catch e then
+        if gives_up then
+            return e
+        end
+        return 0
+    end
+    return value
+end
+
+func loops(mut log: Log) -> void
+    defer log.add("function end")
+    for 1..4: i do
+        defer log.add("iteration $i done")
+        if i == 2 then
+            continue
+        end
+        if i == 4 then
+            defer log.add("breaking")
+            break
+        end
+        log.add("body $i")
+    end
+    let mut count = 0
+    for count < 2 do
+        count = count + 1
+        defer log.add("while $count")
+    end
+end
+
+func nested_loops(mut log: Log) -> void
+    for 1..2: outer do
+        defer log.add("outer $outer")
+        for 1..3: inner do
+            defer log.add("inner $outer.$inner")
+            if inner == 2 then
+                break
+            end
+        end
+    end
+end
+
+func compound(mut log: Log, items: []string) -> void
+    defer for items: item do
+        if item == "stop" then
+            break
+        end
+        log.add("cleanup $item")
+    end
+    defer if len(items) > 1 then
+        log.add("many items")
+    end
+    log.add("working")
+end
+
+func shadowed(mut log: Log) -> void
+    let name = "outer"
+    defer log.add("defer sees $name")
+    if true then
+        let name = "inner"
+        log.add("block has $name")
+        return
+    end
+end
+
+func branch_value(mut log: Log, flag: bool) -> int
+    let result = if flag then
+        defer log.add("branch cleanup")
+        log.add("branch body")
+        10
+    else
+        20
+    end
+    return result
+end
+
+func when_case(mut log: Log, n: int) -> void
+    when n
+        1 then
+            defer log.add("case one done")
+            log.add("case one")
+        end
+        else then
+            log.add("other")
+        end
+    end
+end
+
+func lambda_scopes(mut log: Log) -> void
+    defer log.add("outer function")
+    let inner = func() -> int
+        defer log.add("lambda cleanup")
+        log.add("lambda body")
+        return 3
+    end
+    log.add("lambda returned ${inner()}")
+end
+
+func lambda_errdefer(mut log: Log) -> !int
+    let attempt = func(should_fail: bool) -> !int
+        errdefer log.add("lambda errdefer")
+        if should_fail then
+            return Oops.Bad
+        end
+        return 1
+    end
+    let fine = try attempt(false)
+    let failed = attempt(true) catch 0
+    return fine + failed
+end
+
+func main() -> !void
+    let mut log = Log()
+    order(log)
+    assert(log.text() == "start,in block,inner block,after block,second declared,first declared")
+
+    let mut box = Box()
+    assert(returned_before_cleanup(box) == 1)
+    assert(box.value == 100)
+
+    log = Log()
+    read_at_exit(log)
+    assert(log.text() == "stopped at saving")
+
+    log = Log()
+    assert(try steps(log, false) == 5)
+    assert(log.text() == "value 5,defer")
+    log = Log()
+    assert((steps(log, true) catch -1) == -1)
+    assert(log.text() == "errdefer,defer")
+
+    log = Log()
+    returns_error(log) catch e then
+        assert(e == Oops.Worse)
+    end
+    assert(log.text() == "defer on return,errdefer on return")
+
+    log = Log()
+    assert((catch_paths(log, true) catch -1) == -1)
+    assert(log.text() == "defer,errdefer")
+    log = Log()
+    assert(try catch_paths(log, false) == 0)
+    assert(log.text() == "defer")
+
+    log = Log()
+    loops(log)
+    assert(log.text() == "body 1,iteration 1 done,iteration 2 done,body 3,iteration 3 done,breaking,iteration 4 done,while 1,while 2,function end")
+
+    log = Log()
+    nested_loops(log)
+    assert(log.text() == "inner 1.1,inner 1.2,outer 1,inner 2.1,inner 2.2,outer 2")
+
+    log = Log()
+    compound(log, ["a", "stop", "b"])
+    assert(log.text() == "working,many items,cleanup a")
+
+    log = Log()
+    shadowed(log)
+    assert(log.text() == "block has inner,defer sees outer")
+
+    log = Log()
+    assert(branch_value(log, true) == 10)
+    assert(log.text() == "branch body,branch cleanup")
+
+    log = Log()
+    when_case(log, 1)
+    when_case(log, 2)
+    assert(log.text() == "case one,case one done,other")
+
+    log = Log()
+    lambda_scopes(log)
+    assert(log.text() == "lambda body,lambda cleanup,lambda returned 3,outer function")
+
+    log = Log()
+    assert(try lambda_errdefer(log) == 1)
+    assert(log.text() == "lambda errdefer")
+
+    log = Log()
+    let job = spawn(func() -> void
+        defer log.add("task cleanup")
+        log.add("task body")
+    end)
+    await(job)
+    assert(log.text() == "task body,task cleanup")
+end

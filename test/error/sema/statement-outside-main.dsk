@@ -1,4 +1,6 @@
+import "std/io"
+
 func main() -> void
 end
 
-echo("outside")
+io::println("outside")

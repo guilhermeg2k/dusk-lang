@@ -8,6 +8,7 @@ const CallFrame = @import("tasks/scheduler.zig").CallFrame;
 const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
+const Stdio = @import("io/stdio.zig").Stdio;
 const gc = @import("gc.zig");
 const Heap = gc.Heap;
 
@@ -21,7 +22,9 @@ pub const VM = struct {
     running_task: ?*TaskState = null,
     allocator: std.mem.Allocator,
     scratch: std.Io.Writer.Allocating,
-    stdout: ?*std.Io.Writer,
+    stdio: Stdio,
+    io: std.Io,
+    stdin_fd: c_int = 0,
     stack: []v.Value,
     heap: Heap,
     scheduler: Scheduler,
@@ -30,9 +33,9 @@ pub const VM = struct {
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
 
-    pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
+    pub fn init(program: *const bc.Program, stdio: Stdio, io: std.Io) VM {
         return .{
-            .allocator = std.heap.page_allocator,
+            .allocator = std.heap.c_allocator,
             .scheduler = .{ .allocator = std.heap.c_allocator },
             .event_loop = .{ .allocator = std.heap.c_allocator },
             .frames = &.{},
@@ -41,7 +44,8 @@ pub const VM = struct {
             .stack = &.{},
             .heap = Heap.init(std.heap.page_allocator),
             .scratch = .init(std.heap.page_allocator),
-            .stdout = stdout,
+            .stdio = stdio,
+            .io = io,
         };
     }
 
@@ -55,11 +59,16 @@ pub const VM = struct {
     pub noinline fn run(self: *Self) !void {
         const main_closure: *v.Closure = @constCast(&self.program.static_closures[self.program.main_func_index]);
         _ = try self.scheduler.spawn(main_closure, .null);
+        RuntimeErrorReporter.stdout_to_flush_first = self.stdio.stdout.writer();
+        defer RuntimeErrorReporter.stdout_to_flush_first = null;
         self.runScheduler() catch |failure| {
-            self.reportErrorLocation(failure);
             self.saveCurrentTask();
+            self.stdio.tryFlush(.stdout) catch {};
+            if (failure == error.BrokenPipe) return failure;
+            self.reportErrorLocation(failure);
             return failure;
         };
+        try self.stdio.flushStdout();
     }
 
     fn runScheduler(self: *Self) !void {
@@ -70,13 +79,16 @@ pub const VM = struct {
                 for (0..ready_task_count) |_| {
                     try self.runTask(self.scheduler.popReady().?);
                 }
+
                 if (self.event_loop.hasPendingOperations()) {
                     try self.event_loop.poll();
                 }
+
                 continue;
             }
 
             if (self.event_loop.hasPendingOperations()) {
+                try self.stdio.flushStdout();
                 try self.event_loop.waitForEvent();
                 continue;
             }
@@ -91,7 +103,7 @@ pub const VM = struct {
     }
 
     fn runTask(self: *Self, task: *TaskState) !void {
-        self.enterTask(task);
+        try self.enterTask(task);
         try self.execute();
         self.leaveTask();
         if (task.frame_count == 0) {
@@ -99,25 +111,78 @@ pub const VM = struct {
         }
     }
 
-    fn enterTask(self: *Self, task: *TaskState) void {
+    fn enterTask(self: *Self, task: *TaskState) !void {
         self.running_task = task;
         self.stack = task.stack;
         self.frames = task.frames;
         self.frame_count = task.frame_count;
         task.status = .running;
         if (task.wake_result) |wake_result| {
-            finishParkedCall(task, wake_result);
+            try self.finishParkedCall(task, wake_result);
         }
     }
 
-    fn finishParkedCall(task: *TaskState, wake_result: WakeResult) void {
+    fn finishParkedCall(self: *Self, task: *TaskState, wake_result: WakeResult) !void {
         task.wake_result = null;
+        var result = try self.buildWakeValue(wake_result);
         const frame = &task.frames[task.frame_count - 1];
         const call = frame.function.kind.dusk.instructions[frame.cur_inst - 1];
-        task.stack[frame.stack_offset + call.a] = wake_result.value;
         if (wake_result.has_failed) {
+            if (wake_result.error_is_relative) {
+                result.int64 += self.program.functions[call.bEx()].kind.native.error_base;
+            }
             frame.cur_inst += 1;
         }
+        task.stack[frame.stack_offset + call.a] = result;
+    }
+
+    fn buildWakeValue(self: *Self, wake_result: WakeResult) !v.Value {
+        defer wake_result.payload.free(self.scheduler.allocator);
+        return switch (wake_result.payload) {
+            .none => wake_result.value,
+            .ints => |ints| try self.allocIntArray(ints),
+            .bytes => |bytes| try self.allocBytesValue(bytes, wake_result.kind),
+            .names => |names| try self.allocStringArray(names),
+        };
+    }
+
+    pub fn allocBytesValue(self: *Self, bytes: []const u8, kind: v.ValueType) !v.Value {
+        const size = v.Bytes.calc_size(bytes.len);
+        try self.maybeCollectGarbage(size);
+        const allocator = self.getCurrentHeapAllocator();
+        const result = if (kind == .buffer) try v.Bytes.init(allocator, bytes, .buffer) else try v.Bytes.init(allocator, bytes, .string);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &result.obj };
+    }
+
+    pub fn allocStringArray(self: *Self, strings: []const []const u8) !v.Value {
+        const capacity = @max(strings.len, 1);
+        var total = v.Array.calc_size(capacity);
+        for (strings) |text| {
+            total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(text.len));
+        }
+        try self.maybeCollectGarbage(total);
+        const allocator = self.getCurrentHeapAllocator();
+        const array = try v.Array.init(allocator, .string, capacity);
+        self.increaseHeapAllocationCount(v.Array.calc_size(capacity));
+        for (strings) |text| {
+            const bytes = try v.Bytes.init(allocator, text, .string);
+            self.increaseHeapAllocationCount(v.Bytes.calc_size(text.len));
+            try array.append(.{ .heap_obj = &bytes.obj });
+        }
+        return .{ .heap_obj = &array.obj };
+    }
+
+    pub fn allocIntArray(self: *Self, ints: []const i64) !v.Value {
+        const capacity = @max(ints.len, 1);
+        const size = v.Array.calc_size(capacity);
+        try self.maybeCollectGarbage(size);
+        const array = try v.Array.init(self.getCurrentHeapAllocator(), .int64, capacity);
+        self.increaseHeapAllocationCount(size);
+        for (ints) |item| {
+            try array.append(.{ .int64 = item });
+        }
+        return .{ .heap_obj = &array.obj };
     }
 
     noinline fn execute(self: *Self) align(64) !void {
@@ -213,7 +278,7 @@ pub const VM = struct {
                     try self.setMapEntry(&stack[stack_base + inst.a], &stack[stack_base + inst.b], &stack[stack_base + inst.c]);
                 },
 
-                .MAP_FIND => {
+                .MAP_GET_UNBOXED => {
                     const value = mapInSlot(&stack[stack_base + inst.b]).get(stack[stack_base + inst.c]);
                     stack[stack_base + inst.a] = if (value != null) v.TRUE_VALUE else v.FALSE_VALUE;
                     stack[stack_base + inst.a + 1] = value orelse v.NULL_VALUE;
@@ -250,6 +315,14 @@ pub const VM = struct {
                     stack[stack_base + inst.a] = .{ .bool = areStringsEqual(stack[stack_base + inst.b], stack[stack_base + inst.c]) };
                 },
 
+                .ARR_EQ => {
+                    stack[stack_base + inst.a] = .{ .bool = areArraysEqual(stack[stack_base + inst.b], stack[stack_base + inst.c]) };
+                },
+
+                .ARR_NEQ => {
+                    stack[stack_base + inst.a] = .{ .bool = !areArraysEqual(stack[stack_base + inst.b], stack[stack_base + inst.c]) };
+                },
+
                 .BYTES_GET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
                     const index = stack[stack_base + inst.c].int64;
@@ -278,12 +351,6 @@ pub const VM = struct {
                 .TASK_SPAWN => {
                     current_frame.cur_inst = cur_instruction;
                     try self.spawnTask(stack_base + inst.a, stack_base + inst.b, @enumFromInt(inst.c));
-                },
-
-                .ARRAY_POP => {
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
-                    const value = try array.pop();
-                    stack[stack_base + inst.a] = value;
                 },
 
                 .STRUCT_INIT => {
@@ -708,14 +775,13 @@ pub const VM = struct {
                 .PANIC_ERR => {
                     return RuntimeErrorReporter.unhandledError(self.program.error_names[@intCast(stack[stack_base + inst.a].int64)]);
                 },
-                else => unreachable,
             }
         }
     }
 
     noinline fn toString(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
         self.scratch.clearRetainingCapacity();
-        format.printValue(&self.scratch.writer, value, kind);
+        format.printValue(&self.scratch.writer, value, kind) catch return error.OutOfMemory;
         const bytes = self.scratch.written();
         const result = try self.allocString(bytes.len);
         @memcpy(result.mutableSlice(), bytes);
@@ -723,7 +789,7 @@ pub const VM = struct {
     }
 
     pub fn allocString(self: *Self, len: usize) !*v.Bytes {
-        const size = v.Bytes.calc_size(len);
+        const size = try v.Bytes.calcSizeChecked(len);
         try self.maybeCollectGarbage(size);
         const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), len, .string);
         self.increaseHeapAllocationCount(size);
@@ -742,6 +808,14 @@ pub const VM = struct {
         if (!self.heap.needsCollection(bytes)) return;
         self.saveCurrentTask();
         try self.heap.collect(&self.scheduler, self.program);
+        self.closeDeadResources();
+    }
+
+    fn closeDeadResources(self: *Self) void {
+        for (self.heap.dead_resource_ids.items) |id| {
+            self.event_loop.closeResource(id);
+        }
+        self.heap.dead_resource_ids.clearRetainingCapacity();
     }
 
     fn saveCurrentTask(self: *Self) void {
@@ -763,10 +837,10 @@ pub const VM = struct {
         self.scratch.clearRetainingCapacity();
         for (parts, kinds) |part, kind| {
             if (kind == .string) {
-                try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
+                self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice()) catch return error.OutOfMemory;
                 continue;
             }
-            format.printValue(&self.scratch.writer, part, kind);
+            format.printValue(&self.scratch.writer, part, kind) catch return error.OutOfMemory;
         }
         const bytes = self.scratch.written();
         const result = try self.allocString(bytes.len);
@@ -776,11 +850,11 @@ pub const VM = struct {
 
     fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8) *v.Array {
         const ptr = stack[stack_base + reg_idx].heap_obj;
-        const current = ptr.followRelocated();
-        if (current != ptr) {
-            stack[stack_base + reg_idx].heap_obj = current;
+        const current = v.HeapValue.getParentPtr(v.Array, ptr).newestCopy();
+        if (&current.obj != ptr) {
+            stack[stack_base + reg_idx].heap_obj = &current.obj;
         }
-        return v.HeapValue.getParentPtr(v.Array, current);
+        return current;
     }
 
     pub fn growArray(self: *Self, slot: *v.Value) !*v.Array {
@@ -792,8 +866,9 @@ pub const VM = struct {
     }
 
     fn arrayInSlot(slot: *v.Value) *v.Array {
-        slot.heap_obj = slot.heap_obj.followRelocated();
-        return v.HeapValue.getParentPtr(v.Array, slot.heap_obj);
+        const array = v.HeapValue.getParentPtr(v.Array, slot.heap_obj).newestCopy();
+        slot.heap_obj = &array.obj;
+        return array;
     }
 
     fn newMap(self: *Self, key_type: v.ValueType, value_type: v.ValueType) !v.Value {
@@ -846,9 +921,10 @@ pub const VM = struct {
         if (len < 0) {
             return RuntimeErrorReporter.negativeBufferSize(len);
         }
-        const size = v.Bytes.calc_size(@intCast(len));
+        const byte_len: usize = @intCast(len);
+        const size = try v.Bytes.calcSizeChecked(byte_len);
         try self.maybeCollectGarbage(size);
-        const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), @intCast(len), .buffer);
+        const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), byte_len, .buffer);
         self.increaseHeapAllocationCount(size);
         return .{ .heap_obj = &bytes.obj };
     }
@@ -864,11 +940,26 @@ pub const VM = struct {
         return std.mem.eql(u8, left_bytes, right_bytes);
     }
 
+    fn areArraysEqual(left: v.Value, right: v.Value) bool {
+        const left_bits: u64 = @bitCast(left);
+        const right_bits: u64 = @bitCast(right);
+        if (left_bits == right_bits) {
+            return true;
+        }
+        const is_either_null = left_bits == 0 or right_bits == 0;
+        if (is_either_null) {
+            return false;
+        }
+        const left_array = v.HeapValue.getParentPtr(v.Array, left.heap_obj).newestCopy();
+        const right_array = v.HeapValue.getParentPtr(v.Array, right.heap_obj).newestCopy();
+        return left_array == right_array;
+    }
+
     noinline fn deepCopy(self: *Self, source_index: usize) !v.Value {
         if (@as(u64, @bitCast(self.stack[source_index])) == 0) {
             return self.stack[source_index];
         }
-        try self.maybeCollectGarbage(gc.heapObjectSize(self.stack[source_index].heap_obj));
+        try self.maybeCollectGarbage(gc.heapObjectSize(self.stack[source_index].heap_obj.followRelocated()));
 
         var copies: std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue) = .empty;
         defer copies.deinit(self.allocator);
@@ -908,7 +999,7 @@ pub const VM = struct {
                     if (!storage.value_type.isHeapType()) continue;
                     for (storage.usedEntries()) |*entry| try self.deepCopySlot(&entry.value, &copies, &pending);
                 },
-                .string, .buffer, .null_box, .closure, .cell, .task => {},
+                .string, .buffer, .null_box, .closure, .cell, .task, .resource => {},
             }
         }
         return result;
@@ -918,7 +1009,7 @@ pub const VM = struct {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
         const current = slot.heap_obj.followRelocated();
         const is_immutable = switch (current.kind) {
-            .string, .null_box, .closure, .cell, .task => true,
+            .string, .null_box, .closure, .cell, .task, .resource => true,
             else => false,
         };
         if (is_immutable) {

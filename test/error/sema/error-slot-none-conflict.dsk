@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func parse(s: string) -> ConversionError!int
     return try string::to_int(s)

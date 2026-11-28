@@ -1,0 +1,9 @@
+import "std/array"
+
+struct Item
+    value: int
+end
+
+func main() -> void
+    let f: func(mut []Item, int, mut Item) -> array::ArrayError![]Item = array::insert
+end

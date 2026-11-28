@@ -1,0 +1,10 @@
+import "@/sub-dir/my-mod" as my_mod
+import "@/sub-dir/my-mod": helper
+import "@/error" as err_mod
+
+func main() -> void
+    assert(my_mod::helper(5) == 10)
+    assert(my_mod::LABEL == "hyphenated")
+    assert(helper(7) == 14)
+    assert(err_mod::make_code() == 404)
+end

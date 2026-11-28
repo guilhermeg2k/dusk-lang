@@ -1,0 +1,97 @@
+import "std/io"
+import "std/net"
+import "std/fs"
+
+func fixture(name: string) -> fs::FsError!string
+    return try fs::read("test/fixtures/tls/${name}")
+end
+
+func accept_error(conn: net::TcpConn, cert: net::Certificate, timeout_ms: int) -> ?net::NetError
+    conn.accept_tls(cert, timeout_ms = timeout_ms) catch e then
+        return e
+    end
+    return null
+end
+
+func start_error(conn: net::TcpConn, ca: string) -> ?net::NetError
+    conn.start_tls("localhost", ca = ca) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let ca = try fixture("ca.pem")
+    let other_ca = try fixture("self-signed.pem")
+    let cert = try net::certificate(try fixture("server.pem"), try fixture("server.key"))
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    let port = listener.port()
+
+    let mail_server = spawn(func() -> !string
+        let conn = try listener.accept()
+        try conn.write("220 ready\n")
+        let command = try conn.read_line() orelse ""
+        assert(command == "STARTTLS")
+        assert(!conn.is_tls())
+        try conn.write("220 go ahead\n")
+        try conn.accept_tls(cert)
+        assert(conn.is_tls())
+        let line = try conn.read_line() orelse ""
+        try conn.write("secure $line\n")
+        conn.close()
+        return line
+    end)
+    let client = try net::tcp_connect("127.0.0.1", port)
+    assert(try client.read_line() == "220 ready")
+    try client.write("STARTTLS\n")
+    assert(try client.read_line() == "220 go ahead")
+    try client.start_tls("localhost", ca = ca)
+    assert(client.is_tls())
+    try client.write("hello\n")
+    assert(try client.read_line() == "secure hello")
+    assert(try await(mail_server) == "hello")
+    client.close()
+
+    let eager_server = spawn(func() -> !string
+        let conn = try listener.accept()
+        let command = try conn.read_line() orelse ""
+        assert(command == "STARTTLS")
+        try conn.accept_tls(cert, timeout_ms = 3000)
+        let line = try conn.read_line() orelse ""
+        conn.close()
+        return line
+    end)
+    let eager = try net::tcp_connect("127.0.0.1", port)
+    try eager.write("STARTTLS\n")
+    try eager.start_tls("localhost", ca = ca)
+    try eager.write("right away\n")
+    assert(try await(eager_server) == "right away")
+    eager.close()
+
+    let refused_server = spawn(func() -> ?net::NetError
+        let conn = listener.accept() catch e then
+            return net::NetError.Other
+        end
+        let failure = accept_error(conn, cert, 3000)
+        conn.close()
+        return failure
+    end)
+    let untrusting = try net::tcp_connect("127.0.0.1", port)
+    assert(start_error(untrusting, other_ca) == net::NetError.UntrustedCertificate)
+    untrusting.close()
+    assert(await(refused_server) == net::NetError.HandshakeFailed)
+
+    let silent_server = spawn(func() -> ?net::NetError
+        let conn = listener.accept() catch e then
+            return net::NetError.Other
+        end
+        let failure = accept_error(conn, cert, 100)
+        conn.close()
+        return failure
+    end)
+    let silent = try net::tcp_connect("127.0.0.1", port)
+    assert(await(silent_server) == net::NetError.TimedOut)
+    silent.close()
+
+    listener.close()
+end

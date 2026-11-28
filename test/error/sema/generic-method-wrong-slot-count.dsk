@@ -1,0 +1,12 @@
+struct B
+    v: int
+
+    func m[T](self: @, x: T) -> int
+        return 1
+    end
+end
+
+func main() -> void
+    let b = B(v = 1)
+    let x = b.m[int, int](3)
+end

@@ -1,4 +1,6 @@
+import "std/io"
+
 func main() -> void
     let optional: ?int = null
-    optional orelse echo(1)
+    optional orelse io::println("${1}")
 end

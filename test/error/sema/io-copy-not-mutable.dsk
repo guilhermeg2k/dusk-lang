@@ -1,0 +1,6 @@
+import "std/io"
+
+func main() -> !void
+    let out = io::stdout()
+    let copied = try io::copy(io::stdin(), out)
+end

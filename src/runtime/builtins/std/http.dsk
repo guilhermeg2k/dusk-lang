@@ -1,0 +1,1766 @@
+import "std/array": append, contains, len
+import "std/buffer"
+import "std/compression"
+import "std/fs"
+import "std/io"
+import "std/map"
+import "std/net"
+import "std/string"
+import "std/task"
+import "std/time"
+import "std/url"
+
+error HttpError
+    InvalidUrl
+    UnsupportedScheme
+    InvalidMethod
+    InvalidHeader
+    HostNotFound
+    ConnectionRefused
+    NetworkUnreachable
+    TimedOut
+    HandshakeFailed
+    UntrustedCertificate
+    ExpiredCertificate
+    WrongHostCertificate
+    InvalidCertificate
+    ConnectionReset
+    InvalidResponse
+    HeadersTooLarge
+    BodyTooLarge
+    TooManyRedirects
+    InvalidUtf8
+    Closed
+    InvalidRequest
+    AddressInUse
+    PermissionDenied
+    ProxyRefused
+    Other
+end
+
+struct Header
+    name: string
+    value: string
+end
+
+struct Headers
+    ~items: []Header
+    ~lowered: []string
+
+    func get(self: @, name: string) -> ?string
+        let wanted = string::lower(name)
+        for self.lowered: lowered, index do
+            if lowered == wanted then
+                return self.items[index].value
+            end
+        end
+        return null
+    end
+
+    func get_all(self: @, name: string) -> []string
+        let wanted = string::lower(name)
+        let mut values: []string = []
+        for self.lowered: lowered, index do
+            if lowered == wanted then
+                append(values, self.items[index].value)
+            end
+        end
+        return values
+    end
+
+    func has(self: @, name: string) -> bool
+        return self.get(name) != null
+    end
+
+    func entries(self: @) -> []Header
+        return copy(self.items)
+    end
+
+    func set(mut self: @, name: string, value: string) -> void
+        self.remove(name)
+        self.add(name, value)
+    end
+
+    func add(mut self: @, name: string, value: string) -> void
+        append(self.items, Header(name = name, value = value))
+        append(self.lowered, string::lower(name))
+    end
+
+    func remove(mut self: @, name: string) -> void
+        let wanted = string::lower(name)
+        let mut items: []Header = []
+        let mut lowered: []string = []
+        for self.lowered: existing, index do
+            if existing != wanted then
+                append(items, copy(self.items[index]))
+                append(lowered, existing)
+            end
+        end
+        self.items = items
+        self.lowered = lowered
+    end
+end
+
+struct Response
+    status: int
+    reason: string
+    headers: Headers
+    body: buffer
+    url: string
+    ~stream: ?func(mut BodyWriter) -> io::IoError!void = null
+    ~stream_length: int = -1
+
+    func text(self: @) -> HttpError!string
+        return string::from_bytes(self.body) catch e then
+            return HttpError.InvalidUtf8
+        end
+    end
+
+    func is_success(self: @) -> bool
+        return self.status >= 200 and self.status < 300
+    end
+end
+
+struct ContentType
+    let HTML = "text/html; charset=utf-8"
+    let CSS = "text/css; charset=utf-8"
+    let JS = "text/javascript; charset=utf-8"
+    let JSON = "application/json"
+    let TEXT = "text/plain; charset=utf-8"
+    let CSV = "text/csv; charset=utf-8"
+    let XML = "application/xml"
+    let SVG = "image/svg+xml"
+    let PNG = "image/png"
+    let JPEG = "image/jpeg"
+    let GIF = "image/gif"
+    let WEBP = "image/webp"
+    let ICO = "image/x-icon"
+    let WASM = "application/wasm"
+    let PDF = "application/pdf"
+    let EVENT_STREAM = "text/event-stream"
+    let FORM = "application/x-www-form-urlencoded"
+    let BINARY = "application/octet-stream"
+end
+
+struct ResponseStream
+    status: int
+    reason: string
+    headers: Headers
+    url: string
+    ~stream_id: int
+    ~pool_key: string
+    ~owner: resource
+
+    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
+        return try stream_body_bytes(self.stream_id, max, -1)
+    end
+
+    func read_line(mut self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
+        return try stream_body_line(self.stream_id, max, timeout_ms)
+    end
+
+    func read_all(mut self: @, timeout_ms: int = -1) -> io::IoError!string
+        return try stream_body_all(self.stream_id, timeout_ms)
+    end
+
+    func read_all_bytes(mut self: @, timeout_ms: int = -1) -> io::IoError!buffer
+        return try stream_body_all_bytes(self.stream_id, timeout_ms)
+    end
+
+    func set_read_timeout(self: @, timeout_ms: int) -> void
+        stream_set_read_timeout(self.stream_id, timeout_ms)
+    end
+
+    func close(mut self: @) -> void
+        if self.stream_id < 0 then
+            return
+        end
+        let stream_id = self.stream_id
+        self.stream_id = -1
+        pool_put(self.pool_key, stream_id)
+        release(self.owner)
+    end
+end
+
+struct Server
+    ~listener: net::TcpListener
+    ~server_id: int
+    ~owner: resource
+    ~max_body: int
+    ~head_timeout_ms: int
+    ~idle_timeout_ms: int
+    ~write_timeout_ms: int
+    ~max_connections: int
+    ~compress: bool
+    ~compression_level: int
+
+    func port(self: @) -> int
+        return self.listener.port()
+    end
+
+    func close(self: @) -> void
+        server_close(self.server_id)
+        release(self.owner)
+        self.listener.close()
+    end
+
+    func serve[E: error](self: @, handler: func(Request) -> E!Response, on_error: ?func(Request, Failure[E]) -> void = null) -> void
+        let report = on_error orelse func(request: Request, failure: Failure[E]) -> void
+            print_failure(request, failure)
+        end
+        let mut active = 0
+        for true do
+            let is_full = self.max_connections > 0 and active >= self.max_connections
+            if is_full then
+                if server_is_closing(self.server_id) then
+                    break
+                end
+                task::sleep(1)
+                continue
+            end
+            let conn = self.listener.accept() catch e then
+                if e == io::IoError.Closed then
+                    break
+                end
+                task::sleep(10)
+                continue
+            end
+            active = active + 1
+            spawn(func() -> void
+                serve_connection(self, conn, handler, report)
+                active = active - 1
+            end)
+        end
+        for active > 0 do
+            task::sleep(10)
+        end
+    end
+end
+
+union Failure[E: error]
+    handler: E
+    invalid_response: string
+    streaming: io::IoError
+end
+
+struct BodyWriter
+    ~stream_id: int
+    ~server_id: int
+    ~is_chunked: bool
+    ~is_discarding: bool
+    ~remaining: int
+    ~pending: buffer
+    ~used: int
+    ~compressor: compression::Compressor
+    ~is_compressing: bool
+
+    func write(mut self: @, text: string) -> io::IoError!void
+        let size = string::len(text)
+        try self.make_room(size)
+        if size > buffer::len(self.pending) then
+            try self.send(buffer::from_string(text))
+            return
+        end
+        self.used = buffer::put(self.pending, self.used, text) catch e then
+            return io::IoError.Other
+        end
+    end
+
+    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        let size = buffer::len(data)
+        try self.make_room(size)
+        if size > buffer::len(self.pending) then
+            try self.send(data)
+            return
+        end
+        self.used = buffer::put_bytes(self.pending, self.used, data) catch e then
+            return io::IoError.Other
+        end
+    end
+
+    func flush(mut self: @) -> io::IoError!void
+        try self.send_pending()
+        if !self.is_compressing then
+            return
+        end
+        let packed = self.compressor.flush() catch e then
+            return io::IoError.Other
+        end
+        try self.send_frame(packed)
+    end
+
+    func ~send_pending(mut self: @) -> io::IoError!void
+        if self.used == 0 then
+            return
+        end
+        let data = buffer::slice(self.pending, 0, self.used) catch e then
+            return io::IoError.Other
+        end
+        self.used = 0
+        try self.send(data)
+    end
+
+    func ~finish_body(mut self: @) -> io::IoError!void
+        try self.send_pending()
+        if !self.is_compressing then
+            return
+        end
+        let packed = self.compressor.finish() catch e then
+            return io::IoError.Other
+        end
+        try self.send_frame(packed)
+    end
+
+    func ~make_room(mut self: @, size: int) -> io::IoError!void
+        let is_closed = self.is_discarding or (self.server_id >= 0 and server_is_closing(self.server_id))
+        if is_closed then
+            return io::IoError.Closed
+        end
+        if self.remaining >= 0 then
+            if size > self.remaining then
+                return io::IoError.Other
+            end
+            self.remaining = self.remaining - size
+        end
+        if self.used + size > buffer::len(self.pending) then
+            try self.send_pending()
+        end
+    end
+
+    func ~send(mut self: @, data: buffer) -> io::IoError!void
+        if !self.is_compressing then
+            try self.send_frame(data)
+            return
+        end
+        let packed = self.compressor.write_bytes(data) catch e then
+            return io::IoError.Other
+        end
+        try self.send_frame(packed)
+    end
+
+    func ~send_frame(mut self: @, data: buffer) -> io::IoError!void
+        if buffer::len(data) == 0 then
+            return
+        end
+        if !self.is_chunked then
+            try stream_write_bytes(self.stream_id, data)
+            return
+        end
+        let size_line = "${hex_text(buffer::len(data))}\r\n"
+        let body_start = string::len(size_line)
+        let mut framed = buffer::new(body_start + buffer::len(data) + 2) catch e then
+            return io::IoError.Other
+        end
+        buffer::put(framed, 0, size_line) catch e then
+            return io::IoError.Other
+        end
+        let body_end = buffer::put_bytes(framed, body_start, data) catch e then
+            return io::IoError.Other
+        end
+        buffer::put(framed, body_end, "\r\n") catch e then
+            return io::IoError.Other
+        end
+        try stream_write_bytes(self.stream_id, framed)
+    end
+end
+
+struct Request
+    method: string
+    target: string
+    path: string
+    query: ?string
+    headers: Headers
+    remote_address: net::Address
+    ~stream_id: int
+    ~keeps_alive: bool
+    ~max_body: int
+    ~expects_continue: bool
+
+    func query_param(self: @, name: string) -> ?string
+        if self.query: text then
+            let params = url::parse_query(text) catch e then
+                return null
+            end
+            if params[name]: values then
+                return values[0]
+            end
+        end
+        return null
+    end
+
+    func text(self: @, timeout_ms: int = -1) -> HttpError!string
+        let data = try self.bytes(timeout_ms)
+        return string::from_bytes(data) catch e then
+            return HttpError.InvalidUtf8
+        end
+    end
+
+    func bytes(self: @, timeout_ms: int = -1) -> HttpError!buffer
+        if self.is_declared_too_large() then
+            mark_request_body_too_large(self.stream_id)
+            return HttpError.BodyTooLarge
+        end
+        self.send_continue() catch e then
+            return from_io(e)
+        end
+        return try stream_read_whole_body(self.stream_id, self.max_body, timeout_ms)
+    end
+
+    func read_bytes(self: @, max: int) -> io::IoError!?buffer
+        if self.is_declared_too_large() then
+            mark_request_body_too_large(self.stream_id)
+            return io::IoError.Other
+        end
+        try self.send_continue()
+        return try stream_body_bytes(self.stream_id, max, -1)
+    end
+
+    func set_read_timeout(self: @, timeout_ms: int) -> void
+        stream_set_read_timeout(self.stream_id, timeout_ms)
+    end
+
+    func ~is_declared_too_large(self: @) -> bool
+        if self.headers.get("content-length"): text then
+            let declared = string::to_int(string::trim(text)) catch -1
+            return declared > self.max_body
+        end
+        return false
+    end
+
+    func ~send_continue(self: @) -> io::IoError!void
+        if self.expects_continue and claim_continue(self.stream_id) then
+            try stream_write(self.stream_id, "HTTP/1.1 100 Continue\r\n\r\n")
+        end
+    end
+end
+
+extern func ~open_tcp_stream(host: string, port: int, timeout_ms: int) -> net::NetError!int
+extern func ~stream_start_tls(stream_id: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
+extern func ~stream_write(stream_id: int, text: string) -> io::IoError!void
+extern func ~stream_write_bytes(stream_id: int, data: buffer) -> io::IoError!void
+extern func ~stream_set_read_timeout(stream_id: int, timeout_ms: int) -> void
+extern func ~stream_set_write_timeout(stream_id: int, timeout_ms: int) -> void
+extern func ~stream_close(stream_id: int) -> void
+extern func ~stream_read_head(stream_id: int, is_head_request: bool, timeout_ms: int) -> HttpError!?buffer
+extern func ~stream_read_whole_body(stream_id: int, cap: int, timeout_ms: int) -> HttpError!buffer
+extern func ~stream_body_bytes(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_body_line(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?string
+extern func ~stream_body_all(stream_id: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_body_all_bytes(stream_id: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
+extern func ~stream_decode_body(stream_id: int, format: compression::Format) -> void
+extern func ~pool_take(key: string) -> int
+extern func ~pool_put(key: string, stream_id: int) -> void
+extern func ~conn_stream_id(conn: net::TcpConn) -> int
+extern func ~stream_wait_data(stream_id: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_request_head(stream_id: int, timeout_ms: int) -> HttpError!?buffer
+extern func ~stream_drain_request_body(stream_id: int, cap: int, timeout_ms: int) -> HttpError!buffer
+extern func ~parse_request_head(head: buffer) -> HttpError![]string
+extern func ~http_date() -> string
+extern func ~claim_continue(stream_id: int) -> bool
+extern func ~request_body_state(stream_id: int, expects_continue: bool) -> int
+extern func ~request_body_failure(stream_id: int) -> int
+extern func ~server_state_new() -> int
+extern func ~server_set_idle(server_id: int, stream_id: int, is_idle: bool) -> bool
+extern func ~server_close(server_id: int) -> void
+extern func ~server_is_closing(server_id: int) -> bool
+extern func ~is_method(text: string) -> bool
+extern func ~is_header_name(text: string) -> bool
+extern func ~is_header_value(text: string) -> bool
+extern func ~stream_start_tunneled_tls(stream_id: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
+extern func ~base64(text: string) -> string
+extern func ~user_agent() -> string
+extern func ~encoded_url(text: string) -> string
+extern func ~is_loopback_host(host: string) -> bool
+extern func ~stream_forbid_reuse(stream_id: int) -> void
+extern func ~mark_request_body_too_large(stream_id: int) -> void
+extern func ~stream_has_final_status(stream_id: int) -> bool
+extern func ~host_slot_take(host: string, limit: int, timeout_ms: int) -> HttpError!void
+extern func ~host_slot_release(host: string) -> void
+extern func ~stream_hold_host_slot(stream_id: int, host: string) -> void
+extern func ~own(kind: int, id: int) -> resource
+extern func ~release(owner: ?resource) -> void
+extern func ~invalid_compression_level(level: int) -> void
+
+let ~REDIRECT_DRAIN_LIMIT = 65536
+let ~REQUEST_DRAIN_LIMIT = 65536
+let ~JOINED_BODY_LIMIT = 65536
+let ~BODY_WRITER_SIZE = 16384
+let ~FILE_PIECE_SIZE = 65536
+let ~MIN_COMPRESSED_BODY = 1024
+let ~EXPECT_CONTINUE_SIZE = 1048576
+let ~CONTINUE_WAIT_MS = 1000
+let ~BODY_COMPLETE = 0
+let ~BODY_UNREAD = 1
+let ~BODY_TOO_LARGE = 1
+let ~BODY_INVALID = 2
+
+union Body
+    text: string
+    bytes: buffer
+    stream: BodyStream
+end
+
+struct BodyStream
+    write: func(mut BodyWriter) -> io::IoError!void
+    length: int = -1
+end
+
+struct ~Exchange
+    method: string
+    headers: map[string, string]
+    body: ?Body
+    max_body: int
+    timeout_ms: int
+    started_ns: int
+    ca: ?string
+    verify: bool
+    follows_redirects: bool
+    reads_body: bool
+    proxy: ?Proxy
+    max_connections_per_host: int = -1
+end
+
+struct ~Proxy
+    url: url::Url
+    authorization: ?string
+end
+
+struct ~UserInfoSplit
+    url: string
+    authorization: ?string
+end
+
+struct ~Opened
+    response: Response
+    stream_id: int
+    pool_key: string
+end
+
+struct Client
+    base_url: string = ""
+    headers: map[string, string] = {}
+    timeout_ms: int = -1
+    max_redirects: int = 10
+    max_body: int = 67108864
+    ca: ?string = null
+    verify: bool = true
+    proxy: ?string = null
+    max_connections_per_host: int = -1
+
+    func request(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, max_body: ?int = null, ca: ?string = null, verify: ?bool = null) -> HttpError!Response
+        let redirects = max_redirects orelse self.max_redirects
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true, proxy = try proxy_of(self.proxy), max_connections_per_host = self.max_connections_per_host)
+        let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
+        return opened.response
+    end
+
+    func open(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, ca: ?string = null, verify: ?bool = null) -> HttpError!ResponseStream
+        let redirects = max_redirects orelse self.max_redirects
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false, proxy = try proxy_of(self.proxy), max_connections_per_host = self.max_connections_per_host)
+        let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
+        let response = opened.response
+        if body_format(response.status, response.headers, exchange): format then
+            stream_decode_body(opened.stream_id, format)
+        end
+        return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, stream_id = opened.stream_id, pool_key = opened.pool_key, owner = own(0, opened.stream_id))
+    end
+end
+
+func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true) -> HttpError!Response
+    let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, max_body = max_body, ca = ca, verify = verify)
+    return try client.request(url, method = method, headers = headers, body = body, query = query)
+end
+
+func open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true) -> HttpError!ResponseStream
+    let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, ca = ca, verify = verify)
+    return try client.open(url, method = method, headers = headers, body = body, query = query)
+end
+
+func ~proxy_of(text: ?string) -> HttpError!?Proxy
+    let address = text orelse ""
+    if address == "" then
+        return null
+    end
+    let split = try without_user_info(address)
+    let parsed = url::parse(split.url) catch e then
+        return HttpError.InvalidUrl
+    end
+    let is_supported = parsed.scheme == "http" or parsed.scheme == "https"
+    if !is_supported then
+        return HttpError.UnsupportedScheme
+    end
+    return Proxy(url = parsed, authorization = split.authorization)
+end
+
+func ~without_user_info(address: string) -> HttpError!UserInfoSplit
+    let scheme_end = string::find(address, "://") orelse -1
+    if scheme_end <= 0 then
+        return HttpError.InvalidUrl
+    end
+    let authority_start = scheme_end + 3
+    let authority = string::slice(address, authority_start, authority_end_of(address, authority_start)) catch ""
+    let at = string::find_reverse(authority, "@") orelse -1
+    if at < 0 then
+        return UserInfoSplit(url = address, authorization = null)
+    end
+    let user_info = string::slice(authority, 0, at) catch ""
+    let parts = string::split(user_info, ":", limit = 2)
+    let user = url::decode(parts[0]) catch e then
+        return HttpError.InvalidUrl
+    end
+    let password = if len(parts) > 1 then url::decode(parts[1]) catch e then
+        return HttpError.InvalidUrl
+    end else "" end
+    let scheme = string::slice(address, 0, authority_start) catch ""
+    let rest = string::slice(address, authority_start + at + 1, string::len(address)) catch ""
+    return UserInfoSplit(url = "$scheme$rest", authorization = "Basic ${base64("$user:$password")}")
+end
+
+func ~authority_end_of(address: string, start: int) -> int
+    let mut end_at = string::len(address)
+    for ["/", "?", "#"]: mark do
+        let found = string::find(address, mark, start) orelse end_at
+        if found < end_at then
+            end_at = found
+        end
+    end
+    return end_at
+end
+
+func ~proxy_for(target: url::Url, exchange: Exchange) -> ?Proxy
+    if is_loopback_host(target.host) then
+        return null
+    end
+    return exchange.proxy
+end
+
+func ~merged_headers(base: map[string, string], extra: map[string, string]) -> map[string, string]
+    if map::len(extra) == 0 then
+        return base
+    end
+    if map::len(base) == 0 then
+        return extra
+    end
+    let mut result: map[string, string] = {}
+    for base: value, name do
+        if !has_header_name(extra, name) then
+            result[name] = value
+        end
+    end
+    for extra: value, name do
+        result[name] = value
+    end
+    return result
+end
+
+func ~has_header_name(headers: map[string, string], name: string) -> bool
+    let lowered = string::lower(name)
+    for headers: value, other do
+        if string::lower(other) == lowered then
+            return true
+        end
+    end
+    return false
+end
+
+func ~joined_url(base: string, target: string) -> string
+    if base == "" or has_scheme(target) then
+        return target
+    end
+    if target == "" or string::starts_with(target, "?") then
+        return "$base$target"
+    end
+    let base_has_slash = string::ends_with(base, "/")
+    let target_has_slash = string::starts_with(target, "/")
+    if base_has_slash and target_has_slash then
+        return "$base${string::slice(target, 1, string::len(target)) catch ""}"
+    end
+    if !base_has_slash and !target_has_slash then
+        return "$base/$target"
+    end
+    return "$base$target"
+end
+
+func ~has_scheme(target: string) -> bool
+    let separator = string::find(target, "://") orelse -1
+    if separator <= 0 then
+        return false
+    end
+    let scheme = string::slice(target, 0, separator) catch ""
+    return !string::contains(scheme, "/") and !string::contains(scheme, "?")
+end
+
+func ~start(url: string, query: map[string, string], exchange: Exchange, max_redirects: int) -> HttpError!Opened
+    let split = try without_user_info(url)
+    let target = try parse_target(encoded_url(split.url), query)
+    if !is_method(exchange.method) then
+        return HttpError.InvalidMethod
+    end
+    try check_headers(exchange.headers)
+    if split.authorization: credentials then
+        if !has_header_name(exchange.headers, "authorization") then
+            return try follow(target, with_authorization(exchange, credentials), max_redirects)
+        end
+    end
+    return try follow(target, exchange, max_redirects)
+end
+
+func ~with_authorization(exchange: Exchange, credentials: string) -> Exchange
+    let mut headers = copy(exchange.headers)
+    headers["Authorization"] = credentials
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = exchange.follows_redirects, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
+end
+
+func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpError!Opened
+    let opened = try send(target, exchange)
+    let response = opened.response
+    let location = redirect_location(response, exchange) orelse ""
+    if location == "" then
+        return opened
+    end
+    if redirects_left == 0 then
+        return HttpError.TooManyRedirects
+    end
+    let next = url::resolve(target, location) catch e then
+        return HttpError.InvalidResponse
+    end
+    let is_http = next.scheme == "http" or next.scheme == "https"
+    if !is_http then
+        return HttpError.UnsupportedScheme
+    end
+    return try follow(next, redirected(exchange, response.status, is_same_origin(target, next)), redirects_left - 1)
+end
+
+func ~redirect_location(response: Response, exchange: Exchange) -> ?string
+    if !can_follow(response.status, exchange) then
+        return null
+    end
+    return response.headers.get("location")
+end
+
+func ~is_redirect_status(status: int) -> bool
+    return status == 301 or status == 302 or status == 303 or status == 307 or status == 308
+end
+
+func ~redirected(exchange: Exchange, status: int, is_same_origin: bool) -> Exchange
+    let keeps_method = status == 307 or status == 308 or exchange.method == "HEAD"
+    let becomes_get = !keeps_method and (status == 303 or exchange.method != "GET")
+    let mut dropped: []string = []
+    if becomes_get then
+        append(dropped, "content-type")
+        append(dropped, "content-length")
+        append(dropped, "content-encoding")
+    end
+    if !is_same_origin then
+        append(dropped, "authorization")
+        append(dropped, "proxy-authorization")
+        append(dropped, "cookie")
+        append(dropped, "host")
+    end
+    let headers = without_headers(exchange.headers, dropped)
+    if becomes_get then
+        return Exchange(method = "GET", headers = headers, body = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
+    end
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
+end
+
+func ~without_headers(headers: map[string, string], dropped: []string) -> map[string, string]
+    let mut kept: map[string, string] = {}
+    for headers: value, name do
+        if !contains(dropped, string::lower(name)) then
+            kept[name] = value
+        end
+    end
+    return kept
+end
+
+func ~is_same_origin(a: url::Url, b: url::Url) -> bool
+    return a.scheme == b.scheme and a.host == b.host and port_of(a) == port_of(b)
+end
+
+func ~port_of(target: url::Url) -> int
+    return target.port orelse (if target.scheme == "https" then 443 else 80 end)
+end
+
+func ~parse_target(text: string, query: map[string, string]) -> HttpError!url::Url
+    let mut target = url::parse(text) catch e then
+        return HttpError.InvalidUrl
+    end
+    let is_http = target.scheme == "http" or target.scheme == "https"
+    if !is_http then
+        return HttpError.UnsupportedScheme
+    end
+    if map::len(query) == 0 then
+        return target
+    end
+    let extra = url::query(query)
+    let existing = target.query orelse ""
+    target.query = if existing == "" then extra else "$existing&$extra" end
+    return target
+end
+
+func ~check_headers(headers: map[string, string]) -> HttpError!void
+    for headers: value, name do
+        let is_valid = is_header_name(name) and is_header_value(value)
+        if !is_valid or string::lower(name) == "transfer-encoding" then
+            return HttpError.InvalidHeader
+        end
+    end
+end
+
+func ~send(target: url::Url, exchange: Exchange) -> HttpError!Opened
+    let key = pool_key_of(target, exchange)
+    let host = "${target.scheme}://${target.host}:${port_of(target)}"
+    for true do
+        try host_slot_take(host, exchange.max_connections_per_host, remaining_ms(exchange))
+        let reused = pool_take(key)
+        if reused >= 0 then
+            stream_hold_host_slot(reused, host)
+            let answered = try exchange_on_reused(reused, target, exchange, key)
+            if answered: opened then
+                return opened
+            end
+            continue
+        end
+        let stream_id = open_connection(target, exchange) catch e then
+            host_slot_release(host)
+            return e
+        end
+        stream_hold_host_slot(stream_id, host)
+        return try exchange_on(stream_id, target, exchange, key)
+    end
+    return HttpError.Other
+end
+
+func ~pool_key_of(target: url::Url, exchange: Exchange) -> string
+    let mut key = "${target.scheme}://${target.host}:${port_of(target)}"
+    if proxy_for(target, exchange): proxy then
+        key = "$key|via ${proxy.url.to_string()}|${proxy.authorization orelse ""}"
+    end
+    let uses_tls = target.scheme == "https" or key != "${target.scheme}://${target.host}:${port_of(target)}"
+    if !uses_tls then
+        return key
+    end
+    return "$key|${exchange.verify}|${exchange.ca orelse ""}"
+end
+
+func ~exchange_on_reused(stream_id: int, target: url::Url, exchange: Exchange, key: string) -> HttpError!?Opened
+    let opened = exchange_on(stream_id, target, exchange, key) catch e then
+        let can_retry = e == HttpError.ConnectionReset and is_idempotent(exchange.method) and !has_stream_body(exchange)
+        if can_retry then
+            return null
+        end
+        return e
+    end
+    return opened
+end
+
+func ~is_idempotent(method: string) -> bool
+    return method == "GET" or method == "HEAD" or method == "PUT" or method == "DELETE" or method == "OPTIONS"
+end
+
+func ~exchange_on(stream_id: int, target: url::Url, exchange: Exchange, key: string) -> HttpError!Opened
+    let response = receive(stream_id, target, exchange) catch e then
+        stream_close(stream_id)
+        return e
+    end
+    let opened = Opened(response = response, stream_id = stream_id, pool_key = key)
+    if is_followed(response.status, response.headers, exchange) then
+        if drain(stream_id, exchange) then
+            pool_put(key, stream_id)
+        else
+            stream_close(stream_id)
+        end
+        return opened
+    end
+    if exchange.reads_body then
+        pool_put(key, stream_id)
+    end
+    return opened
+end
+
+func ~drain(stream_id: int, exchange: Exchange) -> bool
+    stream_read_whole_body(stream_id, REDIRECT_DRAIN_LIMIT, remaining_ms(exchange)) catch e then
+        return false
+    end
+    return true
+end
+
+func ~is_followed(status: int, headers: Headers, exchange: Exchange) -> bool
+    return can_follow(status, exchange) and (headers.get("location") orelse "") != ""
+end
+
+func ~can_follow(status: int, exchange: Exchange) -> bool
+    let would_resend_stream = has_stream_body(exchange) and (status == 307 or status == 308)
+    return exchange.follows_redirects and is_redirect_status(status) and !would_resend_stream
+end
+
+func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
+    if proxy_for(target, exchange): proxy then
+        return try open_through_proxy(target, exchange, proxy)
+    end
+    let is_tls = target.scheme == "https"
+    let stream_id = open_tcp_stream(target.host, port_of(target), remaining_ms(exchange)) catch e then
+        return from_net(e)
+    end
+    if !is_tls then
+        return stream_id
+    end
+    stream_start_tls(stream_id, target.host, exchange.ca, exchange.verify, remaining_ms(exchange)) catch e then
+        stream_close(stream_id)
+        return from_net(e)
+    end
+    return stream_id
+end
+
+func ~open_through_proxy(target: url::Url, exchange: Exchange, proxy: Proxy) -> HttpError!int
+    let stream_id = open_tcp_stream(proxy.url.host, port_of(proxy.url), remaining_ms(exchange)) catch e then
+        return from_net(e)
+    end
+    if proxy.url.scheme == "https" then
+        stream_start_tls(stream_id, proxy.url.host, exchange.ca, exchange.verify, remaining_ms(exchange)) catch e then
+            stream_close(stream_id)
+            return from_net(e)
+        end
+    end
+    if target.scheme != "https" then
+        return stream_id
+    end
+    open_tunnel(stream_id, target, exchange, proxy) catch e then
+        stream_close(stream_id)
+        return e
+    end
+    stream_start_tunneled_tls(stream_id, target.host, exchange.ca, exchange.verify, remaining_ms(exchange)) catch e then
+        stream_close(stream_id)
+        return from_net(e)
+    end
+    return stream_id
+end
+
+func ~open_tunnel(stream_id: int, target: url::Url, exchange: Exchange, proxy: Proxy) -> HttpError!void
+    let host = if string::contains(target.host, ":") then "[${target.host}]" else target.host end
+    let authority = "$host:${port_of(target)}"
+    let mut lines = ["CONNECT $authority HTTP/1.1", "Host: $authority"]
+    if proxy.authorization: credentials then
+        append(lines, "Proxy-Authorization: $credentials")
+    else
+        for exchange.headers: value, name do
+            if string::lower(name) == "proxy-authorization" then
+                append(lines, "Proxy-Authorization: $value")
+                break
+            end
+        end
+    end
+    stream_set_write_timeout(stream_id, remaining_ms(exchange))
+    stream_write(stream_id, "${string::join(lines, "\r\n")}\r\n\r\n") catch e then
+        return from_io(e)
+    end
+    let head = try stream_read_head(stream_id, false, remaining_ms(exchange))
+    if head: received then
+        let parts = try parse_head(received, false)
+        let status = string::to_int(parts[0]) catch 0
+        let is_open = status >= 200 and status < 300
+        if !is_open then
+            return HttpError.ProxyRefused
+        end
+        return
+    end
+    return HttpError.ConnectionReset
+end
+
+func ~receive(stream_id: int, target: url::Url, exchange: Exchange) -> HttpError!Response
+    stream_set_write_timeout(stream_id, remaining_ms(exchange))
+    stream_write(stream_id, request_head(target, exchange)) catch e then
+        return from_io(e)
+    end
+    if try should_send_body(stream_id, exchange) then
+        if exchange.body: body then
+            try send_body(stream_id, body)
+        end
+    else
+        stream_forbid_reuse(stream_id)
+    end
+    let is_head_request = exchange.method == "HEAD"
+    let head = try stream_read_head(stream_id, is_head_request, remaining_ms(exchange))
+    if head: received then
+        let parts = try parse_head(received, is_head_request)
+        let status = string::to_int(parts[0]) catch 0
+        let headers = headers_of(parts)
+        let skips_body = !exchange.reads_body or is_followed(status, headers, exchange)
+        let body = if skips_body then buffer::from_string("") else try stream_read_whole_body(stream_id, exchange.max_body, remaining_ms(exchange)) end
+        let format = if skips_body then null else body_format(status, headers, exchange) end
+        let plain = if format: encoding then try decoded(body, encoding, exchange.max_body) else body end
+        return Response(status = status, reason = parts[1], headers = headers, body = plain, url = target.to_string())
+    end
+    return HttpError.ConnectionReset
+end
+
+func ~should_send_body(stream_id: int, exchange: Exchange) -> HttpError!bool
+    if !expects_continue(exchange) then
+        return true
+    end
+    let left = remaining_ms(exchange)
+    let wait_ms = if left >= 0 and left < CONTINUE_WAIT_MS then left else CONTINUE_WAIT_MS end
+    stream_wait_data(stream_id, wait_ms) catch e then
+        if e == io::IoError.TimedOut then
+            if exchange.timeout_ms >= 0 and remaining_ms(exchange) == 0 then
+                return HttpError.TimedOut
+            end
+            return true
+        end
+        return from_io(e)
+    end
+    return !stream_has_final_status(stream_id)
+end
+
+func ~expects_continue(exchange: Exchange) -> bool
+    if has_header_name(exchange.headers, "expect") then
+        return false
+    end
+    if has_stream_body(exchange) then
+        return true
+    end
+    return body_length(exchange) >= EXPECT_CONTINUE_SIZE
+end
+
+func ~has_stream_body(exchange: Exchange) -> bool
+    if exchange.body: body then
+        return body.stream != null
+    end
+    return false
+end
+
+func ~send_body(stream_id: int, body: Body) -> HttpError!void
+    when body
+        text: text then
+            stream_write(stream_id, text) catch e then
+                return from_io(e)
+            end
+        end
+        bytes: data then
+            stream_write_bytes(stream_id, data) catch e then
+                return from_io(e)
+            end
+        end
+        stream: streamed then
+            try send_body_stream(stream_id, streamed.write, streamed.length)
+        end
+    end
+end
+
+func ~send_body_stream(stream_id: int, write: func(mut BodyWriter) -> io::IoError!void, length: int) -> HttpError!void
+    let mut pending = buffer::new(BODY_WRITER_SIZE) catch e then
+        return HttpError.Other
+    end
+    let mut compressor = compression::Compressor(compression::Format.Gzip)
+    let mut writer = BodyWriter(stream_id = stream_id, server_id = -1, is_chunked = length < 0, is_discarding = false, remaining = length, pending = pending, used = 0, compressor = compressor, is_compressing = false)
+    write(writer) catch e then
+        return from_io(e)
+    end
+    writer.finish_body() catch e then
+        return from_io(e)
+    end
+    if writer.is_chunked then
+        stream_write(stream_id, "0\r\n\r\n") catch e then
+            return from_io(e)
+        end
+        return
+    end
+    if writer.remaining != 0 then
+        return HttpError.Other
+    end
+end
+
+func ~request_head(target: url::Url, exchange: Exchange) -> string
+    let mut lines: []string = []
+    let path = if target.query: query then "${target.path}?$query" else target.path end
+    let proxy = if target.scheme == "http" then proxy_for(target, exchange) else null end
+    let request_target = if proxy != null then "http://${host_header(target)}$path" else path end
+    append(lines, "${exchange.method} $request_target HTTP/1.1")
+    let mut given: map[string, bool] = {}
+    if proxy: through then
+        if through.authorization: credentials then
+            append(lines, "Proxy-Authorization: $credentials")
+            given["proxy-authorization"] = true
+        end
+    end
+    for exchange.headers: value, name do
+        let lowered = string::lower(name)
+        if lowered == "content-length" then
+            continue
+        end
+        if lowered == "proxy-authorization" and (proxy == null or map::has(given, "proxy-authorization")) then
+            continue
+        end
+        if lowered == "host" and map::has(given, "host") then
+            continue
+        end
+        given[lowered] = true
+        append(lines, "$name: $value")
+    end
+    if !map::has(given, "host") then
+        append(lines, "Host: ${host_header(target)}")
+    end
+    if !map::has(given, "user-agent") then
+        append(lines, "User-Agent: ${user_agent()}")
+    end
+    if asks_for_encoding(exchange) then
+        append(lines, "Accept-Encoding: gzip, deflate")
+    end
+    let length = body_length(exchange)
+    if length >= 0 then
+        append(lines, "Content-Length: $length")
+    elif has_stream_body(exchange) then
+        append(lines, "Transfer-Encoding: chunked")
+    end
+    if expects_continue(exchange) then
+        append(lines, "Expect: 100-continue")
+    end
+    return "${string::join(lines, "\r\n")}\r\n\r\n"
+end
+
+func ~asks_for_encoding(exchange: Exchange) -> bool
+    if exchange.method == "HEAD" then
+        return false
+    end
+    for exchange.headers: value, name do
+        if string::lower(name) == "accept-encoding" then
+            return false
+        end
+    end
+    return true
+end
+
+func ~body_format(status: int, headers: Headers, exchange: Exchange) -> ?compression::Format
+    let has_no_body = status < 200 or status == 204 or status == 304
+    if has_no_body or !asks_for_encoding(exchange) then
+        return null
+    end
+    let encoding = string::lower(string::trim(headers.get("content-encoding") orelse ""))
+    return when encoding
+        "gzip", "x-gzip" then compression::Format.Gzip end
+        "deflate" then compression::Format.Zlib end
+        else then null end
+    end
+end
+
+func ~decoded(body: buffer, format: compression::Format, max: int) -> HttpError!buffer
+    if buffer::len(body) == 0 then
+        return body
+    end
+    let plain = compression::decompress(body, format, max) catch e then
+        if e == compression::CompressionError.TooLarge then
+            return HttpError.BodyTooLarge
+        end
+        if format != compression::Format.Zlib then
+            return HttpError.InvalidResponse
+        end
+        return try decoded(body, compression::Format.Deflate, max)
+    end
+    return plain
+end
+
+func ~host_header(target: url::Url) -> string
+    let host = if string::contains(target.host, ":") then "[${target.host}]" else target.host end
+    let default_port = if target.scheme == "https" then 443 else 80 end
+    if target.port: port then
+        if port != default_port then
+            return "$host:$port"
+        end
+    end
+    return host
+end
+
+func ~body_length(exchange: Exchange) -> int
+    if exchange.body: body then
+        when body
+            text: text then return string::len(text) end
+            bytes: data then return buffer::len(data) end
+            stream: streamed then return streamed.length end
+        end
+    end
+    let needs_length = exchange.method == "POST" or exchange.method == "PUT" or exchange.method == "PATCH"
+    return if needs_length then 0 else -1 end
+end
+
+func ~headers_of(parts: []string, first: int = 2) -> Headers
+    let mut items: []Header = []
+    let mut lowered: []string = []
+    let mut index = first
+    for index < len(parts) do
+        append(items, Header(name = parts[index], value = parts[index + 1]))
+        append(lowered, string::lower(parts[index]))
+        index = index + 2
+    end
+    return Headers(items = items, lowered = lowered)
+end
+
+func ~remaining_ms(exchange: Exchange) -> int
+    if exchange.timeout_ms < 0 then
+        return -1
+    end
+    let left = exchange.timeout_ms - (time::monotonic_ns() - exchange.started_ns) // 1000000
+    return if left > 0 then left else 0 end
+end
+
+func ~from_net(failure: net::NetError) -> HttpError
+    return when failure
+        net::NetError.HostNotFound then HttpError.HostNotFound end
+        net::NetError.ConnectionRefused then HttpError.ConnectionRefused end
+        net::NetError.NetworkUnreachable then HttpError.NetworkUnreachable end
+        net::NetError.TimedOut then HttpError.TimedOut end
+        net::NetError.HandshakeFailed then HttpError.HandshakeFailed end
+        net::NetError.UntrustedCertificate then HttpError.UntrustedCertificate end
+        net::NetError.ExpiredCertificate then HttpError.ExpiredCertificate end
+        net::NetError.WrongHostCertificate then HttpError.WrongHostCertificate end
+        net::NetError.InvalidCertificate then HttpError.InvalidCertificate end
+        net::NetError.InvalidAddress then HttpError.InvalidUrl end
+        net::NetError.AddressInUse then HttpError.AddressInUse end
+        net::NetError.PermissionDenied then HttpError.PermissionDenied end
+        else then HttpError.Other end
+    end
+end
+
+func ~from_io(failure: io::IoError) -> HttpError
+    return when failure
+        io::IoError.Closed then HttpError.Closed end
+        io::IoError.BrokenPipe then HttpError.ConnectionReset end
+        io::IoError.ConnectionReset then HttpError.ConnectionReset end
+        io::IoError.TimedOut then HttpError.TimedOut end
+        io::IoError.HandshakeFailed then HttpError.HandshakeFailed end
+        else then HttpError.Other end
+    end
+end
+
+func text(body: string, status: int = 200) -> Response
+    return response_with(status, ContentType.TEXT, buffer::from_string(body))
+end
+
+func json_text(body: string, status: int = 200) -> Response
+    return response_with(status, ContentType.JSON, buffer::from_string(body))
+end
+
+func html(body: string, status: int = 200) -> Response
+    return response_with(status, ContentType.HTML, buffer::from_string(body))
+end
+
+func bytes(data: buffer, content_type: string = ContentType.BINARY, status: int = 200) -> Response
+    return response_with(status, content_type, data)
+end
+
+func status(code: int) -> Response
+    return Response(status = code, reason = "", headers = Headers(items = [], lowered = []), body = buffer::from_string(""), url = "")
+end
+
+func redirect(location: string, status: int = 302) -> Response
+    return Response(status = status, reason = "", headers = Headers(items = [Header(name = "Location", value = location)], lowered = ["location"]), body = buffer::from_string(""), url = "")
+end
+
+func stream(write: func(mut BodyWriter) -> io::IoError!void, content_type: string = ContentType.BINARY, status: int = 200, length: int = -1) -> Response
+    let mut response = response_with(status, content_type, buffer::from_string(""))
+    response.stream = write
+    response.stream_length = length
+    return response
+end
+
+func file(path: string, content_type: string, status: int = 200) -> fs::FsError!Response
+    let opened = try fs::open(path)
+    let size = opened.size() catch e then
+        opened.close() catch ce then end
+        return fs::FsError.Other
+    end
+    return stream(func(mut writer: BodyWriter) -> io::IoError!void
+        send_file(opened, writer) catch e then
+            opened.close() catch ce then end
+            return e
+        end
+        try opened.close()
+    end, content_type = content_type, status = status, length = size)
+end
+
+func content_type_of(path: string) -> string
+    let name = string::find_reverse(path, "/") orelse -1
+    let dot = string::find_reverse(path, ".") orelse -1
+    let has_extension = dot > name + 1
+    if !has_extension then
+        return ContentType.BINARY
+    end
+    let extension = string::lower(string::slice(path, dot + 1, string::len(path)) catch "")
+    return when extension
+        "html", "htm" then ContentType.HTML end
+        "css" then ContentType.CSS end
+        "js", "mjs" then ContentType.JS end
+        "json", "map" then ContentType.JSON end
+        "txt" then ContentType.TEXT end
+        "md" then "text/markdown; charset=utf-8" end
+        "csv" then ContentType.CSV end
+        "xml" then ContentType.XML end
+        "svg" then ContentType.SVG end
+        "png" then ContentType.PNG end
+        "jpg", "jpeg" then ContentType.JPEG end
+        "gif" then ContentType.GIF end
+        "webp" then ContentType.WEBP end
+        "avif" then "image/avif" end
+        "ico" then ContentType.ICO end
+        "wasm" then ContentType.WASM end
+        "pdf" then ContentType.PDF end
+        "woff" then "font/woff" end
+        "woff2" then "font/woff2" end
+        "ttf" then "font/ttf" end
+        "otf" then "font/otf" end
+        "mp4" then "video/mp4" end
+        "webm" then "video/webm" end
+        "mp3" then "audio/mpeg" end
+        "ogg" then "audio/ogg" end
+        "wav" then "audio/wav" end
+        "zip" then "application/zip" end
+        "gz" then "application/gzip" end
+        else then ContentType.BINARY end
+    end
+end
+
+func ~send_file(opened: fs::File, mut writer: BodyWriter) -> io::IoError!void
+    for true do
+        let piece = try opened.read_bytes(FILE_PIECE_SIZE)
+        if piece: data then
+            try writer.write_bytes(data)
+        else
+            return
+        end
+    end
+end
+
+func ~response_with(code: int, content_type: string, body: buffer) -> Response
+    return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
+end
+
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6) -> HttpError!Server
+    if compression_level < 0 or compression_level > 9 then
+        invalid_compression_level(compression_level)
+    end
+    let listener = open_listener(host, port, cert, backlog) catch e then
+        return from_net(e)
+    end
+    let server_id = server_state_new()
+    return Server(listener = listener, server_id = server_id, owner = own(4, server_id), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level)
+end
+
+func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener
+    if cert: certificate then
+        return try net::tls_listen(host, port, certificate, backlog)
+    end
+    return try net::tcp_listen(host, port, backlog)
+end
+
+func ~print_failure[E: error](request: Request, failure: Failure[E]) -> void
+    when failure
+        handler: e then io::eprintln("http: ${request.method} ${request.path} failed: $e") end
+        invalid_response: why then io::eprintln("http: ${request.method} ${request.path} failed: $why") end
+        streaming: e then io::eprintln("http: ${request.method} ${request.path} failed while streaming: $e") end
+    end
+end
+
+func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response, report: func(Request, Failure[E]) -> void) -> void
+    let stream_id = conn_stream_id(conn)
+    stream_set_write_timeout(stream_id, server.write_timeout_ms)
+    let mut is_first = true
+    for serve_request(server, conn, stream_id, handler, report, is_first) do
+        is_first = false
+    end
+    conn.close()
+end
+
+func ~serve_request[E: error](server: Server, conn: net::TcpConn, stream_id: int, handler: func(Request) -> E!Response, report: func(Request, Failure[E]) -> void, is_first: bool) -> bool
+    let received = next_head(server, stream_id, is_first) catch e then
+        reject(stream_id, e)
+        return false
+    end
+    if received: head then
+        let request = request_of(head, conn, stream_id, server) catch e then
+            reject(stream_id, HttpError.InvalidRequest)
+            return false
+        end
+        let response = handler(request) catch e then
+            let body_failure = request_body_failure(stream_id)
+            if body_failure == BODY_TOO_LARGE then
+                return finish(server, request, status(413), report)
+            end
+            if body_failure == BODY_INVALID then
+                return finish(server, request, status(400), report)
+            end
+            report(request, @(handler = e))
+            return finish(server, request, status(500), report)
+        end
+        return finish(server, request, response, report)
+    end
+    return false
+end
+
+func ~next_head(server: Server, stream_id: int, is_first: bool) -> HttpError!?buffer
+    if !server_set_idle(server.server_id, stream_id, true) then
+        return null
+    end
+    let wait_ms = if is_first then server.head_timeout_ms else server.idle_timeout_ms end
+    let ready = stream_wait_data(stream_id, wait_ms) catch e then
+        server_set_idle(server.server_id, stream_id, false)
+        return null
+    end
+    server_set_idle(server.server_id, stream_id, false)
+    if ready == null then
+        return null
+    end
+    return try stream_read_request_head(stream_id, server.head_timeout_ms)
+end
+
+func ~reject(stream_id: int, failure: HttpError) -> void
+    let code = when failure
+        HttpError.InvalidRequest then 400 end
+        HttpError.HeadersTooLarge then 431 end
+        HttpError.TimedOut then 408 end
+        else then 0 end
+    end
+    if code == 0 then
+        return
+    end
+    stream_write(stream_id, "HTTP/1.1 $code ${reason_phrase(code)}\r\nDate: ${http_date()}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") catch e then
+    end
+end
+
+func ~request_of(head: buffer, conn: net::TcpConn, stream_id: int, server: Server) -> HttpError!Request
+    let parts = try parse_request_head(head)
+    let target = parts[1]
+    let mut raw_path = target
+    let mut query: ?string = null
+    if string::starts_with(target, "/") then
+        let question = string::find(target, "?") orelse -1
+        if question >= 0 then
+            raw_path = string::slice(target, 0, question) catch target
+            query = string::slice(target, question + 1, string::len(target)) catch ""
+        end
+    elif target != "*" then
+        let absolute = url::parse(target) catch e then
+            return HttpError.InvalidRequest
+        end
+        raw_path = absolute.path
+        query = absolute.query
+    end
+    if string::find(string::lower(raw_path), "%00") != null then
+        return HttpError.InvalidRequest
+    end
+    let path = url::decode(raw_path) catch e then
+        return HttpError.InvalidRequest
+    end
+    let headers = headers_of(parts, first = 4)
+    let is_http_11 = parts[2] == "11"
+    if is_http_11 and len(headers.get_all("host")) != 1 then
+        return HttpError.InvalidRequest
+    end
+    let expect_value = string::lower(string::trim(headers.get("expect") orelse ""))
+    if expect_value != "" and expect_value != "100-continue" then
+        return HttpError.InvalidRequest
+    end
+    let expects_continue = is_http_11 and expect_value == "100-continue"
+    return Request(method = parts[0], target = target, path = path, query = query, headers = headers, remote_address = conn.remote_address(), stream_id = stream_id, keeps_alive = parts[3] == "1", max_body = server.max_body, expects_continue = expects_continue)
+end
+
+func ~finish[E: error](server: Server, request: Request, response: Response, report: func(Request, Failure[E]) -> void) -> bool
+    let body_state = request_body_state(request.stream_id, request.expects_continue)
+    let is_body_done = body_state == BODY_COMPLETE or (body_state == BODY_UNREAD and drain_request(server, request))
+    if !is_body_done then
+        return write_response(server, request, checked_response(request, response, report), report, false) and false
+    end
+    let wants_close = has_connection_token(response.headers, "close")
+    let keeps_alive = request.keeps_alive and !wants_close and !server_is_closing(server.server_id)
+    return write_response(server, request, checked_response(request, response, report), report, keeps_alive) and keeps_alive
+end
+
+func ~has_connection_token(headers: Headers, token: string) -> bool
+    for headers.get_all("connection"): value do
+        for string::split(value, ","): entry do
+            if string::lower(string::trim(entry)) == token then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+func ~drain_request(server: Server, request: Request) -> bool
+    stream_drain_request_body(request.stream_id, REQUEST_DRAIN_LIMIT, server.head_timeout_ms) catch e then
+        return false
+    end
+    return true
+end
+
+func ~checked_response[E: error](request: Request, response: Response, report: func(Request, Failure[E]) -> void) -> Response
+    let is_valid_status = response.status >= 100 and response.status <= 599
+    if !is_valid_status then
+        report(request, @(invalid_response = "invalid response status '${response.status}'"))
+        return status(500)
+    end
+    if response.reason != "" and !is_header_value(response.reason) then
+        report(request, @(invalid_response = "invalid response reason"))
+        return status(500)
+    end
+    for response.headers.items: header do
+        let is_valid = is_header_name(header.name) and is_header_value(header.value)
+        if !is_valid then
+            report(request, @(invalid_response = "invalid response header '${header.name}'"))
+            return status(500)
+        end
+    end
+    return response
+end
+
+func ~write_response[E: error](server: Server, request: Request, response: Response, report: func(Request, Failure[E]) -> void, keeps_alive: bool) -> bool
+    let code = response.status
+    let reason = if response.reason == "" then reason_phrase(code) else response.reason end
+    let has_body = !(code < 200 or code == 204 or code == 304)
+    let can_compress = has_body and is_compressible(server, response)
+    let accept_encoding = string::join(request.headers.get_all("accept-encoding"), ",")
+    let is_gzip_accepted = can_compress and accepts_gzip(accept_encoding)
+    let packed = if is_gzip_accepted and response.stream == null then gzipped(server, response.body) else null end
+    let is_stream_large_enough = response.stream_length < 0 or response.stream_length >= MIN_COMPRESSED_BODY
+    let is_stream_compressed = is_gzip_accepted and response.stream != null and is_stream_large_enough
+    let is_compressed = packed != null or is_stream_compressed
+    let body = packed orelse response.body
+    let mut lines: []string = ["HTTP/1.1 $code $reason"]
+    let mut has_vary = false
+    for response.headers.items: header do
+        if is_managed_header(header.name) then
+            continue
+        end
+        let lowered = string::lower(header.name)
+        let needs_vary = can_compress and lowered == "vary"
+        if needs_vary then
+            append(lines, "${header.name}: ${with_accept_encoding(header.value)}")
+            has_vary = true
+            continue
+        end
+        if is_compressed and lowered == "etag" and string::starts_with(string::trim(header.value), "\"") then
+            append(lines, "${header.name}: W/${string::trim(header.value)}")
+            continue
+        end
+        append(lines, "${header.name}: ${header.value}")
+    end
+    if can_compress and !has_vary then
+        append(lines, "Vary: Accept-Encoding")
+    end
+    if is_compressed then
+        append(lines, "Content-Encoding: gzip")
+    end
+    if !response.headers.has("date") then
+        append(lines, "Date: ${http_date()}")
+    end
+    let is_chunked = response.stream != null and (response.stream_length < 0 or is_stream_compressed)
+    if has_body and is_chunked then
+        append(lines, "Transfer-Encoding: chunked")
+    elif has_body then
+        let length = if response.stream != null then response.stream_length else buffer::len(body) end
+        append(lines, "Content-Length: $length")
+    end
+    if !keeps_alive then
+        append(lines, "Connection: close")
+    end
+    let head = "${string::join(lines, "\r\n")}\r\n\r\n"
+    if response.stream: write then
+        stream_write(request.stream_id, head) catch e then
+            return false
+        end
+        return write_stream_body(server, request, write, has_body and request.method != "HEAD", response.stream_length, is_stream_compressed, report)
+    end
+    let sends_body = has_body and request.method != "HEAD" and buffer::len(body) > 0
+    if !sends_body then
+        stream_write(request.stream_id, head) catch e then
+            return false
+        end
+        return true
+    end
+    if buffer::len(body) <= JOINED_BODY_LIMIT then
+        return write_joined(request.stream_id, head, body)
+    end
+    stream_write(request.stream_id, head) catch e then
+        return false
+    end
+    stream_write_bytes(request.stream_id, body) catch e then
+        return false
+    end
+    return true
+end
+
+func ~is_compressible(server: Server, response: Response) -> bool
+    if !server.compress or response.headers.has("content-encoding") then
+        return false
+    end
+    let content_type = response.headers.get("content-type") orelse ""
+    let media_type = string::lower(string::trim(string::split(content_type, ";")[0]))
+    let is_text = string::starts_with(media_type, "text/") or string::ends_with(media_type, "+json") or string::ends_with(media_type, "+xml")
+    return is_text or media_type == "application/json" or media_type == "application/javascript" or media_type == "application/xml" or media_type == "application/wasm"
+end
+
+func ~accepts_gzip(accept_encoding: string) -> bool
+    let mut is_any_accepted = false
+    for string::split(accept_encoding, ","): entry do
+        let parts = string::split(entry, ";")
+        let name = string::lower(string::trim(parts[0]))
+        let is_allowed = !has_zero_quality(parts)
+        if name == "gzip" or name == "x-gzip" then
+            return is_allowed
+        end
+        if name == "*" then
+            is_any_accepted = is_allowed
+        end
+    end
+    return is_any_accepted
+end
+
+func ~has_zero_quality(parts: []string) -> bool
+    for parts: part, i do
+        let param = string::lower(string::trim(part))
+        let is_quality = i > 0 and string::starts_with(param, "q=")
+        if is_quality then
+            let value = string::trim(string::slice(param, 2, string::len(param)) catch "")
+            return (string::to_float(value) catch 1.0) == 0.0
+        end
+    end
+    return false
+end
+
+func ~with_accept_encoding(vary: string) -> string
+    let trimmed = string::trim(vary)
+    if trimmed == "" then
+        return "Accept-Encoding"
+    end
+    for string::split(trimmed, ","): entry do
+        let token = string::lower(string::trim(entry))
+        if token == "accept-encoding" or token == "*" then
+            return vary
+        end
+    end
+    return "$trimmed, Accept-Encoding"
+end
+
+func ~gzipped(server: Server, body: buffer) -> ?buffer
+    if buffer::len(body) < MIN_COMPRESSED_BODY then
+        return null
+    end
+    let packed = compression::compress(body, compression::Format.Gzip, server.compression_level) catch e then
+        return null
+    end
+    if buffer::len(packed) >= buffer::len(body) then
+        return null
+    end
+    return packed
+end
+
+func ~write_stream_body[E: error](server: Server, request: Request, write: func(mut BodyWriter) -> io::IoError!void, sends_body: bool, length: int, is_compressing: bool, report: func(Request, Failure[E]) -> void) -> bool
+    let mut pending = buffer::new(BODY_WRITER_SIZE) catch e then
+        return false
+    end
+    let mut compressor = compression::Compressor(compression::Format.Gzip, level = server.compression_level)
+    let is_chunked = sends_body and (length < 0 or is_compressing)
+    let mut writer = BodyWriter(stream_id = request.stream_id, server_id = server.server_id, is_chunked = is_chunked, is_discarding = !sends_body, remaining = length, pending = pending, used = 0, compressor = compressor, is_compressing = is_compressing)
+    let is_sent = send_stream_body(request, write, writer, sends_body, report)
+    writer.compressor.close()
+    return is_sent
+end
+
+func ~send_stream_body[E: error](request: Request, write: func(mut BodyWriter) -> io::IoError!void, mut writer: BodyWriter, sends_body: bool, report: func(Request, Failure[E]) -> void) -> bool
+    write(writer) catch e then
+        if !sends_body and e == io::IoError.Closed then
+            return true
+        end
+        let is_expected = !sends_body or e == io::IoError.Closed
+        if !is_expected then
+            report(request, @(streaming = e))
+        end
+        return false
+    end
+    if !sends_body then
+        return true
+    end
+    writer.finish_body() catch e then
+        return false
+    end
+    if writer.is_chunked then
+        stream_write(request.stream_id, "0\r\n\r\n") catch e then
+            return false
+        end
+        return true
+    end
+    return writer.remaining == 0
+end
+
+func ~hex_text(number: int) -> string
+    let digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+    let digit = digits[number % 16]
+    if number < 16 then
+        return digit
+    end
+    return "${hex_text(number // 16)}$digit"
+end
+
+func ~write_joined(stream_id: int, head: string, body: buffer) -> bool
+    let mut message = buffer::new(string::len(head) + buffer::len(body)) catch e then
+        return false
+    end
+    let body_start = buffer::put(message, 0, head) catch e then
+        return false
+    end
+    buffer::put_bytes(message, body_start, body) catch e then
+        return false
+    end
+    stream_write_bytes(stream_id, message) catch e then
+        return false
+    end
+    return true
+end
+
+func ~is_managed_header(name: string) -> bool
+    let lowered = string::lower(name)
+    return lowered == "content-length" or lowered == "transfer-encoding" or lowered == "connection" or lowered == "keep-alive"
+end
+
+func ~reason_phrase(code: int) -> string
+    return when code
+        100 then "Continue" end
+        101 then "Switching Protocols" end
+        200 then "OK" end
+        201 then "Created" end
+        202 then "Accepted" end
+        204 then "No Content" end
+        206 then "Partial Content" end
+        301 then "Moved Permanently" end
+        302 then "Found" end
+        303 then "See Other" end
+        304 then "Not Modified" end
+        307 then "Temporary Redirect" end
+        308 then "Permanent Redirect" end
+        400 then "Bad Request" end
+        401 then "Unauthorized" end
+        403 then "Forbidden" end
+        404 then "Not Found" end
+        405 then "Method Not Allowed" end
+        406 then "Not Acceptable" end
+        408 then "Request Timeout" end
+        409 then "Conflict" end
+        410 then "Gone" end
+        411 then "Length Required" end
+        412 then "Precondition Failed" end
+        413 then "Content Too Large" end
+        414 then "URI Too Long" end
+        415 then "Unsupported Media Type" end
+        417 then "Expectation Failed" end
+        422 then "Unprocessable Content" end
+        426 then "Upgrade Required" end
+        429 then "Too Many Requests" end
+        431 then "Request Header Fields Too Large" end
+        500 then "Internal Server Error" end
+        501 then "Not Implemented" end
+        502 then "Bad Gateway" end
+        503 then "Service Unavailable" end
+        504 then "Gateway Timeout" end
+        else then "Unknown" end
+    end
+end

@@ -1,0 +1,5 @@
+import "@/sub-dir/my-mod": helper
+
+func main() -> void
+    assert(helper(3) == 6)
+end

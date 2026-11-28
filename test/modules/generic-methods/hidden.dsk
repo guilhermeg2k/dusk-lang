@@ -1,0 +1,6 @@
+import "@/lib"
+
+func main() -> void
+    let s = lib::store([1])
+    let x = s.secret(1)
+end

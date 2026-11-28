@@ -1,5 +1,6 @@
-import std/string
+import "std/string"
+import "std/io"
 
 func main() -> void
-    echo(string::char_count(1))
+    io::println("${string::char_count(1)}")
 end

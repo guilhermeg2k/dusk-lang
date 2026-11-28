@@ -1,3 +1,5 @@
+import "std/io"
+
 error ParseError
     Empty
     BadDigit
@@ -102,7 +104,7 @@ func main() -> !void
     assert(counter.count == 2)
 
     let text = label(0) catch "fallback"
-    echo(text)
+    io::println("${text}")
 
     let maybe = find(0) catch null
     assert(maybe == null)

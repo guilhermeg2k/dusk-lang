@@ -1,5 +1,6 @@
-import std/array: append
-import std/string
+import "std/array": append
+import "std/string"
+import "std/io"
 
 func main() -> void
     let mut kept: []string = []
@@ -16,6 +17,6 @@ func main() -> void
             append(kept, text)
         end
     end
-    echo(string::join(kept, " | "))
-    echo(total)
+    io::println("${string::join(kept, " | ")}")
+    io::println("${total}")
 end

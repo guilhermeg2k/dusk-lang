@@ -1,0 +1,237 @@
+import "std/buffer"
+import "std/compression"
+import "std/fs"
+import "std/http"
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/task"
+
+struct Progress
+    seen: int = 0
+end
+
+func big_text() -> string
+    return string::repeat("compress me please, ", 200) catch ""
+end
+
+func noise(size: int) -> !buffer
+    let mut data = try buffer::new(size)
+    let mut seed = 99
+    for 0..size - 1: i do
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        data[i] = try to_byte((seed // 65536) % 256)
+    end
+    return data
+end
+
+func route(req: http::Request, progress: Progress, random: buffer) -> !http::Response
+    when req.path
+        "/big" then return http::text(big_text()) end
+        "/small" then return http::text("short answer") end
+        "/json" then return http::json_text("[${string::repeat("{\"id\": 1, \"name\": \"dusk\"}, ", 100) catch ""}{}]") end
+        "/binary" then return http::bytes(try buffer::new(5000)) end
+        "/random" then return http::bytes(random, content_type = "text/plain") end
+        "/encoded" then
+            let mut response = http::text(big_text())
+            response.headers.set("Content-Encoding", "br")
+            return response
+        end
+        "/vary" then
+            let mut response = http::text(big_text())
+            response.headers.set("Vary", "Origin")
+            return response
+        end
+        "/vary-any" then
+            let mut response = http::text(big_text())
+            response.headers.set("Vary", "*")
+            return response
+        end
+        "/stream" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                for 0..99: i do
+                    try writer.write("line $i of a streamed answer\n")
+                end
+            end, content_type = "text/plain")
+        end
+        "/sized" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                try writer.write(big_text())
+            end, content_type = "text/plain", length = string::len(big_text()))
+        end
+        "/tiny-sized" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                try writer.write("tiny")
+            end, content_type = "text/plain", length = 4)
+        end
+        "/file" then return try http::file("test/fixtures/compression/sample.txt", "text/plain") end
+        "/events" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                for 0..2: n do
+                    try writer.write("data: $n\n\n")
+                    try writer.flush()
+                    let mut waited = 0
+                    for progress.seen <= n and waited < 3000 do
+                        task::sleep(1)
+                        waited = waited + 1
+                    end
+                    if waited >= 3000 then
+                        try writer.write("data: stalled\n\n")
+                    end
+                end
+            end, content_type = "text/event-stream")
+        end
+        else then return http::status(404) end
+    end
+end
+
+func raw_exchange(port: int, text: string) -> !string
+    let conn = try net::tcp_connect("127.0.0.1", port)
+    try conn.write(text)
+    let answer = try conn.read_all(timeout_ms = 3000)
+    conn.close()
+    return answer
+end
+
+func encoding_for(base: string, accept: string) -> !string
+    let response = try http::request("$base/big", headers = {"Accept-Encoding": accept})
+    return response.headers.get("content-encoding") orelse "none"
+end
+
+func main() -> !void
+    let mut progress = Progress()
+    let random = try noise(3000)
+    let server = try http::listen("127.0.0.1", 0)
+    let running = spawn(func() -> void
+        server.serve(func(req: http::Request) -> !http::Response
+            return try route(req, progress, random)
+        end)
+    end)
+    let port = server.port()
+    let base = "http://127.0.0.1:$port"
+    let original = big_text()
+
+    let big = try http::request("$base/big")
+    assert(try big.text() == original)
+    assert(big.headers.get("content-encoding") == "gzip")
+    assert(big.headers.get("vary") == "Accept-Encoding")
+
+    let raw = try http::request("$base/big", headers = {"Accept-Encoding": "gzip"})
+    assert(raw.headers.get("content-encoding") == "gzip")
+    assert(raw.headers.get("content-length") == "${buffer::len(raw.body)}")
+    assert(buffer::len(raw.body) < string::len(original) // 10)
+    assert(try string::from_bytes(try compression::decompress(raw.body, compression::Format.Gzip)) == original)
+
+    let head = try http::request("$base/big", method = "HEAD", headers = {"Accept-Encoding": "gzip"})
+    assert(head.headers.get("content-encoding") == "gzip")
+    assert(head.headers.get("content-length") == "${buffer::len(raw.body)}")
+    assert(buffer::len(head.body) == 0)
+
+    let small = try http::request("$base/small")
+    assert(try small.text() == "short answer")
+    assert(!small.headers.has("content-encoding"))
+    assert(small.headers.get("vary") == "Accept-Encoding")
+
+    let json = try http::request("$base/json")
+    assert(json.headers.get("content-encoding") == "gzip")
+    assert(string::starts_with(try json.text(), "[{\"id\": 1"))
+
+    let binary = try http::request("$base/binary")
+    assert(buffer::len(binary.body) == 5000)
+    assert(!binary.headers.has("content-encoding"))
+    assert(!binary.headers.has("vary"))
+
+    let random_answer = try http::request("$base/random", headers = {"Accept-Encoding": "gzip"})
+    assert(!random_answer.headers.has("content-encoding"))
+    assert(random_answer.headers.get("vary") == "Accept-Encoding")
+    assert(buffer::len(random_answer.body) == 3000)
+
+    let encoded = try http::request("$base/encoded", headers = {"Accept-Encoding": "gzip"})
+    assert(encoded.headers.get("content-encoding") == "br")
+    assert(try encoded.text() == original)
+    assert(!encoded.headers.has("vary"))
+
+    let vary = try http::request("$base/vary")
+    assert(vary.headers.get("vary") == "Origin, Accept-Encoding")
+    let vary_any = try http::request("$base/vary-any")
+    assert(vary_any.headers.get("vary") == "*")
+
+    assert(try encoding_for(base, "gzip;q=0") == "none")
+    assert(try encoding_for(base, "deflate") == "none")
+    assert(try encoding_for(base, "identity") == "none")
+    assert(try encoding_for(base, "*") == "gzip")
+    assert(try encoding_for(base, "*;q=0") == "none")
+    assert(try encoding_for(base, "br, gzip;q=0.5") == "gzip")
+    assert(try encoding_for(base, "GZIP; Q=1.0") == "gzip")
+    assert(try encoding_for(base, "gzip;q=0.000, *") == "none")
+    assert(try encoding_for(base, "x-gzip") == "gzip")
+    let without_header = try raw_exchange(port, "GET /big HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+    assert(!string::contains(string::lower(without_header), "content-encoding"))
+    assert(string::contains(without_header, "Vary: Accept-Encoding\r\n"))
+    assert(string::ends_with(without_header, original))
+
+    let streamed = try http::request("$base/stream")
+    assert(streamed.headers.get("content-encoding") == "gzip")
+    assert(streamed.headers.get("transfer-encoding") == "chunked")
+    assert(string::starts_with(try streamed.text(), "line 0 of a streamed answer\nline 1"))
+    assert(string::ends_with(try streamed.text(), "line 99 of a streamed answer\n"))
+
+    let sized = try http::request("$base/sized")
+    assert(sized.headers.get("content-encoding") == "gzip")
+    assert(sized.headers.get("transfer-encoding") == "chunked")
+    assert(!sized.headers.has("content-length"))
+    assert(try sized.text() == original)
+
+    let tiny = try http::request("$base/tiny-sized")
+    assert(!tiny.headers.has("content-encoding"))
+    assert(tiny.headers.get("content-length") == "4")
+    assert(try tiny.text() == "tiny")
+
+    let file = try http::request("$base/file")
+    assert(file.headers.get("content-encoding") == "gzip")
+    assert(try file.text() == try fs::read("test/fixtures/compression/sample.txt"))
+
+    let file_head = try http::request("$base/file", method = "HEAD", headers = {"Accept-Encoding": "gzip"})
+    assert(file_head.headers.get("content-encoding") == "gzip")
+    assert(buffer::len(file_head.body) == 0)
+
+    let mut live = try http::open("$base/events")
+    assert(live.headers.get("content-encoding") == "gzip")
+    for 0..2: n do
+        assert(try live.read_line() == "data: $n")
+        assert(try live.read_line() == "")
+        progress.seen = n + 1
+    end
+    assert(try live.read_line() == null)
+    live.close()
+
+    server.close()
+    await(running)
+
+    let plain_server = try http::listen("127.0.0.1", 0, compress = false)
+    let plain_running = spawn(func() -> void
+        plain_server.serve(func(req: http::Request) -> !http::Response
+            return try route(req, progress, random)
+        end)
+    end)
+    let plain = try http::request("http://127.0.0.1:${plain_server.port()}/big")
+    assert(!plain.headers.has("content-encoding"))
+    assert(!plain.headers.has("vary"))
+    assert(try plain.text() == original)
+    let plain_stream = try http::request("http://127.0.0.1:${plain_server.port()}/sized")
+    assert(plain_stream.headers.get("content-length") == "${string::len(original)}")
+    plain_server.close()
+    await(plain_running)
+
+    let fast_server = try http::listen("127.0.0.1", 0, compression_level = 1)
+    let fast_running = spawn(func() -> void
+        fast_server.serve(func(req: http::Request) -> !http::Response
+            return try route(req, progress, random)
+        end)
+    end)
+    let fast = try http::request("http://127.0.0.1:${fast_server.port()}/json")
+    assert(fast.headers.get("content-encoding") == "gzip")
+    assert(string::ends_with(try fast.text(), "{}]"))
+    fast_server.close()
+    await(fast_running)
+end

@@ -1,7 +1,9 @@
+import "std/io"
+
 func main() -> void
     let mut xs = [1, 2]
 
     for xs: mut x do
-        echo(x)
+        io::println("${x}")
     end
 end

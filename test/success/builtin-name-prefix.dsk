@@ -1,0 +1,7 @@
+func assert2() -> int
+    return 2
+end
+
+func main() -> void
+    assert(assert2() == 2)
+end

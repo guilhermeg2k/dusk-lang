@@ -1,4 +1,6 @@
+import "std/io"
+
 func main() -> void
     let zero = 0.0
-    echo((zero / zero) // 1.0)
+    io::println("${(zero / zero) // 1.0}")
 end

@@ -1,0 +1,33 @@
+import "std/io"
+import "std/net"
+import "std/fs"
+
+func echo_once(conn: net::TcpConn) -> io::IoError!void
+    let line = try conn.read_line() orelse "none"
+    try conn.write("echo ${line}\n")
+    conn.close()
+end
+
+func main() -> !void
+    let cert = try net::certificate(try fs::read("test/fixtures/tls/server.pem"), try fs::read("test/fixtures/tls/server.key"))
+    let listener = try net::tls_listen("127.0.0.1", 0, cert)
+    let server = spawn(func() -> io::IoError!void
+        let first_conn = try listener.accept()
+        let first_echo = spawn(func() -> return try echo_once(first_conn))
+        let second_conn = try listener.accept()
+        try echo_once(second_conn)
+        try await(first_echo)
+    end)
+    let first_task = spawn(func() -> return try net::tls_connect("localhost", listener.port()))
+    let second_task = spawn(func() -> return try net::tls_connect("localhost", listener.port()))
+    let first = try await(first_task)
+    let second = try await(second_task)
+    try first.write("one\n")
+    try second.write("two\n")
+    assert(try first.read_line() == "echo one")
+    assert(try second.read_line() == "echo two")
+    first.close()
+    second.close()
+    try await(server)
+    listener.close()
+end

@@ -1,0 +1,23 @@
+struct Item
+    value: int
+end
+
+error Fault
+    Negative
+end
+
+struct Holder[T]
+    make: func(Item) -> T
+end
+
+func run[E: error](handler: func(Item) -> E!int) -> E!int
+    return try handler(Item(value = 21))
+end
+
+func map_item[T](item: Item, f: func(Item) -> T) -> T
+    return f(item)
+end
+
+func use_holder[T](holder: Holder[T]) -> T
+    return holder.make(Item(value = 5))
+end

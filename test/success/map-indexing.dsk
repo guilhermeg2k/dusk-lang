@@ -1,3 +1,5 @@
+import "std/io"
+
 struct Point
     x: int
 end
@@ -63,5 +65,5 @@ func main() -> void
     let maybe: map[string, ?int] = {"a": null, "b": 1}
     assert(maybe["a"] == null)
     assert(maybe["b"] == 1)
-    echo("ok")
+    io::println("ok")
 end

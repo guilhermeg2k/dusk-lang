@@ -1,0 +1,12 @@
+import "std/task"
+
+func main() -> void
+    let mut order = ""
+    let other = spawn(func() -> void
+        order = "${order}other "
+    end)
+    task::sleep(-5)
+    order = "${order}main"
+    await(other)
+    assert(order == "other main")
+end

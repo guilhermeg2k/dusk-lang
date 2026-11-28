@@ -1,0 +1,16 @@
+struct Secret
+    ~value: int
+end
+
+func make(value: int) -> Secret
+    let raw = @(value = value)
+    return raw
+end
+
+func main() -> void
+    let secret = make(7)
+    assert(secret.value == 7)
+    let raw = [@(value = 9)]
+    let values: []Secret = raw
+    assert(values[0].value == 9)
+end

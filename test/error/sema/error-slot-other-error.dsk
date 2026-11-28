@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func run[E: error](f: func() -> E!int) -> E!int
     let n = try string::to_int("1")

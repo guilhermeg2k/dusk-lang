@@ -1,0 +1,5 @@
+import "std/string"
+
+func main() -> void
+    let result = string::compare("abc", 1)
+end

@@ -1,0 +1,125 @@
+import "std/math"
+
+func assert_close(actual: float, expected: float) -> void
+    assert(math::f_abs(actual - expected) < 0.000000000001)
+end
+
+func main() -> math::MathError!void
+    assert(math::abs(-42) == 42)
+    assert(math::abs(0) == 0)
+    assert(math::abs(9223372036854775807) == 9223372036854775807)
+    assert(math::f_abs(-2.5) == 2.5)
+    assert(1.0 / math::f_abs(-0.0) == math::inf)
+    assert(math::f_abs(-math::inf) == math::inf)
+    assert(math::is_nan(math::f_abs(math::nan)))
+
+    assert((try math::min([9, -4, 2])) == -4)
+    assert((try math::max([9, -4, 2])) == 9)
+    assert((try math::min([9223372036854775806, 9223372036854775807])) == 9223372036854775806)
+    assert((try math::max([9223372036854775806, 9223372036854775807])) == 9223372036854775807)
+    assert((try math::min([(-9223372036854775807 - 1), -1])) == (-9223372036854775807 - 1))
+    assert((try math::max([7])) == 7)
+    assert((try math::min([7.5])) == 7.5)
+    assert((try math::min([9.5, -4.5, 2.5])) == -4.5)
+    assert((try math::max([9.5, -4.5, 2.5])) == 9.5)
+    assert((try math::max([1, 2.5])) == 2.5)
+    let empty_ints: []int = []
+    let empty_floats: []float = []
+    let mut empty_failures = 0
+    math::min(empty_ints) catch err then
+        assert(err == math::MathError.Empty)
+        empty_failures = empty_failures + 1
+    end
+    math::max(empty_ints) catch err then
+        assert(err == math::MathError.Empty)
+        empty_failures = empty_failures + 1
+    end
+    math::min(empty_floats) catch err then
+        assert(err == math::MathError.Empty)
+        empty_failures = empty_failures + 1
+    end
+    math::max(empty_floats) catch err then
+        assert(err == math::MathError.Empty)
+        empty_failures = empty_failures + 1
+    end
+    assert(empty_failures == 4)
+    assert((math::min(empty_ints) catch 17) == 17)
+    assert((math::max(empty_floats) catch 2.5) == 2.5)
+    assert(math::is_nan((try math::min([math::nan, 1.0]))))
+    assert(math::is_nan((try math::min([1.0, math::nan]))))
+    assert(math::is_nan((try math::max([math::nan, 1.0]))))
+    assert(math::is_nan((try math::max([1.0, math::nan]))))
+    assert((try math::min([-math::inf, math::inf])) == -math::inf)
+    assert((try math::max([-math::inf, math::inf])) == math::inf)
+    assert(1.0 / (try math::min([0.0, -0.0])) == -math::inf)
+    assert(1.0 / (try math::min([-0.0, 0.0])) == -math::inf)
+    assert(1.0 / (try math::max([0.0, -0.0])) == math::inf)
+    assert(1.0 / (try math::max([-0.0, 0.0])) == math::inf)
+
+    assert((math::clamp(-2, 0, 10) catch -1) == 0)
+    assert((math::clamp(12, 0, 10) catch -1) == 10)
+    assert((math::clamp(5, 0, 10) catch -1) == 5)
+    assert((math::clamp(5, 3, 3) catch -1) == 3)
+    assert((math::clamp(5, 10, 0) catch -1) == -1)
+    assert((math::f_clamp(-2.5, 0.0, 10.0) catch -1.0) == 0.0)
+    assert((math::f_clamp(12.5, 0.0, 10.0) catch -1.0) == 10.0)
+    assert((math::f_clamp(5.5, 0.0, 10.0) catch -1.0) == 5.5)
+    assert((math::f_clamp(5.0, 10.0, 0.0) catch -1.0) == -1.0)
+    assert((math::f_clamp(5.0, math::nan, 10.0) catch -1.0) == -1.0)
+    assert((math::f_clamp(5.0, 0.0, math::nan) catch -1.0) == -1.0)
+    assert(math::is_nan(math::f_clamp(math::nan, 0.0, 10.0) catch 0.0))
+
+    assert(math::floor(2.7) == 2)
+    assert(math::floor(-2.7) == -3)
+    assert(math::ceil(2.7) == 3)
+    assert(math::ceil(-2.7) == -2)
+    assert(math::round(2.5) == 3)
+    assert(math::round(-2.5) == -3)
+    assert(math::trunc(2.7) == 2)
+    assert(math::trunc(-2.7) == -2)
+    assert(math::floor(-9223372036854775808.0) == (-9223372036854775807 - 1))
+    assert(math::ceil(9223372036854774784.0) == 9223372036854774784)
+    assert(math::round(-0.0) == 0)
+    assert(math::trunc(0.0) == 0)
+
+    assert(math::sqrt(9.0) == 3.0)
+    assert(math::is_nan(math::sqrt(-1.0)))
+    assert(math::pow(2.0, 3.0) == 8.0)
+    assert(math::pow(-2.0, 3.0) == -8.0)
+    assert(math::pow(2.0, -1.0) == 0.5)
+    assert(math::exp(0.0) == 1.0)
+    assert_close(math::exp(1.0), math::e)
+    assert_close(math::log(math::e), 1.0)
+    assert(math::log(0.0) == -math::inf)
+    assert(math::is_nan(math::log(-1.0)))
+    assert(math::log2(8.0) == 3.0)
+    assert_close(math::log10(1000.0), 3.0)
+
+    assert_close(math::sin(math::pi / 2.0), 1.0)
+    assert_close(math::cos(math::pi), -1.0)
+    assert_close(math::tan(math::pi / 4.0), 1.0)
+    assert_close(math::asin(1.0), math::pi / 2.0)
+    assert_close(math::acos(-1.0), math::pi)
+    assert_close(math::atan(1.0), math::pi / 4.0)
+    assert_close(math::atan2(1.0, 0.0), math::pi / 2.0)
+    assert_close(math::atan2(0.0, -1.0), math::pi)
+    assert(math::is_nan(math::asin(2.0)))
+    assert(math::is_nan(math::acos(2.0)))
+    assert(math::tau == 2.0 * math::pi)
+
+    assert(math::is_nan(math::nan))
+    assert(not_a_number() != not_a_number())
+    assert(math::is_inf(math::inf))
+    assert(math::is_inf(-math::inf))
+    assert(math::is_finite(0.0))
+    assert(math::is_finite(-1.0))
+    assert(math::is_finite(9223372036854775808.0))
+    assert(math::is_finite(math::inf) == false)
+    assert(math::is_finite(math::nan) == false)
+    assert(math::is_nan(1.0) == false)
+    assert(math::is_inf(math::nan) == false)
+end
+
+func not_a_number() -> float
+    return math::nan
+end

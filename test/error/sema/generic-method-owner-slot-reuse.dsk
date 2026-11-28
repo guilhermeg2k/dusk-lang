@@ -1,0 +1,10 @@
+struct Box[T]
+    value: T
+
+    func m[T](self: @, x: T) -> int
+        return 1
+    end
+end
+
+func main() -> void
+end

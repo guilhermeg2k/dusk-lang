@@ -1,0 +1,33 @@
+import "std/io"
+
+struct User
+    name: string
+end
+
+func main() -> void
+    let s: ?string = "dusk"
+    let ns: ?string = null
+    let i: ?int = 5
+    let ni: ?int = null
+    let f: ?float = 1.5
+    let b: ?bool = true
+    let u: ?User = User(name = "user")
+    let nu: ?User = null
+
+    io::println("${s}")
+    io::println("${ns}")
+    io::println("${i}")
+    io::println("${ni}")
+    io::println("${f}")
+    io::println("${b}")
+    io::println("${u}")
+    io::println("${nu}")
+
+    # capturing a null primitive must skip the block, not stop the program
+    let mut reached = false
+    if ni: x then
+        assert(false)
+    end
+    reached = true
+    assert(reached)
+end

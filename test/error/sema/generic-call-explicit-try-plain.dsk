@@ -1,0 +1,6 @@
+func keep[T](value: T) -> T
+    return value
+end
+func main() -> !void
+    let x = try keep[int](3)
+end

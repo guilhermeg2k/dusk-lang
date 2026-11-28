@@ -1,5 +1,7 @@
+import "std/io"
+
 let x = 1
 
 func main() -> void
-    echo(x[0])
+    io::println("${x[0]}")
 end

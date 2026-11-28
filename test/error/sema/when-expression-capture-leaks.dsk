@@ -1,3 +1,5 @@
+import "std/io"
+
 union Item number: int end
 
 func main() -> void
@@ -5,5 +7,5 @@ func main() -> void
     number: captured then captured end
     end
 
-    echo(captured)
+    io::println("${captured}")
 end

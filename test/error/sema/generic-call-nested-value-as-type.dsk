@@ -1,0 +1,10 @@
+struct Box[T]
+    value: T
+end
+func empty[T]() -> []T
+    return []
+end
+func main() -> void
+    let n = 3
+    let x = empty[Box[n]]()
+end

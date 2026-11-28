@@ -1,4 +1,5 @@
-import std/array: len, append
+import "std/array": len, append
+import "std/io"
 
 
 struct Bag
@@ -29,10 +30,10 @@ end
 
 func main() -> void
     let mut a: ?[]int = null
-    echo(a)
+    io::println("${a}")
     assert(a == null)
     a = [1, 2, 3]
-    echo(a)
+    io::println("${a}")
     if a: list then
         assert(len(list) == 3)
         assert(list[2] == 3)
@@ -42,7 +43,7 @@ func main() -> void
     if a: list then
         assert(false)
     else
-        echo("none")
+        io::println("none")
     end
 
     let mut b = Bag(items = null)
@@ -50,7 +51,7 @@ func main() -> void
     assert(b.counts == null)
     b.items = ["x", "y"]
     if b.items: it then
-        echo(it)
+        io::println("${it}")
     end
     let b2 = Bag(items = ["z"], counts = [4])
     if b2.counts: c then
@@ -99,7 +100,7 @@ func main() -> void
         assert(k[1] == 7)
     end
     if held.items: h then
-        echo(h)
+        io::println("${h}")
     end
     assert(len(many) == 20)
     if many[2]: m2 then

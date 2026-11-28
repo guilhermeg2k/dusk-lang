@@ -1,0 +1,180 @@
+import "std/buffer"
+import "std/fs"
+import "std/http"
+import "std/io"
+import "std/net"
+import "std/string"
+
+struct Calls
+    count: int = 0
+end
+
+func describe(req: http::Request) -> !http::Response
+    let length = req.headers.get("content-length") orelse "-"
+    let chunked = req.headers.get("transfer-encoding") orelse "-"
+    let expect = req.headers.get("expect") orelse "-"
+    let body = try req.text()
+    return http::text("$length|$chunked|$expect|${string::len(body)}|$body")
+end
+
+func route(req: http::Request) -> !http::Response
+    when req.path
+        "/echo" then return try describe(req)
+        end
+        "/refuse" then return http::status(413) end
+        "/temporary" then
+            let mut response = http::status(307)
+            response.headers.set("Location", "/echo")
+            return response
+        end
+        "/other" then
+            let mut response = http::status(303)
+            response.headers.set("Location", "/echo")
+            return response
+        end
+        else then return http::status(404) end
+    end
+end
+
+func parts_of(answer: http::Response) -> ![]string
+    return string::split(try answer.text(), "|", limit = 5)
+end
+
+func upload_error(base: string, length: int, words: []string) -> ?http::HttpError
+    let answer = http::request("$base/echo", method = "POST", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        for words: word do
+            try out.write(word)
+        end
+    end, length = length))) catch e then
+        return e
+    end
+    return null
+end
+
+func failing_upload(base: string) -> ?http::HttpError
+    let answer = http::request("$base/echo", method = "POST", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        try out.write("partial")
+        return io::IoError.BrokenPipe
+    end))) catch e then
+        return e
+    end
+    return null
+end
+
+func silent_server(listener: net::TcpListener) -> Task[string]
+    return spawn(func() -> string
+        let conn = listener.accept() catch e then
+            return ""
+        end
+        let mut length = 0
+        for true do
+            let line = conn.read_line() catch e then
+                return ""
+            end
+            let text = line orelse ""
+            if text == "" then
+                break
+            end
+            if string::starts_with(string::lower(text), "content-length: ") then
+                length = string::to_int(string::slice(text, 16, string::len(text)) catch "0") catch 0
+            end
+        end
+        let body = conn.read_exact(length) catch e then
+            return ""
+        end
+        conn.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok") catch e then
+        end
+        conn.close()
+        if body: data then
+            return string::from_bytes(data) catch ""
+        end
+        return ""
+    end)
+end
+
+func main() -> !void
+    let server = try http::listen("127.0.0.1", 0, max_body = 4194304)
+    let running = spawn(func() -> void
+        server.serve(route)
+    end)
+    let base = "http://127.0.0.1:${server.port()}"
+
+    let chunked = try http::request("$base/echo", method = "POST", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        try out.write("first ")
+        try out.write_bytes(buffer::from_string("second "))
+        try out.flush()
+        try out.write("third")
+    end)))
+    let chunked_parts = try parts_of(chunked)
+    assert(chunked_parts[0] == "-")
+    assert(chunked_parts[1] == "chunked")
+    assert(chunked_parts[2] == "100-continue")
+    assert(chunked_parts[4] == "first second third")
+
+    let sample_path = "test/fixtures/compression/sample.txt"
+    let sample = try fs::read(sample_path)
+    let mut file = try fs::open(sample_path)
+    let sized = try http::request("$base/echo", method = "PUT", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        let sent = try io::copy(file, out)
+    end, length = try file.size())))
+    try file.close()
+    let sized_parts = try parts_of(sized)
+    assert(sized_parts[0] == "${string::len(sample)}")
+    assert(sized_parts[1] == "-")
+    assert(sized_parts[4] == sample)
+
+    let mut calls = Calls()
+    let refused = try http::request("$base/refuse", method = "POST", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        calls.count = calls.count + 1
+        try out.write("never sent")
+    end)))
+    assert(refused.status == 413)
+    assert(calls.count == 0)
+    let after_refused = try http::request("$base/echo", method = "POST", body = @(text = "still fine"))
+    assert((try parts_of(after_refused))[4] == "still fine")
+
+    assert(upload_error(base, 10, ["abc"]) == http::HttpError.Other)
+    assert(upload_error(base, 2, ["abc"]) == http::HttpError.Other)
+    assert(failing_upload(base) == http::HttpError.ConnectionReset)
+
+    let kept = try http::request("$base/temporary", method = "POST", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        try out.write("data")
+    end)))
+    assert(kept.status == 307)
+    let changed = try http::request("$base/other", method = "POST", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        try out.write("data")
+    end)))
+    let changed_parts = try parts_of(changed)
+    assert(changed.status == 200)
+    assert(changed_parts[3] == "0")
+    assert(changed_parts[2] == "-")
+
+    let big = string::repeat("x", 1048576) catch ""
+    let big_answer = try http::request("$base/echo", method = "POST", body = @(text = big))
+    let big_parts = try parts_of(big_answer)
+    assert(big_parts[2] == "100-continue")
+    assert(big_parts[3] == "1048576")
+    let small_answer = try http::request("$base/echo", method = "POST", body = @(text = "tiny"))
+    assert((try parts_of(small_answer))[2] == "-")
+    let manual = try http::request("$base/echo", method = "POST", body = @(text = big), headers = {"Expect": "100-continue"})
+    assert((try parts_of(manual))[3] == "1048576")
+
+    let api = http::Client(base_url = base, headers = {"X-Upload": "yes"})
+    let streamed = http::BodyStream(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        try out.write("from client")
+    end, length = 11)
+    let through_client = try api.request("/echo", method = "POST", body = http::Body(stream = streamed))
+    assert((try parts_of(through_client))[4] == "from client")
+
+    let silent = try net::tcp_listen("127.0.0.1", 0)
+    let waiting = silent_server(silent)
+    let answered = try http::request("http://127.0.0.1:${silent.port()}/", method = "POST", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
+        try out.write("hello")
+    end, length = 5)))
+    assert(try answered.text() == "ok")
+    assert(await(waiting) == "hello")
+    silent.close()
+
+    server.close()
+    await(running)
+end

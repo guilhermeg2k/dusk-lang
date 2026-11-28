@@ -1,0 +1,5 @@
+
+
+func main() -> !void
+    let x = copy[int]("a")
+end

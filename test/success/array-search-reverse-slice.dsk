@@ -1,5 +1,5 @@
-import std/array: len, append, index_of, contains, reverse, slice, ArrayError
-import std/string
+import "std/array": len, append, index_of, contains, reverse, slice, ArrayError
+import "std/string"
 
 struct Point
     x: int

@@ -10,6 +10,8 @@ A general-purpose, statically typed language with its own runtime: a bytecode VM
 
 [Language Reference](doc/language-ref.md)
 
+[Standard Library Reference](doc/std-ref.md)
+
 [Building & Running](doc/build.md)
 
 [Roadmap](doc/roadmap.md)
@@ -22,6 +24,6 @@ A general-purpose, statically typed language with its own runtime: a bytecode VM
 
 [Contributing](https://github.com/guilhermeg2k/dusk-lang/blob/dev/doc/contributing.md)
 
-[License](https://github.com/guilhermeg2k/dusk-lang/blob/dev/LICENSE)
+[License](https://github.com/guilhermeg2k/dusk-lang/blob/dev/LICENSE.md)
 
 Made by Guilherme (~\_^)

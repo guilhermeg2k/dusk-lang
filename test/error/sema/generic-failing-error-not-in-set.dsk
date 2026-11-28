@@ -1,0 +1,12 @@
+error Fault
+    Bad
+end
+error Other
+    Nope
+end
+func empty[T]() -> Fault![]T
+    return Fault.Bad
+end
+func make() -> Other![]int
+    return try empty()
+end

@@ -1,0 +1,55 @@
+import "std/fs"
+import "std/string"
+import "std/task"
+
+func parse(text: string) -> ConversionError!int
+    return try string::to_int(text)
+end
+
+func main() -> void
+    let mut is_done = false
+    let mut ticks = 0
+    let counter = spawn(func() -> void
+        for !is_done do
+            ticks = ticks + 1
+            task::sleep(0)
+        end
+    end)
+    let mut i = 0
+    for i < 20 do
+        let info = fs::stat("test/fixtures/fs/hello.txt") catch _ then return end
+        assert(info.size == 5)
+        i = i + 1
+    end
+    is_done = true
+    await(counter)
+    assert(ticks > 0)
+
+    let bad = spawn(func() -> return try parse("x"))
+    let mut parsed_error = 0
+    await(bad) catch e then
+        parsed_error = when e
+            ConversionError.Invalid then 1 end
+            else then 2 end
+        end
+    end
+    assert(parsed_error == 1)
+
+    let mut stat_error = 0
+    fs::stat("test/fixtures/fs/missing.txt") catch e then
+        stat_error = when e
+            fs::FsError.NotFound then 1 end
+            else then 2 end
+        end
+    end
+    assert(stat_error == 1)
+
+    let mut j = 0
+    for j < 3000 do
+        let info = fs::stat("test/fixtures/fs/hello.txt") catch _ then return end
+        let junk = [j, j, j, j, j, j, j, j]
+        assert(info.size == 5)
+        assert(junk[7] == j)
+        j = j + 1
+    end
+end

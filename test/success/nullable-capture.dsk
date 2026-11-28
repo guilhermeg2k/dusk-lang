@@ -1,13 +1,15 @@
+import "std/io"
+
 func main() -> void
     let mut username: ?string = null
 
     if username: name then
-        echo(name)
+        io::println("${name}")
     end
 
     username = "Geromel Dr."
 
     if username: name then
-        echo(name)
+        io::println("${name}")
     end
 end

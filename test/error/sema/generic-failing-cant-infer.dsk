@@ -1,0 +1,10 @@
+error Fault
+    Bad
+end
+func empty[T]() -> Fault![]T
+    return []
+end
+
+func main() -> !void
+    let x = try empty()
+end

@@ -1,0 +1,69 @@
+import "std/array"
+import "std/string"
+
+struct Item
+    value: int
+end
+
+func main() -> !void
+    let mut numbers = [1, 2]
+    array::extend(numbers, [3, 4])
+    assert(array::len(numbers) == 4 and numbers[3] == 4)
+    array::extend(numbers, numbers)
+    assert(array::len(numbers) == 8 and numbers[4] == 1 and numbers[7] == 4)
+    array::extend(numbers, [])
+    let alias = numbers
+    array::extend(numbers, numbers)
+    assert(array::len(alias) == 16 and alias[15] == 4)
+    let doubled = array::map(numbers, func(n) -> return n * 2)
+    assert(doubled != numbers and doubled[3] == 8)
+    let selected = array::filter(numbers, func(n) -> return n % 2 == 0)
+    assert(array::len(selected) == 8 and selected[0] == 2 and selected[1] == 4)
+    let lengths = array::map(["a", "bbb"], func(s) -> return string::len(s))
+    assert(lengths[0] == 1 and lengths[1] == 3)
+    let converted = try array::map(["1", "20"], func(s) -> return try string::to_int(s))
+    assert(converted[1] == 20)
+    let mut visits = 0
+    let mut has_map_error = false
+    array::map(["1", "bad", "3"], func(s)
+        visits = visits + 1
+        return try string::to_int(s)
+    end) catch e then
+        assert(e == ConversionError.Invalid)
+        has_map_error = true
+    end
+    assert(visits == 2 and has_map_error)
+    let positive = try array::filter(["1", "-2", "3"], func(s) -> return (try string::to_int(s)) > 0)
+    assert(array::len(positive) == 2 and positive[1] == "3")
+    visits = 0
+    let mut has_filter_error = false
+    array::filter(["1", "bad", "3"], func(s)
+        visits = visits + 1
+        return (try string::to_int(s)) > 0
+    end) catch e then
+        assert(e == ConversionError.Invalid)
+        has_filter_error = true
+    end
+    assert(visits == 2 and has_filter_error)
+    let empty: []int = []
+    assert(array::len(array::map(empty, func(n) -> return n * 2)) == 0)
+    assert(array::len(array::filter(empty, func(n) -> return true)) == 0)
+    assert(array::len(array::filter([1, 2], func(n) -> return false)) == 0)
+    let mut items = [Item(value = 1)]
+    let mut extended: []Item = []
+    array::extend(extended, items)
+    let mut filtered = array::filter(items, func(item) -> return true)
+    extended[0].value = 7
+    assert(items[0].value == 7 and filtered[0].value == 7)
+    let mut copied = array::filter(copy(items), func(item) -> return true)
+    copied[0].value = 9
+    assert(items[0].value == 7)
+    let mut text: []string = []
+    for 1..10000: i do
+        array::extend(text, ["key$i", "value$i"])
+    end
+    let mapped = array::map(text, func(s) -> return "[$s]")
+    assert(mapped[19999] == "[value10000]")
+    let kept = array::filter(mapped, func(s) -> return string::starts_with(s, "[key"))
+    assert(array::len(kept) == 10000 and kept[9999] == "[key10000]")
+end

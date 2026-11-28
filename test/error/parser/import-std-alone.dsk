@@ -1,3 +1,3 @@
-import std
+import "std"
 func main() -> void
 end

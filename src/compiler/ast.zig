@@ -23,6 +23,7 @@ pub const Statement = union(enum) {
     for_capture: ForCaptureStmt,
     assign: AssignStmt,
     @"return": ReturnStmt,
+    @"defer": DeferStmt,
     expression: *ExpNode,
     @"break": void,
     @"continue": void,
@@ -32,7 +33,7 @@ pub const ImportStmt = struct {
     source: ImportSource,
     path: []const u8,
     path_loc: err.Loc,
-    name: []const u8,
+    name: ?[]const u8,
     selected: []const ImportedName,
 };
 
@@ -267,6 +268,7 @@ pub const Exp = union(enum) {
     map_literal: MapLiteral,
     null_literal: void,
     fn_call: FnCall,
+    type_application: TypeApplication,
     indexed: IndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
@@ -347,8 +349,13 @@ pub const FnParam = struct {
 
 pub const FnCall = struct {
     target: *ExpNode,
-    are_arguments_named: bool,
     arguments: []const FnCallArg,
+    type_arguments: []const *TypeAnnotation = &.{},
+};
+
+pub const TypeApplication = struct {
+    target: *ExpNode,
+    arguments: []const *TypeAnnotation,
 };
 
 pub const AnonymousInit = struct {
@@ -361,14 +368,38 @@ pub const FnCallArg = struct {
     exp: *ExpNode,
 };
 
+pub fn areAllArgumentsNamed(arguments: []const FnCallArg) bool {
+    for (arguments) |argument| {
+        if (argument.identifier == null) {
+            return false;
+        }
+    }
+    return arguments.len > 0;
+}
+
+pub fn hasNamedArgument(arguments: []const FnCallArg) bool {
+    for (arguments) |argument| {
+        if (argument.identifier != null) {
+            return true;
+        }
+    }
+    return false;
+}
+
 pub const ReturnStmt = struct {
     exp: ?*ExpNode,
+};
+
+pub const DeferStmt = struct {
+    statement: *StatementNode,
+    is_error_only: bool,
 };
 
 pub const IndexedExp = struct {
     target: *ExpNode,
     index: *ExpNode,
     is_nullable: bool,
+    is_bracket: bool = false,
 };
 
 pub const Struct = struct {

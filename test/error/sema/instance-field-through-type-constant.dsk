@@ -1,3 +1,5 @@
+import "std/io"
+
 struct P
     x: int
 end
@@ -5,5 +7,5 @@ end
 let MAKER = P.x
 
 func main() -> void
-    echo(MAKER)
+    io::println("${MAKER}")
 end

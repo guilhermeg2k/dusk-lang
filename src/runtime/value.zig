@@ -35,6 +35,7 @@ const HeapValueType = enum(u8) {
     task,
     map,
     map_storage,
+    resource,
 };
 
 pub const HeapValue = extern struct {
@@ -42,18 +43,14 @@ pub const HeapValue = extern struct {
 
     kind: HeapValueType,
     gc_forward: ?*HeapValue = null,
-    //note: maybe we should remove this relocated to decrease the size of this struct
-    // needs to evaluate the tradeoffs
-    relocated: ?*HeapValue = null,
 
     pub fn getParentPtr(comptime T: type, ptr: *Self) *T {
         return @as(*T, @fieldParentPtr("obj", ptr));
     }
 
     pub fn followRelocated(ptr: *Self) *Self {
-        var cur = ptr;
-        while (cur.relocated) |rel| cur = rel;
-        return cur;
+        if (ptr.kind != .array) return ptr;
+        return &getParentPtr(Array, ptr).newestCopy().obj;
     }
 };
 
@@ -121,7 +118,6 @@ pub const Struct = extern struct {
         @memcpy(new_bytes, old_bytes);
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
         new_obj.obj.gc_forward = null;
-        new_obj.obj.relocated = null;
         return new_obj;
     }
 };
@@ -183,7 +179,6 @@ pub const Union = extern struct {
         @memcpy(new_bytes, old_bytes);
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
         new_obj.obj.gc_forward = null;
-        new_obj.obj.relocated = null;
         return new_obj;
     }
 };
@@ -193,6 +188,7 @@ pub const Array = extern struct {
 
     obj: HeapValue,
     kind: ValueType,
+    relocated: ?*Array,
     len: usize,
     capacity: usize,
 
@@ -209,9 +205,16 @@ pub const Array = extern struct {
 
         array.len = 0;
         array.kind = kind;
+        array.relocated = null;
         array.capacity = capacity;
 
         return array;
+    }
+
+    pub fn newestCopy(self: *Self) *Self {
+        var cur = self;
+        while (cur.relocated) |newer| cur = newer;
+        return cur;
     }
 
     pub fn get(self: *const Self, i: i64) !Value {
@@ -226,17 +229,6 @@ pub const Array = extern struct {
 
         const items = self.getDataPtr();
         items[@intCast(i)] = value;
-    }
-
-    pub fn pop(self: *Self) !Value {
-        //note: poping null if len == 0
-        if (self.len == 0) {
-            return NULL_VALUE;
-        }
-
-        self.len -= 1;
-
-        return self.getDataPtr()[self.len];
     }
 
     pub fn needsResize(self: *Self) bool {
@@ -263,8 +255,9 @@ pub const Array = extern struct {
         new_ptr.obj = .{
             .kind = .array,
         };
+        new_ptr.relocated = null;
 
-        cur_ptr.obj.relocated = &new_ptr.obj;
+        cur_ptr.relocated = new_ptr;
         cur_ptr = new_ptr;
         cur_ptr.capacity = new_capacity;
         return cur_ptr;
@@ -294,7 +287,7 @@ pub const Array = extern struct {
         @memcpy(new_bytes, old_bytes);
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
         new_obj.obj.gc_forward = null;
-        new_obj.obj.relocated = null;
+        new_obj.relocated = null;
         return new_obj;
     }
 };
@@ -391,7 +384,6 @@ pub const Map = extern struct {
         const ptr = try allocator.create(Self);
         ptr.* = self.*;
         ptr.obj.gc_forward = null;
-        ptr.obj.relocated = null;
         return ptr;
     }
 };
@@ -521,7 +513,6 @@ pub const MapStorage = extern struct {
         @memcpy(new_bytes, old_bytes);
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
         new_obj.obj.gc_forward = null;
-        new_obj.obj.relocated = null;
         return new_obj;
     }
 };
@@ -575,6 +566,10 @@ pub const Bytes = extern struct {
         return @sizeOf(Self) + len;
     }
 
+    pub fn calcSizeChecked(len: usize) error{OutOfMemory}!usize {
+        return std.math.add(usize, @sizeOf(Self), len) catch return error.OutOfMemory;
+    }
+
     pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
         const size = Self.calc_size(self.len);
         const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
@@ -583,7 +578,6 @@ pub const Bytes = extern struct {
 
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
         new_obj.obj.gc_forward = null;
-        new_obj.obj.relocated = null;
 
         return new_obj;
     }
@@ -657,7 +651,6 @@ pub const Closure = extern struct {
         @memcpy(new_bytes, old_bytes);
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
         new_obj.obj.gc_forward = null;
-        new_obj.obj.relocated = null;
         return new_obj;
     }
 };
@@ -705,6 +698,37 @@ pub const Task = extern struct {
     }
 };
 
+pub const ResourceId = struct {
+    registry_slot_index: u32,
+    registry_slot_version: u32,
+};
+
+pub const Resource = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    registry_slot_index: u32,
+    registry_slot_version: u32,
+
+    pub fn init(allocator: std.mem.Allocator, resource_id: ResourceId) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = .{ .obj = .{ .kind = .resource }, .registry_slot_index = resource_id.registry_slot_index, .registry_slot_version = resource_id.registry_slot_version };
+        return ptr;
+    }
+
+    pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
+        return Self.init(allocator, self.id());
+    }
+
+    pub fn id(self: *const Self) ResourceId {
+        return .{ .registry_slot_index = self.registry_slot_index, .registry_slot_version = self.registry_slot_version };
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self);
+    }
+};
+
 pub const ValueType = enum(u8) {
     int64,
     float64,
@@ -722,17 +746,18 @@ pub const ValueType = enum(u8) {
     cell,
     task,
     map,
+    resource,
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell, .task, .map => true,
+            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell, .task, .map, .resource => true,
             else => false,
         };
     }
 
     pub fn isImmutable(self: ValueType) bool {
         return switch (self) {
-            .int64, .float64, .bool, .null, .string => true,
+            .int64, .float64, .bool, .null, .string, .resource => true,
             else => false,
         };
     }

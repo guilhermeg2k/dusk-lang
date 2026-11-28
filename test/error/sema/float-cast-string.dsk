@@ -1,3 +1,5 @@
+import "std/io"
+
 func main() -> void
-    echo(to_float("1.5"))
+    io::println("${to_float("1.5")}")
 end

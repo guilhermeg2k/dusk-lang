@@ -1,0 +1,222 @@
+import "std/compression"
+import "std/buffer"
+import "std/string"
+import "std/array"
+import "std/fs"
+
+func same_bytes(a: buffer, b: buffer) -> bool
+    if buffer::len(a) != buffer::len(b) then
+        return false
+    end
+    for 0..buffer::len(a) - 1: i do
+        if a[i] != b[i] then
+            return false
+        end
+    end
+    return true
+end
+
+func joined(parts: []buffer) -> !buffer
+    let mut total = 0
+    for parts: part do
+        total = total + buffer::len(part)
+    end
+    let mut result = try buffer::new(total)
+    let mut at = 0
+    for parts: part do
+        at = try buffer::put_bytes(result, at, part)
+    end
+    return result
+end
+
+func pieces(data: buffer, size: int) -> ![]buffer
+    let mut result: []buffer = []
+    let mut start = 0
+    for start < buffer::len(data) do
+        let stop = if start + size > buffer::len(data) then buffer::len(data) else start + size end
+        let mut piece = try buffer::slice(data, start, stop)
+        array::append(result, piece)
+        start = stop
+    end
+    return result
+end
+
+func compress_in_pieces(data: buffer, format: compression::Format, size: int) -> !buffer
+    let mut compressor = compression::Compressor(format, level = 6)
+    let mut parts: []buffer = []
+    for try pieces(data, size): piece do
+        let mut part = try compressor.write_bytes(piece)
+        array::append(parts, part)
+    end
+    let mut tail = try compressor.finish()
+    array::append(parts, tail)
+    return try joined(parts)
+end
+
+func decompress_in_pieces(data: buffer, format: compression::Format, size: int) -> !buffer
+    let mut decompressor = compression::Decompressor(format)
+    let mut parts: []buffer = []
+    for try pieces(data, size): piece do
+        let mut part = try decompressor.write_bytes(piece)
+        array::append(parts, part)
+    end
+    assert(decompressor.is_done())
+    try decompressor.finish()
+    return try joined(parts)
+end
+
+func compressor_write_error(mut compressor: compression::Compressor, data: buffer) -> ?compression::CompressionError
+    let part = compressor.write_bytes(data) catch e then
+        return e
+    end
+    return null
+end
+
+func compressor_finish_error(mut compressor: compression::Compressor) -> ?compression::CompressionError
+    let part = compressor.finish() catch e then
+        return e
+    end
+    return null
+end
+
+func decompressor_write_error(mut decompressor: compression::Decompressor, data: buffer) -> ?compression::CompressionError
+    let part = decompressor.write_bytes(data) catch e then
+        return e
+    end
+    return null
+end
+
+func decompressor_finish_error(mut decompressor: compression::Decompressor) -> ?compression::CompressionError
+    decompressor.finish() catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let formats = [compression::Format.Gzip, compression::Format.Zlib, compression::Format.Deflate]
+    let text = try fs::read_bytes("test/fixtures/compression/sample.txt")
+    let finished = compression::CompressionError.Finished
+    let invalid = compression::CompressionError.InvalidData
+
+    for formats: format do
+        for [1, 7, 4096, 65536]: size do
+            let packed = try compress_in_pieces(text, format, size)
+            assert(same_bytes(try compression::decompress(packed, format), text))
+            assert(same_bytes(try decompress_in_pieces(packed, format, size), text))
+        end
+    end
+
+    let gzipped = try fs::read_bytes("test/fixtures/compression/sample.gz")
+    assert(same_bytes(try decompress_in_pieces(gzipped, compression::Format.Gzip, 1), text))
+    let members = try fs::read_bytes("test/fixtures/compression/members.gz")
+    assert(same_bytes(try decompress_in_pieces(members, compression::Format.Gzip, 1), text))
+    assert(same_bytes(try decompress_in_pieces(members, compression::Format.Gzip, 100), text))
+
+    let mut live = compression::Compressor(compression::Format.Gzip)
+    let mut reader = compression::Decompressor(compression::Format.Gzip)
+    assert(!reader.is_done())
+    let first = try buffer::slice(text, 0, 1000)
+    let second = try buffer::slice(text, 1000, buffer::len(text))
+    let first_part = try live.write_bytes(first)
+    let flushed = try live.flush()
+    assert(buffer::len(flushed) > 0)
+    let mut seen: []buffer = []
+    let mut seen_first = try reader.write_bytes(first_part)
+    array::append(seen, seen_first)
+    let mut seen_flushed = try reader.write_bytes(flushed)
+    array::append(seen, seen_flushed)
+    assert(same_bytes(try joined(seen), first))
+    assert(!reader.is_done())
+    let second_part = try live.write_bytes(second)
+    let ending = try live.finish()
+    let mut seen_second = try reader.write_bytes(second_part)
+    array::append(seen, seen_second)
+    let mut seen_ending = try reader.write_bytes(ending)
+    array::append(seen, seen_ending)
+    assert(reader.is_done())
+    try reader.finish()
+    assert(reader.is_done())
+    assert(same_bytes(try joined(seen), text))
+
+    assert(compressor_write_error(live, text) == finished)
+    assert(compressor_finish_error(live) == finished)
+    assert(decompressor_write_error(reader, gzipped) == finished)
+    assert(decompressor_finish_error(reader) == finished)
+
+    let mut closed = compression::Compressor(compression::Format.Zlib)
+    closed.close()
+    assert(compressor_write_error(closed, text) == finished)
+    let mut started_then_closed = compression::Compressor(compression::Format.Zlib)
+    let started_part = try started_then_closed.write_bytes(text)
+    started_then_closed.close()
+    started_then_closed.close()
+    assert(compressor_finish_error(started_then_closed) == finished)
+
+    let mut empty_stream = compression::Compressor(compression::Format.Gzip)
+    let empty_packed = try empty_stream.finish()
+    assert(buffer::len(try compression::decompress(empty_packed, compression::Format.Gzip)) == 0)
+
+    assert(compressor_write_error(compression::Compressor(compression::Format.Gzip, level = 12), text) == compression::CompressionError.InvalidLevel)
+    assert(compressor_write_error(compression::Compressor(compression::Format.Gzip, level = -1), text) == compression::CompressionError.InvalidLevel)
+
+    let mut cut = compression::Decompressor(compression::Format.Gzip)
+    let cut_part = try cut.write_bytes(try buffer::slice(gzipped, 0, buffer::len(gzipped) - 1))
+    assert(!cut.is_done())
+    assert(decompressor_finish_error(cut) == invalid)
+    assert(decompressor_write_error(cut, gzipped) == finished)
+
+    let zlibbed = try compression::compress(text, compression::Format.Zlib)
+    let mut with_tail = compression::Decompressor(compression::Format.Zlib)
+    let whole = try with_tail.write_bytes(zlibbed)
+    assert(with_tail.is_done())
+    assert(decompressor_write_error(with_tail, buffer::from_string("abc")) == invalid)
+    with_tail.close()
+
+    let mut gzip_tail = compression::Decompressor(compression::Format.Gzip)
+    let gzip_whole = try gzip_tail.write_bytes(gzipped)
+    assert(decompressor_write_error(gzip_tail, buffer::from_string("abc")) == invalid)
+    gzip_tail.close()
+
+    let mut wrong = compression::Decompressor(compression::Format.Zlib)
+    assert(decompressor_write_error(wrong, gzipped) == invalid)
+    wrong.close()
+
+    let zeros = try compression::compress(try buffer::new(1048576), compression::Format.Gzip)
+    let mut bomb = compression::Decompressor(compression::Format.Gzip, max = 1000)
+    assert(decompressor_write_error(bomb, zeros) == compression::CompressionError.TooLarge)
+    bomb.close()
+    let mut exact = compression::Decompressor(compression::Format.Gzip, max = buffer::len(text))
+    let exact_first = try exact.write_bytes(try buffer::slice(gzipped, 0, 300))
+    let exact_rest = try exact.write_bytes(try buffer::slice(gzipped, 300, buffer::len(gzipped)))
+    try exact.finish()
+    let mut over = compression::Decompressor(compression::Format.Gzip, max = buffer::len(text) - 1)
+    let over_first = try over.write_bytes(try buffer::slice(gzipped, 0, 300))
+    assert(decompressor_write_error(over, try buffer::slice(gzipped, 300, buffer::len(gzipped))) == compression::CompressionError.TooLarge)
+    over.close()
+
+    let mut old = compression::Compressor(compression::Format.Gzip)
+    let old_ending = try old.finish()
+    let mut reused = compression::Compressor(compression::Format.Gzip)
+    let reused_part = try reused.write_bytes(text)
+    assert(compressor_write_error(old, text) == finished)
+    let reused_ending = try reused.finish()
+    assert(same_bytes(try compression::decompress(try joined([reused_part, reused_ending]), compression::Format.Gzip), text))
+
+    let mut many: []compression::Compressor = []
+    let mut first_parts: []buffer = []
+    for 0..199: i do
+        let mut compressor = compression::Compressor(formats[i % 3], level = i % 10)
+        let mut part = try compressor.write_bytes(buffer::from_string("stream ${i}"))
+        array::append(many, compressor)
+        array::append(first_parts, part)
+    end
+    for 0..199: i do
+        let mut compressor = many[i]
+        let part = try compressor.write_bytes(buffer::from_string(" more"))
+        let filler = try string::repeat("x", 3000)
+        let ending = try compressor.finish()
+        let packed = try joined([first_parts[i], part, ending])
+        assert(same_bytes(try compression::decompress(packed, formats[i % 3]), buffer::from_string("stream ${i} more")))
+    end
+end

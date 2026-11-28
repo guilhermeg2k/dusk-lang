@@ -1,0 +1,87 @@
+import "std/string"
+
+struct Counter
+    count: int = 0
+
+    func get(self: @) -> int
+        return self.count
+    end
+
+    func plus(self: @, amount: int, label: string = "") -> string
+        return "$label${self.count + amount}"
+    end
+
+    func bump(mut self: @) -> void
+        self.count = self.count + 1
+    end
+
+    func me(self: @) -> Counter
+        return self
+    end
+end
+
+struct Node
+    value: int
+    next: ?Node = null
+
+    func sum(self: @) -> int
+        let rest = self.next?.sum() orelse 0
+        return self.value + rest
+    end
+end
+
+enum Light
+    Red
+    Green
+
+    func is_go(self: @) -> bool
+        return self == Light.Green
+    end
+end
+
+union Shape
+    circle: float
+    square: float
+
+    func area(self: @) -> float
+        return when self
+            circle: r then 3.0 * r * r end
+            square: s then s * s end
+        end
+    end
+end
+
+func main() -> void
+    let some: ?Counter = Counter(count = 4)
+    let none: ?Counter = null
+    assert(some?.get() == 4)
+    assert(none?.get() == null)
+    assert((none?.get() orelse -1) == -1)
+    assert(some?.plus(3, label = "n=") == "n=7")
+    assert(none?.plus(3) == null)
+    assert(some?.me()?.get() == 4)
+    assert(none?.me()?.get() == null)
+
+    let mut bumped: ?Counter = Counter()
+    bumped?.bump()
+    bumped?.bump()
+    assert(bumped?.get() == 2)
+    let mut missing: ?Counter = null
+    missing?.bump()
+    assert(missing == null)
+
+    let list = Node(value = 1, next = Node(value = 2, next = Node(value = 3)))
+    assert(list.next?.value == 2)
+    assert(list.next?.next?.value == 3)
+    assert(list.next?.next?.next?.value == null)
+    assert(list.sum() == 6)
+    assert(list.next?.sum() == 5)
+
+    let light: ?Light = Light.Green
+    let no_light: ?Light = null
+    assert(light?.is_go() == true)
+    assert(no_light?.is_go() == null)
+
+    let shape: ?Shape = Shape(square = 2.0)
+    assert(shape?.area() == 4.0)
+end

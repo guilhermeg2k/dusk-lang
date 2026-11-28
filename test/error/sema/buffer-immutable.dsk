@@ -1,4 +1,4 @@
-import std/buffer
+import "std/buffer"
 
 func main() -> !void
     let b = try buffer::new(2)

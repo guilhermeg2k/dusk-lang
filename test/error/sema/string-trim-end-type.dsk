@@ -1,0 +1,5 @@
+import "std/string"
+
+func main() -> void
+    let result = string::trim_end(1)
+end

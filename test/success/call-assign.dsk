@@ -1,4 +1,4 @@
-import std/array: len
+import "std/array": len
 
 func id(n: int) -> int
     return n

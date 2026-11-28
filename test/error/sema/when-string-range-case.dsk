@@ -1,8 +1,10 @@
+import "std/io"
+
 let name = "b"
 
 func main() -> void
     when name
-        "a".."c" then echo(1) end
-        else then echo(0) end
+        "a".."c" then io::println("${1}") end
+        else then io::println("${0}") end
     end
 end

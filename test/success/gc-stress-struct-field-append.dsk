@@ -1,4 +1,4 @@
-import std/array: len, append
+import "std/array": len, append
 
 func main() -> void
     # GC stress: array resize while struct canary survives

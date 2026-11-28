@@ -1,0 +1,8 @@
+import "std/string"
+
+func parse_or_fail(x: int = try string::to_int("bad")) -> !void
+end
+
+func main() -> !void
+    try parse_or_fail()
+end

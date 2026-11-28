@@ -1,0 +1,4 @@
+import "std/$name"
+
+func main() -> void
+end

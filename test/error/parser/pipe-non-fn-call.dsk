@@ -1,1 +1,3 @@
-echo(1 |> 42)
+import "std/io"
+
+io::println("${1 |> 42}")

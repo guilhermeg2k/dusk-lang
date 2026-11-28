@@ -1,0 +1,70 @@
+import "std/string": from_codepoint
+
+func codepoint_reason(codepoint: int) -> string
+    let text = string::from_codepoint(codepoint) catch e then
+        return when e
+            string::StringError.InvalidUtf8 then "invalid" end
+            else then "other" end
+        end
+    end
+    return text
+end
+
+func expect_invalid(codepoint: int) -> void
+    assert(codepoint_reason(codepoint) == "invalid")
+end
+
+func pipe_test() -> string::StringError!string
+    return 65 |> try string::from_codepoint()
+end
+
+func main() -> string::StringError!void
+    let nul = try string::from_codepoint(0)
+    assert(string::len(nul) == 1)
+    assert(string::char_count(nul) == 1)
+    assert(string::byte_at(nul, 0) == 0)
+    let with_nul = string::concat(string::concat("a", nul), "b")
+    assert(string::len(with_nul) == 3)
+    assert(string::byte_at(with_nul, 1) == 0)
+
+    let a = try from_codepoint(65)
+    assert(a == "A")
+    assert(string::len(a) == 1)
+
+    let accented = try string::from_codepoint(225)
+    assert(accented == "á")
+    assert(string::len(accented) == 2)
+    assert(string::byte_at(accented, 0) == 195)
+    assert(string::byte_at(accented, 1) == 161)
+
+    let quote = try string::from_codepoint(8217)
+    assert(quote == "’")
+    assert(string::len(quote) == 3)
+    assert(string::byte_at(quote, 0) == 226)
+    assert(string::byte_at(quote, 1) == 128)
+    assert(string::byte_at(quote, 2) == 153)
+
+    let moon = try string::from_codepoint(127769)
+    assert(moon == "🌙")
+    assert(string::len(moon) == 4)
+    assert(string::byte_at(moon, 0) == 240)
+    assert(string::byte_at(moon, 1) == 159)
+    assert(string::byte_at(moon, 2) == 140)
+    assert(string::byte_at(moon, 3) == 153)
+
+    let max_scalar = try string::from_codepoint(1114111)
+    assert(string::len(max_scalar) == 4)
+    assert(string::char_count(max_scalar) == 1)
+    assert(string::byte_at(max_scalar, 0) == 244)
+    assert(string::byte_at(max_scalar, 1) == 143)
+    assert(string::byte_at(max_scalar, 2) == 191)
+    assert(string::byte_at(max_scalar, 3) == 191)
+
+    let piped = try pipe_test()
+    assert(piped == "A")
+
+    expect_invalid(-1)
+    expect_invalid(55296)
+    expect_invalid(57343)
+    expect_invalid(1114112)
+end

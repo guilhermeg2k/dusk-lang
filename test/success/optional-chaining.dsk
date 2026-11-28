@@ -1,3 +1,5 @@
+import "std/io"
+
 enum Level
     Low
     High
@@ -62,7 +64,7 @@ func main() -> void
 
     # heap and nullable fields at the end of a chain
     if full.address?.country?.name: name then
-        echo(name)
+        io::println("${name}")
     else
         assert(false)
     end
@@ -85,9 +87,9 @@ func main() -> void
         assert(false)
     end
 
-    echo(full.address?.country?.id)
-    echo(no_country.address?.country?.id)
-    echo(no_address.address?.country?.name)
+    io::println("${full.address?.country?.id}")
+    io::println("${no_country.address?.country?.id}")
+    io::println("${no_address.address?.country?.name}")
 
     let done = Request(response = Response(status = 200))
     let pending = Request(response = null)
@@ -106,8 +108,8 @@ func main() -> void
         assert(false)
     end
 
-    echo(done.response?.status)
-    echo(pending.response?.body)
+    io::println("${done.response?.status}")
+    io::println("${pending.response?.body}")
 
     # chains surviving the gc
     let mut total = 0

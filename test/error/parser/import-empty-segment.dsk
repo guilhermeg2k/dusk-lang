@@ -1,0 +1,4 @@
+import "@/a//b"
+
+func main() -> void
+end

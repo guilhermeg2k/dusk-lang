@@ -1,5 +1,5 @@
-import @/physics
-import @/ui/button as btn
+import "@/physics"
+import "@/ui/button" as btn
 
 func main() -> void
 end

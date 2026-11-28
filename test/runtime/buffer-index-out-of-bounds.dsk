@@ -1,6 +1,7 @@
-import std/buffer
+import "std/buffer"
+import "std/io"
 
 func main() -> !void
     let b = try buffer::new(2)
-    echo(b[2])
+    io::println("${b[2]}")
 end

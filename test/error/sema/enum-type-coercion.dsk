@@ -1,3 +1,5 @@
+import "std/io"
+
 enum S
     A
     B
@@ -6,5 +8,5 @@ end
 let x: S = 42
 
 func main() -> void
-    echo(x)
+    io::println("${x}")
 end

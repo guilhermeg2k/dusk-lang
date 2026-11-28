@@ -1,0 +1,123 @@
+import "std/array": append, len
+import "std/string"
+
+error StepError
+    First
+    Second
+end
+
+func fail_first() -> StepError!int
+    return StepError.First
+end
+
+func fail_second() -> StepError!int
+    return StepError.Second
+end
+
+func ok_value(v: int) -> StepError!int
+    return v
+end
+
+func step(should_fail: bool, failure: StepError, value: int) -> StepError!int
+    if should_fail then
+        return failure
+    end
+    return value
+end
+
+func defer_loop_and_try(mut log: []int, fail_at: int) -> StepError!int
+    defer for 0..2: i do
+        let doubled = i * 2
+        append(log, doubled)
+    end
+    let a = try step(fail_at == 1, StepError.First, 10)
+    let b = try step(fail_at == 2, StepError.Second, 20)
+    return a + b
+end
+
+func defer_closure_reemit(mut out: []int, early: bool) -> int
+    defer if true then
+        let mut local = 5
+        let bump = func() -> int
+            local = local + 1
+            return local
+        end
+        append(out, bump())
+    end
+    if early then
+        return 100
+    end
+    return 200
+end
+
+func return_try_runs_errdefer(mut ran: []int, should_fail: bool) -> StepError!int
+    errdefer append(ran, 1)
+    if should_fail then
+        return try fail_second()
+    end
+    return try ok_value(42)
+end
+
+func when_nullable_gc(value: ?int) -> int
+    when value
+        1 then
+            return 1
+        end
+        null then
+            let mut acc = ""
+            for 1..200: i do
+                acc = string::concat(acc, "x")
+            end
+            return string::len(acc)
+        end
+        else then
+            let text = "allocated in default"
+            return string::len(text)
+        end
+    end
+end
+
+func expect_step_error(fail_at: int, expected: StepError) -> void
+    let mut log: []int = []
+    let ignored = defer_loop_and_try(log, fail_at) catch e then
+        assert(e == expected)
+        assert(len(log) == 3 and log[0] == 0 and log[1] == 2 and log[2] == 4)
+        return
+    end
+    assert(false)
+end
+
+func expect_return_try_errdefer() -> void
+    let mut ran: []int = []
+    let ignored = return_try_runs_errdefer(ran, true) catch e then
+        assert(e == StepError.Second)
+        assert(len(ran) == 1 and ran[0] == 1)
+        return
+    end
+    assert(false)
+end
+
+func main() -> void
+    expect_step_error(1, StepError.First)
+    expect_step_error(2, StepError.Second)
+
+    let mut log3: []int = []
+    let sum = defer_loop_and_try(log3, 0) catch -1
+    assert(sum == 30)
+    assert(len(log3) == 3)
+
+    let mut closure_log: []int = []
+    assert(defer_closure_reemit(closure_log, true) == 100)
+    assert(defer_closure_reemit(closure_log, false) == 200)
+    assert(len(closure_log) == 2 and closure_log[0] == 6 and closure_log[1] == 6)
+
+    expect_return_try_errdefer()
+
+    let mut ran2: []int = []
+    let ok = return_try_runs_errdefer(ran2, false) catch -1
+    assert(ok == 42)
+    assert(len(ran2) == 0)
+
+    assert(when_nullable_gc(null) == 200)
+    assert(when_nullable_gc(2) == 20)
+end

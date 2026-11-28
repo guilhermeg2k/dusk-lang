@@ -26,7 +26,7 @@ pub const Instruction = union(enum) {
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
     unwrap_null_box: UnwrapNullBox,
-    map_find: MapFind,
+    map_get_unboxed: MapGetUnboxed,
     update_capture: UpdateCapture,
     break_stmt: void,
     continue_stmt: void,
@@ -139,12 +139,6 @@ pub const StoreVar = struct {
     value: *Value,
 };
 
-pub const UpdateVar = struct {
-    var_uid: usize,
-    identifier: []const u8,
-    value: *Value,
-};
-
 pub const BranchIf = struct {
     condition: *Value,
     then_block: Block,
@@ -187,6 +181,7 @@ pub const ReturnError = struct {
 pub const TryCall = struct {
     call: *Value,
     is_top_level: bool,
+    cleanup: Block = &.{},
 };
 
 pub const CatchCall = struct {
@@ -275,16 +270,12 @@ pub const BinaryOp = struct {
     right: *Value,
 };
 
-pub const NullBoxNNullOp = struct {
-    value: *Value,
-};
-
 pub const MapCursor = struct {
     map: *Value,
     cursor: *Value,
 };
 
-pub const MapFind = struct {
+pub const MapGetUnboxed = struct {
     map: *Value,
     key: *Value,
     found_uid: usize,
@@ -374,4 +365,7 @@ pub const BinaryOpKind = enum {
     b_or,
     b_cmp_eq,
     b_cmp_neq,
+
+    arr_cmp_eq,
+    arr_cmp_neq,
 };

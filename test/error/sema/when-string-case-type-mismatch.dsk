@@ -1,8 +1,10 @@
+import "std/io"
+
 let name = "dusk"
 
 func main() -> void
     when name
-        1 then echo(1) end
-        else then echo(0) end
+        1 then io::println("${1}") end
+        else then io::println("${0}") end
     end
 end

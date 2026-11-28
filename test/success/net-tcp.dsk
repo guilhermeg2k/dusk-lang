@@ -1,0 +1,127 @@
+import "std/io"
+import "std/net"
+import "std/task"
+
+func net_error_name(e: net::NetError) -> string
+    return when e
+        net::NetError.ConnectionRefused then "refused" end
+        net::NetError.AddressInUse then "in use" end
+        net::NetError.InvalidAddress then "invalid" end
+        net::NetError.HostNotFound then "not found" end
+        else then "other" end
+    end
+end
+
+func io_error_name(e: io::IoError) -> string
+    return when e
+        io::IoError.Busy then "busy" end
+        io::IoError.Closed then "closed" end
+        else then "other" end
+    end
+end
+
+func serve(conn: net::TcpConn) -> io::IoError!string
+    let text = try conn.read_all()
+    conn.close()
+    return text
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    let port = listener.port()
+    assert(port > 0)
+
+    let server = spawn(func() -> io::IoError!string
+        let conn = try listener.accept()
+        let text = try conn.read_all()
+        conn.close()
+        return text
+    end)
+    let client = try net::tcp_connect("127.0.0.1", port)
+    client.close()
+    assert(try await(server) == "")
+
+    let mut handled = 0
+    let accepter = spawn(func() -> io::IoError!void
+        let mut i = 0
+        for i < 3 do
+            let conn = try listener.accept()
+            let worker = spawn(func() -> io::IoError!string
+                return try serve(conn)
+            end)
+            assert(try await(worker) == "")
+            handled = handled + 1
+            i = i + 1
+        end
+    end)
+    let mut c = 0
+    for c < 3 do
+        let conn = try net::tcp_connect("127.0.0.1", port)
+        conn.close()
+        c = c + 1
+    end
+    try await(accepter)
+    assert(handled == 3)
+
+    let first = spawn(func() -> io::IoError!void
+        let conn = try listener.accept()
+        conn.close()
+    end)
+    task::sleep(0)
+    let mut second_error = ""
+    listener.accept() catch e then
+        second_error = io_error_name(e)
+    end
+    assert(second_error == "busy")
+
+    let mut in_use = ""
+    net::tcp_listen("127.0.0.1", port) catch e then
+        in_use = net_error_name(e)
+    end
+    assert(in_use == "in use")
+
+    listener.close()
+    assert(listener.port() == port)
+    let mut parked_error = ""
+    await(first) catch e then
+        parked_error = io_error_name(e)
+    end
+    assert(parked_error == "closed")
+
+    let mut after_close = ""
+    listener.accept() catch e then
+        after_close = io_error_name(e)
+    end
+    assert(after_close == "closed")
+
+    let mut refused = ""
+    net::tcp_connect("127.0.0.1", port) catch e then
+        refused = net_error_name(e)
+    end
+    assert(refused == "refused")
+
+    let mut empty_host = ""
+    net::tcp_connect("", 80) catch e then
+        empty_host = net_error_name(e)
+    end
+    assert(empty_host == "invalid")
+
+    let mut bad_port = ""
+    net::tcp_listen("127.0.0.1", 70000) catch e then
+        bad_port = net_error_name(e)
+    end
+    assert(bad_port == "invalid")
+
+    let other = try net::tcp_listen("127.0.0.1", 0)
+    let line_server = spawn(func() -> io::IoError!?string
+        let conn = try other.accept()
+        let line = try conn.read_line()
+        conn.close()
+        return line
+    end)
+    let silent = try net::tcp_connect("127.0.0.1", other.port())
+    silent.close()
+    let line = try await(line_server)
+    assert(line == null)
+    other.close()
+end

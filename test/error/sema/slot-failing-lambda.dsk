@@ -1,4 +1,4 @@
-import std/array: append
+import "std/array": append
 
 error E
     Bad

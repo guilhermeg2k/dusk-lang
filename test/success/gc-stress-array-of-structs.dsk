@@ -1,4 +1,4 @@
-import std/array: len
+import "std/array": len
 
 func main() -> void
     # GC stress: array of structs survives many collection cycles

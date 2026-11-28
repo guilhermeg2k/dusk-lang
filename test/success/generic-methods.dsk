@@ -1,0 +1,126 @@
+import "std/array"
+
+error Bad
+    Odd
+end
+
+struct Box
+    value: int
+
+    func map[U](self: @, f: func(int) -> U) -> U
+        return f(self.value)
+    end
+
+    func pair[A, B](self: @, a: A, b: B) -> string
+        return "${self.value}:${a}:${b}"
+    end
+
+    func try_map[U, E: error](self: @, f: func(int) -> E!U) -> E!U
+        return try f(self.value)
+    end
+
+    func make[T](value: T) -> []T
+        return [value]
+    end
+end
+
+enum Color
+    Red
+    Green
+
+    func label[T](self: @, extra: T) -> string
+        return when self
+            Color.Red then "red ${extra}" end
+            Color.Green then "green ${extra}" end
+        end
+    end
+end
+
+union Shape
+    circle: float
+    square: int
+
+    func describe[T](self: @, prefix: T) -> string
+        return when self
+            circle: r then "${prefix} circle ${r}" end
+            square: s then "${prefix} square ${s}" end
+        end
+    end
+end
+
+func check_odd(n: int) -> Bad!int
+    if n % 2 == 1 then
+        return Bad.Odd
+    end
+    return n * 10
+end
+
+func main() -> !void
+    let b = Box(value = 4)
+    let s = b.map(func(x: int) -> string
+        return "v${x}"
+    end)
+    assert(s == "v4")
+    let doubled = b.map(func(x: int) -> return x * 2)
+    assert(doubled == 8)
+    assert(b.pair(1, "x") == "4:1:x")
+    let explicit = b.map[float](func(x: int) -> return to_float(x) / 2.0)
+    assert(explicit == 2.0)
+    let both = b.pair[int, bool](7, true)
+    assert(both == "4:7:true")
+    assert(try b.try_map(check_odd) == 40)
+    let never = b.map(func(x: int) -> return x + 1)
+    assert(never == 5)
+    let odd = Box(value = 3)
+    let failed = odd.try_map(check_odd) catch -1
+    assert(failed == -1)
+    let items = Box.make("hi")
+    assert(array::len(items) == 1)
+    assert(Color.Red.label(3) == "red 3")
+    let c = Color.Green
+    assert(c.label("!") == "green !")
+    let sh = Shape(square = 2)
+    assert(sh.describe("a") == "a square 2")
+    test_mut_and_nesting()
+end
+
+struct Acc
+    total: int
+    fns: []func(int) -> int
+
+    func add[T](mut self: @, x: T, f: func(T) -> int) -> void
+        self.total = self.total + f(x)
+    end
+
+    func twice[T](mut self: @, x: T, f: func(T) -> int) -> void
+        self.add(x, f)
+        self.add[T](x, f)
+    end
+
+    func map[U](self: @, f: func(int) -> U) -> U
+        return f(self.total)
+    end
+end
+
+struct Handlers
+    map: []func(int) -> int
+end
+
+func use_in_generic[T](acc: Acc, value: T) -> string
+    return acc.map(func(n: int) -> return "${value}:${n}")
+end
+
+func test_mut_and_nesting() -> void
+    let mut a = Acc(total = 0, fns = [func(n: int) -> return n + 100])
+    a.twice("abc", func(s: string) -> return 3)
+    assert(a.total == 6)
+    let i = 0
+    assert(a.fns[0](1) == 101)
+    assert(a.fns[i](2) == 102)
+    let label = a.map(func(n) -> return "n=${n}")
+    assert(label == "n=6")
+    assert(use_in_generic(a, true) == "true:6")
+    let h = Handlers(map = [func(n: int) -> return n * 3])
+    assert(h.map[i](2) == 6)
+    assert(h.map[0](3) == 9)
+end

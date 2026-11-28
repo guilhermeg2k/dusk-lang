@@ -1,0 +1,36 @@
+import "std/fs"
+
+func error_name(e: fs::FsError) -> string
+    return when e
+        fs::FsError.NotFound then "NotFound" end
+        fs::FsError.PermissionDenied then "PermissionDenied" end
+        else then "other" end
+    end
+end
+
+func main() -> !void
+    assert(fs::exists("test/fixtures/fs/hello.txt"))
+    assert(fs::exists("test/fixtures/fs/folder"))
+    assert(!fs::exists("test/fixtures/fs/missing.txt"))
+
+    let file = try fs::stat("test/fixtures/fs/hello.txt")
+    assert(file.size == 5)
+    assert(file.is_file)
+    assert(!file.is_dir)
+    assert(!file.is_symlink)
+    assert(file.modified_ms > 1600000000000)
+    assert(file.permissions > 0)
+    let created = file.created_ms orelse 0
+    assert(created >= 0)
+
+    let folder = try fs::stat("test/fixtures/fs/folder")
+    assert(folder.is_dir)
+    assert(!folder.is_file)
+    assert(folder.size == 0)
+
+    let missing = fs::stat("test/fixtures/fs/missing.txt") catch e then
+        assert(error_name(e) == "NotFound")
+        return
+    end
+    assert(false)
+end

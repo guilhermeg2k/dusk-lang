@@ -1,4 +1,5 @@
-import std/task
+import "std/task"
+import "std/io"
 
 func main() -> void
     spawn(func()
@@ -6,5 +7,5 @@ func main() -> void
     end)
     task::sleep(1)
     let items = [1]
-    echo(items[3])
+    io::println("${items[3]}")
 end

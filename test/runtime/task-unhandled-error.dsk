@@ -1,8 +1,9 @@
-import std/array: append
-import std/string
+import "std/array": append
+import "std/string"
+import "std/io"
 
 func main() -> void
     let mut kept: []Task[int, ConversionError] = []
     append(kept, spawn(func() -> return try string::to_int("x")))
-    echo("main done")
+    io::println("main done")
 end

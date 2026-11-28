@@ -1,0 +1,12 @@
+struct B
+    v: int
+
+    func set[T](mut self: @, x: T) -> void
+        self.v = 2
+    end
+end
+
+func main() -> void
+    let b = B(v = 1)
+    b.set(5)
+end

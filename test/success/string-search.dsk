@@ -1,4 +1,5 @@
-import std/string
+import "std/string"
+import "std/io"
 
 let text = "olá, mundo, olá"
 
@@ -30,8 +31,8 @@ func main() -> void
     assert((text |> string::contains("mundo")))
     assert(string::count(text, "") == 0)
     assert(string::count("", "") == 0)
-    echo(string::count(text, "olá"))
-    echo(string::count(text, ""))
-    echo(string::find(text, "mundo"))
-    echo(string::find(text, "?"))
+    io::println("${string::count(text, "olá")}")
+    io::println("${string::count(text, "")}")
+    io::println("${string::find(text, "mundo")}")
+    io::println("${string::find(text, "?")}")
 end

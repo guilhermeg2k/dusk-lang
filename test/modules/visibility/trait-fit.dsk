@@ -1,4 +1,4 @@
-import @/counter
+import "@/counter"
 
 trait Area
     func area(self: @) -> float

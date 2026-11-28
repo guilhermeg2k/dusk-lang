@@ -1,5 +1,6 @@
-import std/string
-import std/buffer
+import "std/string"
+import "std/buffer"
+import "std/io"
 
 struct Packet
     data: buffer
@@ -17,38 +18,38 @@ end
 
 func main() -> !void
     let mut buf = try buffer::new(4)
-    echo(buf)
-    echo(buffer::len(buf))
+    io::println("${buf}")
+    io::println("${buffer::len(buf)}")
     buf[0] = 'h'
     buf[1] = 105
     buf[3] = try to_byte(200 + 55)
-    echo(buf)
+    io::println("${buf}")
     let x = buf[0]
-    echo(x)
+    io::println("${x}")
     assert(x == 'h')
     let copy = buffer::from_string("olá")
-    echo(copy)
-    echo(buffer::len(copy))
-    echo(string::from_bytes(copy) catch "invalid")
-    echo(string::from_bytes(buf) catch "invalid")
+    io::println("${copy}")
+    io::println("${buffer::len(copy)}")
+    io::println("${string::from_bytes(copy) catch "invalid"}")
+    io::println("${string::from_bytes(buf) catch "invalid"}")
     let mut total = 0
     for copy: b, i do
         total = total + b
     end
-    echo(total)
-    echo("buf=$buf")
+    io::println("${total}")
+    io::println("buf=$buf")
     let maybe: ?buffer = null
-    echo(maybe)
-    echo(buf |> buffer::len())
+    io::println("${maybe}")
+    io::println("${buf |> buffer::len()}")
     let bufs = [try buffer::new(1), try buffer::new(2)]
-    echo(bufs)
+    io::println("${bufs}")
     let empty = try buffer::new(0)
-    echo(empty)
-    echo(string::from_bytes(empty) catch "x")
+    io::println("${empty}")
+    io::println("${string::from_bytes(empty) catch "x"}")
     let mut p = Packet(data = try buffer::new(2))
     p.data[1] = 9
-    echo(p.data)
-    echo(buffer::len(p.data))
-    echo(utf8_reason(buf))
-    echo(utf8_reason(buffer::from_string("fine")))
+    io::println("${p.data}")
+    io::println("${buffer::len(p.data)}")
+    io::println("${utf8_reason(buf)}")
+    io::println("${utf8_reason(buffer::from_string("fine"))}")
 end

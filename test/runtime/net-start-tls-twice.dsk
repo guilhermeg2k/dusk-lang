@@ -1,0 +1,13 @@
+import "std/net"
+import "std/fs"
+
+func main() -> !void
+    let cert = try net::certificate(try fs::read("test/fixtures/tls/server.pem"), try fs::read("test/fixtures/tls/server.key"))
+    let listener = try net::tls_listen("127.0.0.1", 0, cert)
+    spawn(func() -> void
+        let conn = listener.accept() catch _ then return end
+        let line = conn.read_line() catch _ then return end
+    end)
+    let conn = try net::tls_connect("localhost", listener.port(), ca = try fs::read("test/fixtures/tls/ca.pem"))
+    try conn.start_tls("localhost")
+end

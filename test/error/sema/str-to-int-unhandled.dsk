@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func main() -> void
     let n = string::to_int("1")

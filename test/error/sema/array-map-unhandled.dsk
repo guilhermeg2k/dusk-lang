@@ -1,0 +1,6 @@
+import "std/array"
+import "std/string"
+
+func main() -> void
+    array::map(["1"], func(s) -> return try string::to_int(s))
+end

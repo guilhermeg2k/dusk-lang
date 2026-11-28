@@ -1,3 +1,5 @@
+import "std/io"
+
 struct Node
     value: int
     next: ?Node
@@ -113,7 +115,7 @@ end
 
 func print_from(node: ?Node) -> void
     if node: current then
-        echo(current.value)
+        io::println("${current.value}")
         return print_from(current.next)
     end
 end
@@ -128,15 +130,15 @@ func main() -> void
     list.add_head(50)
     list.add_head(60)
     list.print()
-    echo(list.contains(10))
-    echo(list.len)
+    io::println("${list.contains(10)}")
+    io::println("${list.len}")
     list.pop()
     list.pop()
     list.print()
-    echo(list.len)
+    io::println("${list.len}")
     list.pop_value(50)
     list.pop_value(60)
-    echo(list.contains(60))
+    io::println("${list.contains(60)}")
     list.print()
-    echo(list.len)
+    io::println("${list.len}")
 end

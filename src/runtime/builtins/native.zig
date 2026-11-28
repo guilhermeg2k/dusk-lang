@@ -13,9 +13,29 @@ pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResu
 
 pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
 
+pub fn ownResource(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const size = v.Resource.calc_size();
+    try vm.maybeCollectGarbage(size);
+    const id = try vm.event_loop.resources.add(vm.event_loop.allocator, @enumFromInt(args[0].int64), args[1].int64);
+    errdefer _ = vm.event_loop.resources.take(id);
+    const owner = try v.Resource.init(vm.getCurrentHeapAllocator(), id);
+    vm.increaseHeapAllocationCount(size);
+    try vm.heap.trackResource(&owner.obj);
+    return .{ .value = .{ .heap_obj = &owner.obj } };
+}
+
+pub fn releaseResource(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const raw: u64 = @bitCast(args[0]);
+    if (raw == 0) {
+        return .{ .value = .{ .null = {} } };
+    }
+    const owner = v.HeapValue.getParentPtr(v.Resource, args[0].heap_obj);
+    vm.event_loop.resources.release(owner.id());
+    return .{ .value = .{ .null = {} } };
+}
+
 pub const Intrinsic = enum {
     array_len,
-    array_pop,
     bytes_len,
     new_buffer,
     to_byte,
@@ -41,6 +61,13 @@ pub fn parked() NativeResult {
 
 pub fn stringResult(result: *v.Bytes) NativeResult {
     return ok(.{ .heap_obj = &result.obj });
+}
+
+pub fn optionalBytesArg(args: []const v.Value, index: usize) ?[]const u8 {
+    if (@as(u64, @bitCast(args[index])) == 0) {
+        return null;
+    }
+    return bytesArg(args, index);
 }
 
 pub fn bytesArg(args: []const v.Value, index: usize) []const u8 {

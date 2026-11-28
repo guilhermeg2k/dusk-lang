@@ -1,0 +1,112 @@
+import "std/fs"
+import "std/io"
+import "std/string"
+import "std/array"
+import "std/buffer"
+
+struct Collector
+    total: int = 0
+
+    func write(mut self: @, text: string) -> io::IoError!void
+        self.total = self.total + string::len(text)
+    end
+
+    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        self.total = self.total + buffer::len(data)
+    end
+
+    func flush(mut self: @) -> io::IoError!void
+    end
+end
+
+func open_error(path: string) -> ?fs::FsError
+    let file = fs::open(path) catch e then
+        return e
+    end
+    file.close() catch ce then end
+    return null
+end
+
+func read_error(file: fs::File) -> ?io::IoError
+    let line = file.read_line() catch e then
+        return e
+    end
+    return null
+end
+
+func await_error(task: Task[?string, io::IoError]) -> ?io::IoError
+    let line = await(task) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let mut lines: []string = []
+    for 1..20000: i do
+        array::append(lines, "line ${i}")
+    end
+    let text = string::join(lines, "\n")
+    try fs::write("DIR/lines.txt", "${text}\n")
+
+    let file = try fs::open("DIR/lines.txt")
+    let mut count = 0
+    let mut last = ""
+    for true do
+        let next = try file.read_line()
+        if next: line then
+            count = count + 1
+            last = line
+        else
+            break
+        end
+    end
+    try file.close()
+    assert(count == 20000)
+    assert(last == "line 20000")
+
+    let chunks = try fs::open("DIR/lines.txt", fs::Mode.Read)
+    let mut total = 0
+    for true do
+        let next = try chunks.read_bytes(1000)
+        if next: data then
+            assert(buffer::len(data) <= 1000)
+            total = total + buffer::len(data)
+        else
+            break
+        end
+    end
+    try chunks.close()
+    assert(total == string::len(text) + 1)
+
+    let whole = try fs::open("DIR/lines.txt")
+    let first = try whole.read_exact(6)
+    assert(first != null)
+    let rest = try string::slice(text, 6, string::len(text))
+    assert((try whole.read_all()) == "${rest}\n")
+    try whole.close()
+
+    let mut copied = try fs::open("DIR/lines.txt")
+    let mut collector = Collector()
+    let bytes = try io::copy(copied, collector)
+    assert(bytes == string::len(text) + 1 and collector.total == bytes)
+    try copied.close()
+
+    let closed = try fs::open("DIR/lines.txt")
+    try closed.close()
+    try closed.close()
+    assert(read_error(closed) == io::IoError.Closed)
+
+    let shared = try fs::open("DIR/lines.txt")
+    let reader = spawn(func() -> io::IoError!?string
+        return try shared.read_line()
+    end)
+    let mine = try shared.read_line()
+    assert(mine == "line 1")
+    assert(await_error(reader) == io::IoError.Busy)
+    try shared.close()
+
+    assert(open_error("DIR/missing.txt") == fs::FsError.NotFound)
+    assert(open_error("DIR") == fs::FsError.IsDirectory)
+    assert((try fs::read("DIR/lines.txt")) == "${text}\n")
+end

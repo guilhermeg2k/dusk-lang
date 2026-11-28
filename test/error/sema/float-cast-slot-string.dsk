@@ -1,7 +1,9 @@
+import "std/io"
+
 func convert[T: int | string](x: T) -> float
     return to_float(x)
 end
 
 func main() -> void
-    echo(convert(1))
+    io::println("${convert(1)}")
 end

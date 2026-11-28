@@ -1,0 +1,301 @@
+import "std/array": append, len
+
+error BuildError
+    Negative
+end
+
+error CloneError
+    Failed
+end
+
+trait Clone
+    func clone(self: @) -> @
+end
+
+trait Equatable
+    func equals(self: @, other: @) -> bool
+end
+
+trait RichSelf
+    func maybe_copy(self: @) -> ?@
+    func try_copy(self: @) -> CloneError!@
+    func pair_with(self: @, other: @) -> []@
+end
+
+func id[T](x: T) -> T
+    return x
+end
+
+func duplicate[T: Clone](x: T) -> T
+    return x.clone()
+end
+
+func are_equal[T: Equatable](a: T, b: T) -> bool
+    return a.equals(b)
+end
+
+func test_rich[T: RichSelf](a: T, b: T) -> CloneError![]T
+    let _ = a.maybe_copy()
+    let c = try a.try_copy()
+    return c.pair_with(b)
+end
+
+struct Point
+    x: int
+    y: int
+
+    func origin() -> @
+        return @(x = 0, y = 0)
+    end
+
+    func add(self: @, other: @) -> @
+        return @(x = self.x + other.x, y = self.y + other.y)
+    end
+
+    func equals(self: @, other: @) -> bool
+        return self.x == other.x and self.y == other.y
+    end
+
+    func clone(self: @) -> @
+        let p: @ = @(x = self.x, y = self.y)
+        return p
+    end
+
+    func maybe_copy(self: @) -> ?@
+        if self.x < 0 then
+            return null
+        end
+        return @(x = self.x, y = self.y)
+    end
+
+    func try_copy(self: @) -> CloneError!@
+        if self.x < 0 then
+            return CloneError.Failed
+        end
+        return @(x = self.x, y = self.y)
+    end
+
+    func inferred_copy(self: @) -> !@
+        if self.x < 0 then
+            return BuildError.Negative
+        end
+        return @(x = self.x, y = self.y)
+    end
+
+    func pair_with(self: @, other: @) -> []@
+        let mut items: []@ = []
+        append(items, copy(self))
+        append(items, copy(other))
+        return items
+    end
+
+    func compound_locals(self: @) -> @
+        let mut table: map[string, @] = {}
+        table["self"] = copy(self)
+        let transform: func(@) -> @ = func(p: @) -> @
+            return @(x = p.x + 1, y = p.y + 1)
+        end
+        let t: Task[@] = spawn(func() -> return id[@](self))
+        let awaited: @ = await(t)
+        let looked_up: ?@ = table["self"]
+        if looked_up: found then
+            return transform(found)
+        end
+        return awaited
+    end
+end
+
+struct Builder
+    total: int = 0
+
+    func add(mut self: @, n: int) -> @
+        self.total = self.total + n
+        return self
+    end
+end
+
+struct Node
+    value: int
+    next: ?@ = null
+
+    func next_value(self: @) -> ?int
+        return self.next?.value
+    end
+
+    func tail_value(self: @) -> int
+        if self.next: nxt then
+            return nxt.tail_value()
+        end
+        return self.value
+    end
+end
+
+struct Stack[T]
+    items: []T = []
+
+    func push(mut self: @, item: T) -> @
+        append(self.items, item)
+        return self
+    end
+
+    func clone(self: @) -> @
+        let s: @ = @(items = copy(self.items))
+        return s
+    end
+
+    func combine(self: @, other: @) -> @
+        let mut out: @ = @(items = copy(self.items))
+        for other.items: item do
+            append(out.items, item)
+        end
+        return out
+    end
+end
+
+enum Direction
+    North
+    South
+    East
+    West
+
+    func opposite(self: @) -> @
+        if self == Direction.North then
+            return Direction.South
+        end
+        if self == Direction.South then
+            return Direction.North
+        end
+        if self == Direction.East then
+            return Direction.West
+        end
+        return Direction.East
+    end
+
+    func equals(self: @, other: @) -> bool
+        let d: @ = self
+        return d == other
+    end
+end
+
+union Expr
+    Num: int
+    Wrap: ?@
+
+    func unwrap_or(self: @, fallback: @) -> @
+        if self.Num: n then
+            return @(Num = n)
+        end
+        if self.Wrap: inner then
+            return inner
+        end
+        return fallback
+    end
+
+    func clone(self: @) -> @
+        return self
+    end
+end
+
+union Maybe[T]
+    Some: T
+    None: bool
+
+    func or_else(self: @, other: @) -> @
+        if self.Some: _ then
+            return self
+        end
+        return other
+    end
+end
+
+func main() -> void
+    let o = Point.origin()
+    assert(o.x == 0 and o.y == 0)
+
+    let p1 = Point(x = 1, y = 2)
+    let p2 = Point(x = 3, y = 4)
+    let p3 = p1.add(p2)
+    assert(p3.x == 4 and p3.y == 6)
+    assert(are_equal(p1, Point(x = 1, y = 2)))
+    assert(!are_equal(p1, p2))
+
+    let dup = duplicate(p1)
+    assert(dup.equals(p1))
+
+    let neg = Point(x = -1, y = 0)
+    assert(neg.maybe_copy() == null)
+    if p1.maybe_copy(): ok_p then
+        assert(ok_p.equals(p1))
+    else
+        assert(false)
+    end
+
+    let inf_ok = p1.inferred_copy() catch Point.origin()
+    assert(inf_ok.equals(p1))
+    let inf_err = neg.inferred_copy() catch Point.origin()
+    assert(inf_err.equals(Point.origin()))
+
+    let pair = test_rich(p1, p2) catch []
+    assert(len(pair) == 2 and pair[0].equals(p1) and pair[1].equals(p2))
+
+    let shifted = p1.compound_locals()
+    assert(shifted.x == 2 and shifted.y == 3)
+
+    let mut b = Builder()
+    let b2 = b.add(1).add(2).add(3)
+    assert(b2.total == 6)
+
+    let n2 = Node(value = 20)
+    let n1 = Node(value = 10, next = n2)
+    assert((n1.next_value() orelse 0) == 20)
+    assert(n1.tail_value() == 20)
+    assert((n1.next?.tail_value() orelse 0) == 20)
+
+    let mut s1 = Stack[int]()
+    s1.push(1).push(2)
+    let mut s2 = Stack[int]()
+    s2.push(3)
+    let s3 = s1.combine(s2)
+    assert(len(s3.items) == 3 and s3.items[2] == 3)
+    let s1_clone = duplicate(s1)
+    assert(len(s1_clone.items) == 2)
+
+    let mut str_stack = Stack[string]()
+    str_stack.push("a").push("b")
+    assert(len(str_stack.clone().items) == 2)
+
+    assert(Direction.North.opposite() == Direction.South)
+    assert(are_equal(Direction.East, Direction.East))
+    assert(!are_equal(Direction.East, Direction.West))
+
+    let e1 = Expr(Num = 42)
+    let e2 = Expr(Wrap = e1)
+    let e3 = Expr(Wrap = null)
+    let r1 = e2.unwrap_or(Expr(Num = 0))
+    let r2 = e3.unwrap_or(Expr(Num = 99))
+    if r1.Num: n then
+        assert(n == 42)
+    else
+        assert(false)
+    end
+    if r2.Num: n then
+        assert(n == 99)
+    else
+        assert(false)
+    end
+    let e1_dup = duplicate(e1)
+    if e1_dup.Num: n then
+        assert(n == 42)
+    else
+        assert(false)
+    end
+
+    let m1 = Maybe[int](None = true)
+    let m2 = Maybe[int](Some = 7)
+    let m3 = m1.or_else(m2)
+    if m3.Some: v then
+        assert(v == 7)
+    else
+        assert(false)
+    end
+end

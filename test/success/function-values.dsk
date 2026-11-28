@@ -1,4 +1,5 @@
-import std/array: len, append
+import "std/array": len, append
+import "std/io"
 
 error ParseError
     Odd
@@ -72,15 +73,15 @@ func main() -> void
 
     let mut maybe: ?func(int, int) -> int = null
     assert(maybe == null)
-    echo(maybe)
+    io::println("${maybe}")
     maybe = add
     if maybe: m then
         assert(m(2, 2) == 4)
     end
 
-    echo(f)
-    echo("value: $f")
-    echo(ops)
+    io::println("${f}")
+    io::println("value: $f")
+    io::println("${ops}")
 
     let gr: func(mut []int) -> void = grow
     let mut xs = [1]

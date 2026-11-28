@@ -1,0 +1,5 @@
+elif true then
+end
+
+func main() -> void
+end

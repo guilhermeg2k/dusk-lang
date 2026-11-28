@@ -1,4 +1,3 @@
 func main() -> void
-    let mut xs = [1]
-    let x = unchecked_pop(xs)
+    let x = unchecked_to_byte(1)
 end

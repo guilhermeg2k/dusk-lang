@@ -2,9 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
 const EntryFile = @import("dusk.zig").EntryFile;
+const Stdio = @import("dusk.zig").Stdio;
 const ModuleLoader = @import("compiler/modules.zig").ModuleLoader;
 const Lexer = @import("compiler/lexer.zig").Lexer;
-const uv = @import("runtime/tasks/uv.zig");
+const uv = @import("runtime/tasks/loop/uv.zig");
 
 fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -13,9 +14,196 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     defer output.deinit();
     const path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
     const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
     try dusk.compileAndRun(source);
     try testing.expectEqualStrings(expected, output.written());
+}
+
+test "gc: else branches do not retain roots from the skipped then branch" {
+    try runCase("gc-if-branches.dsk");
+}
+
+test "array: identity equality follows relocated copies" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(
+        \\import "std/array"
+        \\func main() -> void
+        \\    let mut a = [1]
+        \\    let b = a
+        \\    let other = [1]
+        \\    for 2..100: i do
+        \\        array::append(a, i)
+        \\    end
+        \\    assert(a == b)
+        \\    assert(b == a)
+        \\    assert((a != b) == false)
+        \\    assert(a != other)
+        \\    assert(b != other)
+        \\    let opt_a: ?[]int = a
+        \\    let opt_b: ?[]int = b
+        \\    let opt_null: ?[]int = null
+        \\    assert(opt_a == opt_b)
+        \\    assert(opt_b == a)
+        \\    assert(a == opt_b)
+        \\    assert(opt_a != opt_null)
+        \\    assert(opt_null != opt_b)
+        \\    assert(opt_null == null)
+        \\end
+    );
+}
+
+test "sema: @ works in any type position inside structs, enums, unions and traits" {
+    try runCase("self-type.dsk");
+    try runCaseError("sema/self-type-outside-top-level-func.dsk", error.SelfTypeOutsideType);
+    try runCaseError("sema/self-type-outside-main.dsk", error.SelfTypeOutsideType);
+    try runCaseError("sema/self-type-in-nested-struct.dsk", error.SelfTypeOutsideType);
+    try runCaseError("sema/self-type-trait-return-mismatch.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/self-type-trait-param-mismatch.dsk", error.DoesntFitTrait);
+}
+
+test "string: from_codepoint encodes valid Unicode scalars and rejects invalid ones" {
+    try runCase("string-from-codepoint.dsk");
+}
+
+test "sema: anonymous coercions preserve private-field visibility" {
+    try runCase("anonymous-private-same-module.dsk");
+    try runCaseError("sema/time-timestamp-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-array-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
+}
+
+test "math: constants, numeric functions and errors" {
+    try runCase("math.dsk");
+}
+
+test "math: extrema across GC and array growth" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(
+        \\import "std/math"
+        \\import "std/array"
+        \\func main() -> math::MathError!void
+        \\    let values = [9, -7, 3]
+        \\    let floats = [9.5, -7.5, 3.5]
+        \\    let saved_min = try math::min(values)
+        \\    let saved_max = try math::max(floats)
+        \\    for 0..10000: i do
+        \\        let garbage = [i, i + 1, i + 2]
+        \\        assert((try math::min(values)) == -7)
+        \\        assert((try math::max(values)) == 9)
+        \\        assert((try math::min(floats)) == -7.5)
+        \\        assert((try math::max(floats)) == 9.5)
+        \\    end
+        \\    assert(saved_min == -7)
+        \\    assert(saved_max == 9.5)
+        \\    let mut integers = [0]
+        \\    let mut grown_floats = [0.0]
+        \\    for 1..1000: i do
+        \\        array::append(integers, i)
+        \\        array::append(grown_floats, -to_float(i))
+        \\    end
+        \\    assert((try math::min(integers)) == 0)
+        \\    assert((try math::max(integers)) == 1000)
+        \\    assert((try math::min(grown_floats)) == -1000.0)
+        \\    assert((try math::max(grown_floats)) == 0.0)
+        \\end
+    );
+}
+
+test "math: abs overflow, rounding bounds and nonnumeric extrema" {
+    {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+        try testing.expectError(error.IntegerOverflow, dusk.compileAndRun("import \"std/math\"\nfunc main() -> void let result = math::abs((-9223372036854775807 - 1)) end"));
+    }
+    for ([_][]const u8{ "floor", "ceil", "round", "trunc" }) |function| {
+        for ([_][]const u8{ "math::inf", "-math::inf", "math::nan", "9223372036854775808.0", "-9223372036854777856.0" }) |value| {
+            var arena = std.heap.ArenaAllocator.init(testing.allocator);
+            defer arena.deinit();
+            const source = try std.fmt.allocPrint(arena.allocator(), "import \"std/math\"\nfunc main() -> void let result = math::{s}({s}) end", .{ function, value });
+            var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+            try testing.expectError(error.FloatOutOfIntRange, dusk.compileAndRun(source));
+        }
+    }
+    for ([_][]const u8{ "min", "max" }) |function| {
+        for ([_][]const u8{ "[true]", "[\"text\"]", "[null]", "[[1]]" }) |values| {
+            var arena = std.heap.ArenaAllocator.init(testing.allocator);
+            defer arena.deinit();
+            const source = try std.fmt.allocPrint(arena.allocator(), "import \"std/math\"\nfunc main() -> void let result = math::{s}({s}) end", .{ function, values });
+            const expected_error = if (std.mem.eql(u8, values, "[null]")) error.CantInferSlot else error.TypeDoesntFitSlot;
+            var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+            try testing.expectError(expected_error, dusk.compile(source));
+        }
+    }
+}
+
+test "time: timestamps, formatting and private construction" {
+    try runCase("time-timestamps.dsk");
+    try runCaseError("sema/time-timestamp-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-timestamp-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-timestamp-format-argument.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/time-timestamp-native-private.dsk", error.NotVisible);
+}
+
+test "time: clocks and tasks" {
+    try runCase("time-clocks.dsk");
+    try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);
+    try runCaseError("sema/time-clock-extra-argument.dsk", error.InvalidNumberOfArgs);
+}
+
+test "time: wall milliseconds handle fractions, pre-epoch times and integer limits" {
+    const time = @import("runtime/builtins/std/time.zig");
+    try testing.expectEqual(@as(i64, 0), try time.wallMillisecondsFromNanoseconds(0));
+    try testing.expectEqual(@as(i64, 0), try time.wallMillisecondsFromNanoseconds(std.time.ns_per_ms - 1));
+    try testing.expectEqual(@as(i64, 1), try time.wallMillisecondsFromNanoseconds(std.time.ns_per_ms));
+    try testing.expectEqual(@as(i64, 999), try time.wallMillisecondsFromNanoseconds(std.time.ns_per_s - 1));
+    try testing.expectEqual(@as(i64, -1), try time.wallMillisecondsFromNanoseconds(-1));
+    try testing.expectEqual(@as(i64, -1000), try time.wallMillisecondsFromNanoseconds(-std.time.ns_per_s));
+    const maximum: i96 = std.math.maxInt(i64);
+    const minimum: i96 = std.math.minInt(i64);
+    try testing.expectEqual(std.math.maxInt(i64), try time.wallMillisecondsFromNanoseconds(maximum * std.time.ns_per_ms + (std.time.ns_per_ms - 1)));
+    try testing.expectEqual(std.math.minInt(i64), try time.wallMillisecondsFromNanoseconds(minimum * std.time.ns_per_ms));
+    try testing.expectError(error.ClockOutOfRange, time.wallMillisecondsFromNanoseconds((maximum + 1) * std.time.ns_per_ms));
+    try testing.expectError(error.ClockOutOfRange, time.wallMillisecondsFromNanoseconds(minimum * std.time.ns_per_ms - 1));
+}
+
+test "time: monotonic readings use checked integer conversion" {
+    const time = @import("runtime/builtins/std/time.zig");
+    try testing.expectEqual(@as(i64, 0), try time.monotonicNanosecondsFromReading(0));
+    try testing.expectEqual(std.math.maxInt(i64), try time.monotonicNanosecondsFromReading(std.math.maxInt(i64)));
+    try testing.expectError(error.ClockOutOfRange, time.monotonicNanosecondsFromReading(@as(i96, std.math.maxInt(i64)) + 1));
+    try testing.expectError(error.ClockOutOfRange, time.monotonicNanosecondsFromReading(@as(i96, std.math.minInt(i64)) - 1));
+}
+
+test "time: natives read clocks without a task, event loop or GC allocations" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{}, testing.io);
+    defer vm.deinit();
+    const time = @import("runtime/builtins/std/time.zig");
+    const host_wall = std.Io.Clock.real.now(testing.io).toMilliseconds();
+    var args: [0]@import("runtime/value.zig").Value = .{};
+    const wall = try time.bindings.get("now_ms").?.native(&vm, &args);
+    try testing.expect(@abs(@as(i128, wall.value.int64) - host_wall) < 60000);
+    try testing.expect(!wall.has_failed and !wall.is_parked);
+    const first = try time.bindings.get("monotonic_ns").?.native(&vm, &args);
+    const second = try time.bindings.get("monotonic_ns").?.native(&vm, &args);
+    try testing.expect(second.value.int64 >= first.value.int64);
+    try testing.expect(!first.has_failed and !first.is_parked);
+    try testing.expect(!second.has_failed and !second.is_parked);
+    try testing.expect(vm.event_loop.loop == null);
+    try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+    try testing.expectEqual(@as(usize, 0), vm.heap.allocated);
+    try testing.expectEqual(@as(usize, 0), vm.heap.object_count);
+    try testing.expect(vm.running_task == null);
 }
 
 test "libuv: a timer fires once" {
@@ -41,13 +229,1368 @@ test "libuv: a timer fires once" {
     try testing.expectEqual(0, uv.uv_loop_close(loop));
 }
 
+test "stdout: a pipe is flushed when the program ends" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    try runSourceWithStdout("import \"std/io\"\nfunc main() -> void io::println(\"1\") io::println(\"2\") end", &recorder.interface);
+    try testing.expectEqual(1, recorder.drain_count);
+    try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
+}
+
+test "stdout: flushed before the scheduler waits for events" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    try runSourceWithStdout("import \"std/io\"\nimport \"std/task\"\nfunc main() -> void io::println(\"1\") task::sleep(20) io::println(\"2\") end", &recorder.interface);
+    try testing.expectEqual(2, recorder.drain_count);
+    try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
+}
+
+test "stdout: flushed before a runtime error" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    try testing.expectError(error.AssertionFailed, runSourceWithStdout("import \"std/io\"\nfunc main() -> void io::println(\"1\") assert(false) end", &recorder.interface));
+    try testing.expectEqualStrings("1\n", recorder.flushed.items);
+}
+
+test "stdout: a terminal is flushed at the end of each line" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    var stdio = Stdio{ .stdout = .{ .custom = &recorder.interface }, .is_stdout_terminal = true };
+    try stdio.writeBytes(.stdout, "ab");
+    try testing.expectEqual(0, recorder.drain_count);
+    try stdio.writeBytes(.stdout, "c\n");
+    try testing.expectEqualStrings("abc\n", recorder.flushed.items);
+}
+
+test "stderr: flushed after every write" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    var stdio = Stdio{ .stderr = .{ .custom = &recorder.interface } };
+    try stdio.writeBytes(.stderr, "warning");
+    try testing.expectEqualStrings("warning", recorder.flushed.items);
+}
+
+test "stdout: a closed pipe stops the program with BrokenPipe" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    const read_end: std.Io.File = .{ .handle = fds[0], .flags = .{ .nonblocking = false } };
+    read_end.close(testing.io);
+    const write_end: std.Io.File = .{ .handle = fds[1], .flags = .{ .nonblocking = false } };
+    defer write_end.close(testing.io);
+    var buffer: [64]u8 = undefined;
+    var file_writer = write_end.writerStreaming(testing.io, &buffer);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .file = &file_writer } }, .io = testing.io };
+    try testing.expectError(error.BrokenPipe, dusk.compileAndRun("import \"std/io\"\nfunc main() -> void io::println(\"1\") end"));
+}
+
+test "stdout: any other failed write is a runtime error" {
+    var failing: std.Io.Writer = .{ .vtable = &.{ .drain = failDrain }, .buffer = &.{} };
+    try testing.expectError(error.OutputFailed, runSourceWithStdout("import \"std/io\"\nfunc main() -> void io::println(\"1\") end", &failing));
+}
+
+fn runSourceWithStdout(source: []const u8, stdout: *std.Io.Writer) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = stdout } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+const FlushRecorder = struct {
+    interface: std.Io.Writer,
+    drain_count: usize = 0,
+    flushed: std.ArrayList(u8) = .empty,
+
+    fn init(buffer: []u8) FlushRecorder {
+        return .{ .interface = .{ .vtable = &.{ .drain = drain }, .buffer = buffer } };
+    }
+
+    fn deinit(self: *FlushRecorder) void {
+        self.flushed.deinit(testing.allocator);
+    }
+
+    fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *FlushRecorder = @alignCast(@fieldParentPtr("interface", w));
+        self.drain_count += 1;
+        self.flushed.appendSlice(testing.allocator, w.buffered()) catch return error.WriteFailed;
+        w.end = 0;
+        var consumed: usize = 0;
+        for (data[0 .. data.len - 1]) |bytes| {
+            self.flushed.appendSlice(testing.allocator, bytes) catch return error.WriteFailed;
+            consumed += bytes.len;
+        }
+        const last = data[data.len - 1];
+        for (0..splat) |_| {
+            self.flushed.appendSlice(testing.allocator, last) catch return error.WriteFailed;
+        }
+        return consumed + last.len * splat;
+    }
+};
+
+fn failDrain(_: *std.Io.Writer, _: []const []const u8, _: usize) std.Io.Writer.Error!usize {
+    return error.WriteFailed;
+}
+
+test "io: print and println write to stdout, eprint and eprintln to stderr" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer stdout.deinit();
+    var stderr: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer stderr.deinit();
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, "test/success/io-print.dsk", arena.allocator(), .unlimited);
+    var dusk = Dusk{
+        .allocator = arena.allocator(),
+        .stdio = .{ .stdout = .{ .custom = &stdout.writer }, .stderr = .{ .custom = &stderr.writer } },
+        .io = testing.io,
+    };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings("hello\nno newline\nDusk\n42 1.5 true [1, 2, 3] null { 1, 2 }\n", stdout.written());
+    try testing.expectEqualStrings("this goes to stderr\nso does this", stderr.written());
+}
+
+test "io: needs an import, only prints strings, and replaces echo" {
+    try runCaseError("sema/echo-removed.dsk", error.NotDefined);
+    try runCaseError("sema/io-without-import.dsk", error.ModuleNotImported);
+    try runCaseError("sema/io-print-not-string.dsk", error.InvalidType);
+}
+
+test "fs: exists and stat, errors after a park, other tasks keep running" {
+    try runCase("fs-stat.dsk");
+    try runCase("fs-tasks.dsk");
+    try runCaseError("sema/fs-exists-not-string.dsk", error.InvalidType);
+}
+
+test "net: tcp listen, connect and accept on loopback, errors, end of input" {
+    try runCase("net-tcp.dsk");
+}
+
+test "net: tcp writes, echo, large and concurrent writes, broken pipe, io::copy" {
+    try runCase("net-tcp-write.dsk");
+}
+
+test "net: names in connect and listen, every address tried, connect and accept timeouts" {
+    try runCase("net-tcp-names.dsk");
+}
+
+test "net: read_exact and remote_address" {
+    try runCase("net-tcp-extras.dsk");
+}
+
+test "http: streamed responses (chunked, sized, files, head, server-sent events)" {
+    try runCaseInTmpDir("http-server-streams.dsk");
+}
+
+test "net: write timeouts close a connection whose peer stops reading" {
+    try runCase("net-write-timeout.dsk");
+}
+
+test "net: a burst of connections is accepted in batches" {
+    try runCase("net-tcp-burst.dsk");
+}
+
+test "compression: compress and decompress gzip, zlib and raw deflate (levels, fixtures from other tools, gzip members, bad data, max, levels out of range, GC)" {
+    try runCase("compression.dsk");
+}
+
+test "compression: streamed Compressor and Decompressor (pieces of any size, flush, finish, gzip members, Finished, bad data, max across writes, slot reuse, many live streams)" {
+    try runCase("compression-stream.dsk");
+}
+
+test "compression: writer and reader wrap any io::Writer and io::Reader (files, io::copy, flush, cut-short and bad input, max, Closed after finish)" {
+    try runCaseInTmpDir("compression-io.dsk");
+}
+
+test "compression: buffers over 256 KiB are compressed and decompressed on the thread pool while other tasks run (errors and max from the pool, several jobs at once)" {
+    try runCase("compression-pool.dsk");
+}
+
+test "resources: the GC closes connections, listeners, files, response streams and compressors nothing can reach (copies keep them, explicit close and pooling win)" {
+    try runCaseInTmpDir("gc-resources.dsk");
+}
+
+test "slot table: freed slots are reused and stale ids are rejected" {
+    const SlotTable = @import("runtime/tasks/loop/slot_table.zig").SlotTable;
+    const allocator = testing.allocator;
+    var table: SlotTable(u8) = .{};
+    defer table.deinit(allocator);
+    var a: u8 = 1;
+    var b: u8 = 2;
+    try table.reserve(allocator);
+    const first = table.addAssumeCapacity(&a);
+    try testing.expectEqual(&a, table.get(first).?);
+    try testing.expectEqual(&a, table.remove(first).?);
+    try testing.expect(table.get(first) == null);
+    try testing.expect(table.remove(first) == null);
+    try table.reserve(allocator);
+    const second = table.addAssumeCapacity(&b);
+    try testing.expect(second != first);
+    try testing.expectEqual(first & 0xffff_ffff, second & 0xffff_ffff);
+    try testing.expect(table.get(first) == null);
+    try testing.expectEqual(&b, table.get(second).?);
+    try testing.expect(table.get(-1) == null);
+    try testing.expectEqual(@as(usize, 1), table.entries.items.len);
+}
+
+test "net: a closed connection's handle can't reach a new connection that reuses its slot" {
+    try runCase("net-handle-reuse.dsk");
+}
+
+test "resources: the registry hands out ids, frees released slots and rejects stale ones" {
+    const ResourceRegistry = @import("runtime/tasks/loop/resource_registry.zig").ResourceRegistry;
+    const allocator = testing.allocator;
+    var registry: ResourceRegistry = .{};
+    defer registry.deinit(allocator);
+    const conn = try registry.add(allocator, .stream, 4);
+    const listener = try registry.add(allocator, .listener, 0);
+    try testing.expectEqual(@as(usize, 2), registry.liveCount());
+    registry.release(listener);
+    try testing.expectEqual(@as(usize, 1), registry.liveCount());
+    try testing.expect(registry.take(listener) == null);
+    const taken = registry.take(conn).?;
+    try testing.expectEqual(@as(i64, 4), taken.table_id);
+    try testing.expect(registry.take(conn) == null);
+    try testing.expectEqual(@as(usize, 0), registry.liveCount());
+    const reused = try registry.add(allocator, .compression, 99);
+    try testing.expectEqual(conn.registry_slot_index, reused.registry_slot_index);
+    try testing.expect(reused.registry_slot_version != conn.registry_slot_version);
+    try testing.expect(registry.take(conn) == null);
+    try testing.expectEqual(@as(usize, 1), registry.liveCount());
+}
+
+test "resources: a collection keeps moved owners and reports the ones nobody copied" {
+    const v = @import("runtime/value.zig");
+    const Heap = @import("runtime/gc.zig").Heap;
+    var heap = Heap.init(testing.allocator);
+    defer heap.deinit();
+    const allocator = heap.allocator();
+    const kept = try v.Resource.init(allocator, .{ .registry_slot_index = 1, .registry_slot_version = 1 });
+    const dropped = try v.Resource.init(allocator, .{ .registry_slot_index = 2, .registry_slot_version = 7 });
+    try heap.trackResource(&kept.obj);
+    try heap.trackResource(&dropped.obj);
+    const moved = try kept.clone(allocator);
+    kept.obj.gc_forward = &moved.obj;
+    try heap.sweepResources();
+    try testing.expectEqual(@as(usize, 1), heap.resources.items.len);
+    try testing.expectEqual(&moved.obj, heap.resources.items[0]);
+    try testing.expectEqual(@as(usize, 1), heap.dead_resource_ids.items.len);
+    try testing.expectEqual(@as(u32, 2), heap.dead_resource_ids.items[0].registry_slot_index);
+    try testing.expectEqual(@as(u32, 7), heap.dead_resource_ids.items[0].registry_slot_version);
+}
+
+test "compression: the stream table reuses slots and rejects stale ids" {
+    const compression = @import("runtime/io/compression/compression.zig");
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop: EventLoop = .{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const first_stream = try testing.allocator.create(compression.CompressionStream);
+    first_stream.* = .{ .zip = compression.dusk_zip_compressor_new(.gzip, 6).?, .format = .gzip };
+    const first = try event_loop.addCompressionStream(first_stream);
+    const second_stream = try testing.allocator.create(compression.CompressionStream);
+    second_stream.* = .{ .zip = compression.dusk_zip_decompressor_new(.zlib).?, .format = .zlib, .max = 10 };
+    const second = try event_loop.addCompressionStream(second_stream);
+    try testing.expect(first != second);
+    try testing.expect(event_loop.compressionStreamAt(first) != null);
+    try testing.expectEqual(@as(?usize, 10), event_loop.compressionStreamAt(second).?.max);
+    event_loop.closeCompressionStream(first);
+    try testing.expect(event_loop.compressionStreamAt(first) == null);
+    event_loop.closeCompressionStream(first);
+    const third_stream = try testing.allocator.create(compression.CompressionStream);
+    third_stream.* = .{ .zip = compression.dusk_zip_compressor_new(.deflate, 1).?, .format = .deflate };
+    const third = try event_loop.addCompressionStream(third_stream);
+    try testing.expectEqual(first & 0xffff_ffff, third & 0xffff_ffff);
+    try testing.expect(third != first);
+    try testing.expect(event_loop.compressionStreamAt(first) == null);
+    try testing.expectEqual(compression.Format.deflate, event_loop.compressionStreamAt(third).?.format);
+    try testing.expect(event_loop.compressionStreamAt(-1) == null);
+    try testing.expect(event_loop.compressionStreamAt(12345) == null);
+    try testing.expectEqual(@as(usize, 2), event_loop.compression_streams.entries.items.len);
+}
+
+test "http server: server table reuses slots, rejects stale ids and closes on resource sweep" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop: EventLoop = .{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const first = try event_loop.addHttpServer();
+    const second = try event_loop.addHttpServer();
+    try testing.expect(first != second);
+    try testing.expect(event_loop.httpServerAt(first) != null);
+    try event_loop.httpServerAt(first).?.setIdle(testing.allocator, 42, true);
+    event_loop.closeHttpServer(first);
+    try testing.expect(event_loop.httpServerAt(first) == null);
+    event_loop.closeHttpServer(first);
+    const third = try event_loop.addHttpServer();
+    try testing.expectEqual(first & 0xffff_ffff, third & 0xffff_ffff);
+    try testing.expect(third != first);
+    try testing.expect(event_loop.httpServerAt(first) == null);
+    try testing.expect(event_loop.httpServerAt(third) != null);
+    try testing.expectEqual(@as(usize, 2), event_loop.http_servers.entries.items.len);
+    const resource_id = try event_loop.resources.add(testing.allocator, .http_server, third);
+    event_loop.closeResource(resource_id);
+    try testing.expect(event_loop.httpServerAt(third) == null);
+}
+
+test "bytes and heap: calcSizeChecked and needsCollection do not overflow usize" {
+    const v = @import("runtime/value.zig");
+    const Heap = @import("runtime/gc.zig").Heap;
+    try testing.expectError(error.OutOfMemory, v.Bytes.calcSizeChecked(std.math.maxInt(usize) - 1));
+    var heap = Heap.init(testing.allocator);
+    defer heap.deinit();
+    heap.countAllocation(64);
+    try testing.expect(heap.needsCollection(std.math.maxInt(usize)));
+}
+
+test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_query" {
+    try runCase("url.dsk");
+}
+
+test "http: requests, response streams and the connection pool over loopback (headers, bodies, framing, limits, bad responses, request checks, timeouts, redirects, https, reuse and retry, gzip)" {
+    try runCase("http-client.dsk");
+}
+
+test "http: max_connections_per_host caps connections in use per host (waiting in line, reuse counted, timeouts while waiting)" {
+    try runCase("http-client-limit.dsk");
+}
+
+test "http: streamed request bodies (chunked, sized, from a file), Expect: 100-continue (automatic, early refusal, servers that never answer it), length mismatches, redirects with streamed bodies" {
+    try runCase("http-client-upload.dsk");
+}
+
+test "http: ContentType names common types and content_type_of guesses one from a file name" {
+    try runCase("http-content-type.dsk");
+}
+
+test "http server: response compression (gzip when accepted, q-values, compressible types, minimum size, Vary, HEAD, handler encodings, streams, files, flushed events, compress = false, levels)" {
+    try runCase("http-server-compression.dsk");
+    try runCaseRuntimeError("http-compression-level.dsk", error.HttpInvalidCompressionLevel);
+}
+
+test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw and malformed requests, request bodies, limits, 100-continue, timeouts, shutdown" {
+    try runCase("http-server.dsk");
+}
+
+test "net: TLS over loopback with test certificates, errors on both sides, start_tls twice" {
+    try runCase("net-tls.dsk");
+    try runCaseRuntimeError("net-start-tls-twice.dsk", error.TlsAlreadyStarted);
+}
+
+test "net: start_tls on a plain connection, handshake() and its errors, handshake timeouts" {
+    try runCase("net-tls-handshake.dsk");
+}
+
+test "net: accept_tls upgrades an accepted plain connection (STARTTLS), early client hello, handshake failure, timeout, twice" {
+    try runCase("net-starttls.dsk");
+    try runCaseRuntimeError("net-accept-tls-twice.dsk", error.TlsAlreadyStarted);
+}
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+
+test "net: SSL_CERT_FILE replaces the system roots, connections wait for them to load, other tasks get Busy meanwhile" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    _ = setenv("SSL_CERT_FILE", "test/fixtures/tls/ca.pem", 1);
+    defer _ = unsetenv("SSL_CERT_FILE");
+    try runCase("net-tls-env-roots.dsk");
+    try runCase("net-tls-busy-while-loading-roots.dsk");
+}
+
+test "fs: read and read_bytes" {
+    try runCase("fs-read.dsk");
+}
+
+test "fs: read reads big files and files that report size 0" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const big = try allocator.alloc(u8, 3 * 1024 * 1024 + 17);
+    for (big, 0..) |*byte, i| byte.* = 'a' + @as(u8, @intCast(i % 26));
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "big.txt", .data = big });
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const is_linux = @import("builtin").os.tag == .linux;
+    const template =
+        \\import "std/io"
+        \\import "std/fs"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let big = try fs::read("DIR/big.txt")
+        \\    io::println("${string::len(big)} ${string::char_at(big, 26) orelse "missing"}")
+        \\    if CHECK_PROC then
+        \\        let proc = try fs::read("/proc/self/stat")
+        \\        io::println("${string::len(proc) > 0}")
+        \\    end
+        \\end
+    ;
+    const with_dir = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    const source = try std.mem.replaceOwned(u8, allocator, with_dir, "CHECK_PROC", if (is_linux) "true" else "false");
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+    const expected = if (is_linux) "3145745 a\ntrue\n" else "3145745 a\n";
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+test "fs: write, write_bytes and append, checked on disk" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(testing.io, "folder", .default_dir);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import "std/io"
+        \\import "std/fs"
+        \\import "std/buffer"
+        \\func main() -> !void
+        \\    try fs::write("DIR/text.txt", "a longer first version\n")
+        \\    try fs::write("DIR/text.txt", "olá 🌙\n")
+        \\    try fs::append("DIR/text.txt", "more\n")
+        \\    try fs::append("DIR/created.txt", "new\n")
+        \\    try fs::write("DIR/empty.txt", "")
+        \\    let mut data = try buffer::new(256)
+        \\    let mut i = 0
+        \\    for i < 256 do
+        \\        data[i] = try to_byte(i)
+        \\        i = i + 1
+        \\    end
+        \\    try fs::write_bytes("DIR/all.bin", data)
+        \\    fs::write("DIR/missing/x.txt", "x") catch e then
+        \\        io::println("${e == fs::FsError.NotFound}")
+        \\    end
+        \\    fs::append("DIR/folder", "x") catch e then
+        \\        io::println("${e == fs::FsError.IsDirectory}")
+        \\    end
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings("true\ntrue\n", output.written());
+
+    try testing.expectEqualStrings("olá 🌙\nmore\n", try tmp.dir.readFileAlloc(testing.io, "text.txt", allocator, .unlimited));
+    try testing.expectEqualStrings("new\n", try tmp.dir.readFileAlloc(testing.io, "created.txt", allocator, .unlimited));
+    try testing.expectEqualStrings("", try tmp.dir.readFileAlloc(testing.io, "empty.txt", allocator, .unlimited));
+    const all = try tmp.dir.readFileAlloc(testing.io, "all.bin", allocator, .unlimited);
+    try testing.expectEqual(@as(usize, 256), all.len);
+    for (all, 0..) |byte, i| {
+        try testing.expectEqual(@as(u8, @intCast(i)), byte);
+    }
+}
+
+test "fs: files opened for reading, read by lines, chunks and whole" {
+    try runCaseInTmpDir("fs-files-read.dsk");
+}
+
+test "fs: files opened for writing, buffered, appended, written from several tasks" {
+    try runCaseInTmpDir("fs-files-write.dsk");
+}
+
+test "fs: seek, position and size on files read, written and appended" {
+    try runCaseInTmpDir("fs-files-seek.dsk");
+}
+
+test "fs: data still buffered in a file reaches the disk when the program ends" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import "std/fs"
+        \\func main() -> !void
+        \\    let big = try fs::open("DIR/big.txt", fs::Mode.Write)
+        \\    for 1..20000: i do
+        \\        try big.write("0123456789")
+        \\    end
+        \\    try big.write("end")
+        \\    let small = try fs::open("DIR/small.txt", fs::Mode.Write)
+        \\    try small.write("kept")
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+    const big = try tmp.dir.readFileAlloc(testing.io, "big.txt", allocator, .unlimited);
+    try testing.expectEqual(@as(usize, 200003), big.len);
+    try testing.expect(std.mem.endsWith(u8, big, "89end"));
+    try testing.expectEqualStrings("kept", try tmp.dir.readFileAlloc(testing.io, "small.txt", allocator, .unlimited));
+}
+
+test "fs: recursive delete handles deep directory trees without exhausting fds" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import "std/fs"
+        \\func main() -> !void
+        \\    let mut path = "DIR/deep"
+        \\    for 1..120: i do
+        \\        path = "${path}/d${i}"
+        \\    end
+        \\    try fs::make_dir(path, recursive = true)
+        \\    try fs::write("${path}/leaf.txt", "ok")
+        \\    try fs::delete("DIR/deep", recursive = true)
+        \\    assert(!fs::exists("DIR/deep"))
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+test "fs: CreateNew, permissions, chmod, follow_symlinks and max_bytes" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.symLink(testing.io, "missing-target.txt", "dangling-link", .{});
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "real.txt", .data = "original" });
+    try tmp.dir.symLink(testing.io, "real.txt", "live-link", .{});
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const script =
+        \\import "std/fs"
+        \\import "std/io"
+        \\import "std/buffer"
+        \\func open_err(path: string, mode: fs::Mode, permissions: int = 438, follow_symlinks: bool = true) -> ?fs::FsError
+        \\    let f = fs::open(path, mode, permissions = permissions, follow_symlinks = follow_symlinks) catch e then
+        \\        return e
+        \\    end
+        \\    f.close() catch ce then end
+        \\    return null
+        \\end
+        \\func read_err(path: string, max_bytes: int) -> ?fs::FsError
+        \\    let _ = fs::read(path, max_bytes = max_bytes) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func read_bytes_err(path: string, max_bytes: int) -> ?fs::FsError
+        \\    let _ = fs::read_bytes(path, max_bytes = max_bytes) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func write_err(path: string, text: string, permissions: int = 438, follow_symlinks: bool = true) -> ?fs::FsError
+        \\    fs::write(path, text, permissions = permissions, follow_symlinks = follow_symlinks) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func read_all_err(f: fs::File, max_bytes: int) -> ?io::IoError
+        \\    let _ = f.read_all(max_bytes = max_bytes) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func main() -> !void
+        \\    let f1 = try fs::open("DIR/unique.txt", fs::Mode.CreateNew, permissions = 384)
+        \\    try f1.write("secret")
+        \\    try f1.close()
+        \\    assert((try fs::stat("DIR/unique.txt")).permissions == 384)
+        \\    assert(open_err("DIR/unique.txt", fs::Mode.CreateNew) == fs::FsError.AlreadyExists)
+        \\    assert(open_err("DIR/dangling-link", fs::Mode.CreateNew) == fs::FsError.AlreadyExists)
+        \\    assert(!fs::exists("DIR/missing-target.txt"))
+        \\
+        \\    try fs::chmod("DIR/unique.txt", 420)
+        \\    assert((try fs::stat("DIR/unique.txt")).permissions == 420)
+        \\
+        \\    assert(write_err("DIR/bad-mode.txt", "x", permissions = -1) == fs::FsError.InvalidPath)
+        \\    assert(write_err("DIR/bad-mode.txt", "x", permissions = 5000) == fs::FsError.InvalidPath)
+        \\    assert(write_err("DIR/live-link", "nope", follow_symlinks = false) != null)
+        \\    assert((try fs::read("DIR/real.txt")) == "original")
+        \\
+        \\    assert((try fs::read("DIR/real.txt", max_bytes = 8)) == "original")
+        \\    assert(read_err("DIR/real.txt", 7) == fs::FsError.TooLarge)
+        \\    assert(read_bytes_err("DIR/real.txt", 4) == fs::FsError.TooLarge)
+        \\
+        \\    try fs::write("DIR/empty.txt", "")
+        \\    assert((try fs::read("DIR/empty.txt", max_bytes = 0)) == "")
+        \\    assert(read_err("DIR/real.txt", 0) == fs::FsError.TooLarge)
+        \\
+        \\    let r = try fs::open("DIR/real.txt")
+        \\    assert(read_all_err(r, 4) == io::IoError.TooLarge)
+        \\    try r.close()
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, script, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+test "fs: write_atomic, real_path and resolve_under" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "root/sub");
+    try tmp.dir.createDirPath(testing.io, "root2");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "root/sub/ok.txt", .data = "inside" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "root2/secret.txt", .data = "outside" });
+    try tmp.dir.symLink(testing.io, "../../root2/secret.txt", "root/sub/escape.txt", .{});
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const script =
+        \\import "std/fs"
+        \\import "std/buffer"
+        \\func resolve_err(root: string, rel: string) -> ?fs::FsError
+        \\    let _ = fs::resolve_under(root, rel) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func main() -> !void
+        \\    try fs::write_atomic("DIR/atomic.txt", "v1", permissions = 384)
+        \\    assert((try fs::read("DIR/atomic.txt")) == "v1")
+        \\    assert((try fs::stat("DIR/atomic.txt")).permissions == 384)
+        \\    try fs::write_bytes_atomic("DIR/atomic.txt", buffer::from_string("v2"))
+        \\    assert((try fs::read("DIR/atomic.txt")) == "v2")
+        \\
+        \\    let real_ok = try fs::real_path("DIR/root/sub/ok.txt")
+        \\    assert((try fs::resolve_under("DIR/root", "sub/ok.txt")) == real_ok)
+        \\    assert((try fs::resolve_under("DIR/root", "")) == (try fs::real_path("DIR/root")))
+        \\    assert(resolve_err("DIR/root", "../root2/secret.txt") == fs::FsError.InvalidPath)
+        \\    assert(resolve_err("DIR/root", "/etc/hostname") == fs::FsError.InvalidPath)
+        \\    assert(resolve_err("DIR/root", "sub/escape.txt") == fs::FsError.InvalidPath)
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, script, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+test "net: set_read_timeout times out read_bytes" {
+    const script =
+        \\import "std/net"
+        \\import "std/io"
+        \\func read_err(conn: net::TcpConn) -> ?io::IoError
+        \\    let _ = conn.read_bytes(64) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func main() -> !void
+        \\    let listener = try net::tcp_listen("127.0.0.1", 0)
+        \\    defer listener.close()
+        \\    let port = listener.port()
+        \\    let server = spawn(func() -> io::IoError!void
+        \\        let peer = try listener.accept()
+        \\        defer peer.close()
+        \\        let _ = peer.read_bytes(1) catch null
+        \\    end)
+        \\    let conn = try net::tcp_connect("127.0.0.1", port)
+        \\    defer conn.close()
+        \\    conn.set_read_timeout(30)
+        \\    assert(read_err(conn) == io::IoError.TimedOut)
+        \\    conn.close()
+        \\    try await(server)
+        \\end
+    ;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(script);
+}
+
+fn runCaseInTmpDir(src_file: []const u8) !void {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const path = try std.fmt.allocPrint(allocator, "test/success/{s}", .{src_file});
+    const template = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, allocator, .unlimited);
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+test "fs: read_dir, make_dir, remove and rename, checked on disk" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "outside");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "outside/keep.txt", .data = "keep" });
+    try tmp.dir.createDirPath(testing.io, "tree/inner/deeper");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tree/top.txt", .data = "1" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tree/inner/deeper/leaf.txt", .data = "2" });
+    try tmp.dir.symLink(testing.io, "../outside", "tree/inner/link-to-outside", .{});
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import "std/io"
+        \\import "std/fs"
+        \\import "std/array": len, contains
+        \\func name(e: fs::FsError) -> string
+        \\    return when e
+        \\        fs::FsError.NotFound then "NotFound" end
+        \\        fs::FsError.AlreadyExists then "AlreadyExists" end
+        \\        fs::FsError.NotDirectory then "NotDirectory" end
+        \\        fs::FsError.NotEmpty then "NotEmpty" end
+        \\        else then "other" end
+        \\    end
+        \\end
+        \\func main() -> !void
+        \\    let names = try fs::read_dir("DIR/tree")
+        \\    io::println("${len(names)} ${contains(names, "top.txt")} ${contains(names, "inner")}")
+        \\    fs::read_dir("DIR/missing") catch e then io::println(name(e)) end
+        \\    fs::read_dir("DIR/tree/top.txt") catch e then io::println(name(e)) end
+        \\    fs::make_dir("DIR/new/deep") catch e then io::println(name(e)) end
+        \\    try fs::make_dir("DIR/new")
+        \\    fs::make_dir("DIR/new") catch e then io::println(name(e)) end
+        \\    try fs::make_dir("DIR/made/a/b/", recursive = true)
+        \\    try fs::make_dir("DIR/made/a/b", recursive = true)
+        \\    fs::make_dir("DIR/tree/top.txt/x", recursive = true) catch e then io::println(name(e)) end
+        \\    fs::delete("DIR/tree") catch e then io::println(name(e)) end
+        \\    try fs::delete("DIR/new")
+        \\    try fs::rename("DIR/tree/top.txt", "DIR/moved.txt")
+        \\    try fs::rename("DIR/made", "DIR/made-renamed")
+        \\    try fs::delete("DIR/moved.txt")
+        \\    try fs::delete("DIR/tree", recursive = true)
+        \\    fs::delete("DIR/tree") catch e then io::println(name(e)) end
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings("2 true true\nNotFound\nNotDirectory\nNotFound\nAlreadyExists\nNotDirectory\nNotEmpty\nNotFound\n", output.written());
+
+    try testing.expectEqualStrings("keep", try tmp.dir.readFileAlloc(testing.io, "outside/keep.txt", allocator, .unlimited));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "tree", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "new", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "moved.txt", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "made", .{}));
+    const made = try tmp.dir.statFile(testing.io, "made-renamed/a/b", .{});
+    try testing.expectEqual(std.Io.File.Kind.directory, made.kind);
+}
+
+test "fs: stat follows symlinks and reports permissions and times like the OS" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "a.txt", .data = "hello" });
+    try tmp.dir.symLink(testing.io, "a.txt", "link", .{});
+    try tmp.dir.symLink(testing.io, "missing", "broken", .{});
+    const file_stat = try tmp.dir.statFile(testing.io, "a.txt", .{});
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import "std/io"
+        \\import "std/fs"
+        \\func main() -> !void
+        \\    let link = try fs::stat("DIR/link")
+        \\    io::println("${link.size} ${link.is_file} ${link.is_dir} ${link.is_symlink} ${link.permissions} ${link.modified_ms}")
+        \\    let broken = try fs::stat("DIR/broken")
+        \\    io::println("${broken.is_file} ${broken.is_dir} ${broken.is_symlink}")
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+
+    const permissions = file_stat.permissions.toMode() & 0o777;
+    const expected = try std.fmt.allocPrint(allocator, "5 true false true {d} {d}\nfalse false true\n", .{ permissions, file_stat.mtime.toMilliseconds() });
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+test "calls take positional arguments first, then named ones in any order" {
+    try runCase("call-arguments-mixed.dsk");
+    try runCaseError("sema/call-args-positional-after-named.dsk", error.PositionalAfterNamed);
+    try runCaseError("sema/call-args-given-twice.dsk", error.ArgumentGivenTwice);
+    try runCaseError("sema/call-args-unknown-name.dsk", error.UnknownArgumentName);
+    try runCaseError("sema/call-args-named-unknown.dsk", error.UnknownArgumentName);
+    try runCaseError("sema/call-args-named-twice.dsk", error.ArgumentGivenTwice);
+}
+
+test "io: stdin read_bytes over a pipe, in chunks, then null" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    _ = std.c.write(fds[1], "hello world!", 12);
+    closeFd(fds[1]);
+    const source =
+        \\import "std/io"
+        \\import "std/buffer"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    io::println("${input.is_terminal()}")
+        \\    let mut total = 0
+        \\    for true do
+        \\        let next = try input.read_bytes(4)
+        \\        if next: chunk then
+        \\            total = total + buffer::len(chunk)
+        \\            io::println(try string::from_bytes(chunk))
+        \\        else
+        \\            break
+        \\        end
+        \\    end
+        \\    io::println("total $total")
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "false\nhell\no wo\nrld!\ntotal 12\n");
+}
+
+test "io: a stdin read parks until data arrives while other tasks run" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{"late"} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    const source =
+        \\import "std/io"
+        \\import "std/task"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let mut is_done = false
+        \\    let mut ticks = 0
+        \\    let counter = spawn(func() -> void
+        \\        for !is_done do
+        \\            ticks = ticks + 1
+        \\            task::sleep(1)
+        \\        end
+        \\    end)
+        \\    let input = io::stdin()
+        \\    let first = try input.read_bytes(16)
+        \\    if first: data then
+        \\        io::println(try string::from_bytes(data))
+        \\    end
+        \\    let second = try input.read_bytes(16)
+        \\    io::println("${second == null}")
+        \\    is_done = true
+        \\    await(counter)
+        \\    io::println("${ticks > 0}")
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "late\ntrue\ntrue\n");
+}
+
+test "io: a second task reading stdin at the same time gets Busy" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{"x"} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    const source =
+        \\import "std/io"
+        \\import "std/task"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let reader = spawn(func() -> !string
+        \\        let next = try io::stdin().read_bytes(8)
+        \\        if next: data then
+        \\            return try string::from_bytes(data)
+        \\        end
+        \\        return "none"
+        \\    end)
+        \\    task::sleep(5)
+        \\    io::stdin().read_bytes(8) catch e then
+        \\        io::println("${e == io::IoError.Busy}")
+        \\    end
+        \\    io::println(try await(reader))
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "true\nx\n");
+}
+
+test "io: read_bytes needs a size of at least 1" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    closeFd(fds[1]);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try testing.expectError(error.InvalidReadSize, runWithStdin("import \"std/io\"\nfunc main() -> !void\n    let data = try io::stdin().read_bytes(0)\nend\n", fds[0], &output.writer));
+}
+
+test "io: read_exact on stdin waits for the count, fails with UnexpectedEnd partway, keeps the rest" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    _ = std.c.write(fds[1], "hello world", 11);
+    closeFd(fds[1]);
+    const source =
+        \\import "std/io"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    let first = try input.read_exact(5)
+        \\    if first: data then
+        \\        io::println(try string::from_bytes(data))
+        \\    end
+        \\    input.read_exact(10) catch e then
+        \\        io::println(if e == io::IoError.UnexpectedEnd then "unexpected end" else "other" end)
+        \\    end
+        \\    let rest = try input.read_bytes(20)
+        \\    if rest: data then
+        \\        io::println(try string::from_bytes(data))
+        \\    end
+        \\    let after = try input.read_exact(1)
+        \\    io::println("${after == null}")
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "hello\nunexpected end\n world\ntrue\n");
+}
+
+test "io: read_exact needs a count of at least 1" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    closeFd(fds[1]);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try testing.expectError(error.InvalidReadSize, runWithStdin("import \"std/io\"\nfunc main() -> !void\n    let data = try io::stdin().read_exact(0)\nend\n", fds[0], &output.writer));
+}
+
+test "io: read_line splits lines, strips \r\n, returns the last line, then null" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try pipeWithInput("one\ntwo\r\n\nlast");
+    try expectStdinOutput(read_lines_source, fds[0], "[one]\n[two]\n[]\n[last]\nend\n");
+}
+
+test "io: read_line waits for a line split across writes" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{ "par", "tial\nne", "xt\n" } };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    try expectStdinOutput(read_lines_source, fds[0], "[partial]\n[next]\nend\n");
+}
+
+test "io: read_line limits, invalid UTF-8, read_all and read_all_bytes" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const too_long =
+        \\import "std/io"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.read_line(max = 3) catch e then
+        \\        io::println("${e == io::IoError.LineTooLong}")
+        \\    end
+        \\    let rest = try input.read_bytes(64)
+        \\    if rest: data then
+        \\        io::print(try string::from_bytes(data))
+        \\    end
+        \\    io::println("${try input.read_line(max = 3)}")
+        \\end
+    ;
+    try expectStdinOutput(too_long, (try pipeWithInput("abcdef\nok\n"))[0], "true\nabcdef\nok\nnull\n");
+
+    const invalid =
+        \\import "std/io"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.read_line() catch e then
+        \\        io::println("${e == io::IoError.InvalidUtf8}")
+        \\    end
+        \\    io::println("${try input.read_line()}")
+        \\end
+    ;
+    try expectStdinOutput(invalid, (try pipeWithInput("\xff\nok\n"))[0], "true\nok\n");
+
+    const all =
+        \\import "std/io"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let text = try io::stdin().read_all()
+        \\    io::println("${string::char_count(text)} [$text]")
+        \\end
+    ;
+    try expectStdinOutput(all, (try pipeWithInput("olá\n🌙"))[0], "5 [olá\n🌙]\n");
+    try expectStdinOutput(all, (try pipeWithInput(""))[0], "0 []\n");
+
+    const all_bytes =
+        \\import "std/io"
+        \\import "std/buffer"
+        \\func main() -> !void
+        \\    let data = try io::stdin().read_all_bytes()
+        \\    io::println("${buffer::len(data)} ${data[0]}")
+        \\end
+    ;
+    try expectStdinOutput(all_bytes, (try pipeWithInput("\xff\x00\x01"))[0], "3 255\n");
+}
+
+test "io: read_all collects 10 MB written while the program waits" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const big = try testing.allocator.alloc(u8, 10 * 1024 * 1024);
+    defer testing.allocator.free(big);
+    @memset(big, 'a');
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{big} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    const source =
+        \\import "std/io"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let text = try io::stdin().read_all()
+        \\    io::println("${string::len(text)}")
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "10485760\n");
+}
+
+test "io: reading stdin flushes stdout before waiting" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{"Ana\n"} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    try runWithStdin("import \"std/io\"\nfunc main() -> !void\n    io::print(\"Name: \")\n    let name = try io::stdin().read_line()\n    io::println(\"Hi ${name}\")\nend\n", fds[0], &recorder.interface);
+    try testing.expectEqual(2, recorder.drain_count);
+    try testing.expectEqualStrings("Name: Hi Ana\n", recorder.flushed.items);
+}
+
+test "io: stdin redirected from a file, across chunks, and from /dev/null" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lines.txt", .data = "one\r\ntwo\nlast" });
+    const lines_file = try tmp.dir.openFile(testing.io, "lines.txt", .{});
+    try expectStdinOutput(read_lines_source, lines_file.handle, "[one]\n[two]\n[last]\nend\n");
+
+    const big = try testing.allocator.alloc(u8, 200_000);
+    defer testing.allocator.free(big);
+    for (big, 0..) |*byte, i| {
+        byte.* = if (i % 1000 == 999) '\n' else 'a';
+    }
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "big.txt", .data = big });
+    const count_lines =
+        \\import "std/io"
+        \\import "std/string"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    let mut count = 0
+        \\    let mut is_uniform = true
+        \\    for true do
+        \\        let next = try input.read_line()
+        \\        if next: line then
+        \\            count = count + 1
+        \\            is_uniform = is_uniform and string::len(line) == 999
+        \\        else
+        \\            break
+        \\        end
+        \\    end
+        \\    io::println("$count $is_uniform")
+        \\end
+    ;
+    const big_file = try tmp.dir.openFile(testing.io, "big.txt", .{});
+    try expectStdinOutput(count_lines, big_file.handle, "200 true\n");
+
+    const null_file = try std.Io.Dir.cwd().openFile(testing.io, "/dev/null", .{});
+    try expectStdinOutput(read_lines_source, null_file.handle, "end\n");
+}
+
+test "io: close, reading after close, and a parked reader woken by close" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const after_close =
+        \\import "std/io"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    io::println("${try input.read_line()}")
+        \\    input.close()
+        \\    input.close()
+        \\    input.read_line() catch e then
+        \\        io::println("${e == io::IoError.Closed}")
+        \\    end
+        \\    io::stdin().read_bytes(4) catch e then
+        \\        io::println("${e == io::IoError.Closed}")
+        \\    end
+        \\end
+    ;
+    try expectStdinOutput(after_close, (try pipeWithInput("first\nsecond\n"))[0], "first\ntrue\ntrue\n");
+
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{"late"} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    const woken =
+        \\import "std/io"
+        \\import "std/task"
+        \\func main() -> !void
+        \\    let reader = spawn(func() -> bool
+        \\        io::stdin().read_line() catch e then
+        \\            return e == io::IoError.Closed
+        \\        end
+        \\        return false
+        \\    end)
+        \\    task::sleep(5)
+        \\    io::stdin().close()
+        \\    io::println("${await(reader)}")
+        \\end
+    ;
+    try expectStdinOutput(woken, fds[0], "true\n");
+}
+
+test "io: a read that times out loses nothing and the stream stays usable" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const silent = try std.Io.Threaded.pipe2(.{});
+    var late_writer = DelayedWriter{ .fd = silent[1], .parts = &.{ "", "late\n" } };
+    const late_thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&late_writer});
+    defer late_thread.join();
+    const late =
+        \\import "std/io"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.read_line(timeout_ms = 15) catch e then
+        \\        io::println("${e == io::IoError.TimedOut}")
+        \\    end
+        \\    io::println("${try input.read_line()}")
+        \\end
+    ;
+    try expectStdinOutput(late, silent[0], "true\nlate\n");
+
+    const split = try std.Io.Threaded.pipe2(.{});
+    var split_writer = DelayedWriter{ .fd = split[1], .parts = &.{ "par", "", "", "tial\n" } };
+    const split_thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&split_writer});
+    defer split_thread.join();
+    const partial =
+        \\import "std/io"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.read_line(timeout_ms = 60) catch e then
+        \\        io::println("${e == io::IoError.TimedOut}")
+        \\    end
+        \\    io::println("${try input.read_line()}")
+        \\end
+    ;
+    try expectStdinOutput(partial, split[0], "true\npartial\n");
+}
+
+test "io: a timer that doesn't fire doesn't delay the program, and close beats it" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const start = std.Io.Clock.awake.now(testing.io);
+    const in_time = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = in_time[1], .parts = &.{"quick\n"} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    try expectStdinOutput("import \"std/io\"\nfunc main() -> !void\n    io::println(\"${try io::stdin().read_line(timeout_ms = 5000)}\")\nend\n", in_time[0], "quick\n");
+
+    const silent = try std.Io.Threaded.pipe2(.{});
+    defer closeFd(silent[1]);
+    const closed =
+        \\import "std/io"
+        \\import "std/task"
+        \\func main() -> !void
+        \\    let reader = spawn(func() -> bool
+        \\        io::stdin().read_all(timeout_ms = 5000) catch e then
+        \\            return e == io::IoError.Closed
+        \\        end
+        \\        return false
+        \\    end)
+        \\    task::sleep(5)
+        \\    io::stdin().close()
+        \\    io::println("${await(reader)}")
+        \\end
+    ;
+    try expectStdinOutput(closed, silent[0], "true\n");
+    const elapsed = start.durationTo(std.Io.Clock.awake.now(testing.io));
+    try testing.expect(elapsed.toMilliseconds() < 2000);
+}
+
+test "io: stdout and stderr writers, flush, and errors returned instead of ending the program" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    var errors: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer errors.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const writers =
+        \\import "std/io"
+        \\import "std/buffer"
+        \\func main() -> !void
+        \\    let out = io::stdout()
+        \\    try out.write("no newline")
+        \\    try out.flush()
+        \\    try out.write_bytes(buffer::from_string(", bytes\n"))
+        \\    try io::stderr().write("to stderr\n")
+        \\end
+    ;
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = &recorder.interface }, .stderr = .{ .custom = &errors.writer } }, .io = testing.io };
+    try dusk.compileAndRun(writers);
+    try testing.expectEqual(2, recorder.drain_count);
+    try testing.expectEqualStrings("no newline, bytes\n", recorder.flushed.items);
+    try testing.expectEqualStrings("to stderr\n", errors.written());
+
+    const fds = try std.Io.Threaded.pipe2(.{});
+    closeFd(fds[0]);
+    defer closeFd(fds[1]);
+    const write_end: std.Io.File = .{ .handle = fds[1], .flags = .{ .nonblocking = false } };
+    var pipe_buffer: [64]u8 = undefined;
+    var file_writer = write_end.writerStreaming(testing.io, &pipe_buffer);
+    errors.clearRetainingCapacity();
+    const broken =
+        \\import "std/io"
+        \\func main() -> void
+        \\    let out = io::stdout()
+        \\    out.write("lost") catch e then
+        \\        io::eprintln("write: ${e == io::IoError.BrokenPipe}")
+        \\    end
+        \\    out.flush() catch e then
+        \\        io::eprintln("flush: ${e == io::IoError.BrokenPipe}")
+        \\    end
+        \\    io::eprintln("still running")
+        \\end
+    ;
+    var broken_dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .file = &file_writer }, .stderr = .{ .custom = &errors.writer } }, .io = testing.io };
+    try broken_dusk.compileAndRun(broken);
+    try testing.expectEqualStrings("flush: true\nstill running\n", errors.written());
+}
+
+test "io: copy works with std streams and with user structs fitting Reader and Writer" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const piped =
+        \\import "std/io"
+        \\func main() -> !void
+        \\    let mut out = io::stdout()
+        \\    let copied = try io::copy(io::stdin(), out)
+        \\    io::println(" $copied")
+        \\end
+    ;
+    try expectStdinOutput(piped, (try pipeWithInput("piped data"))[0], "piped data 10\n");
+
+    const custom =
+        \\import "std/io"
+        \\import "std/buffer"
+        \\import "std/array": len, append
+        \\struct Chunks
+        \\    parts: []string
+        \\    position: int = 0
+        \\
+        \\    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
+        \\        if self.position >= len(self.parts) then
+        \\            return null
+        \\        end
+        \\        self.position = self.position + 1
+        \\        return buffer::from_string(self.parts[self.position - 1])
+        \\    end
+        \\end
+        \\struct Collector
+        \\    sizes: []int = []
+        \\    flushes: int = 0
+        \\
+        \\    func write(mut self: @, text: string) -> io::IoError!void
+        \\    end
+        \\
+        \\    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        \\        append(self.sizes, buffer::len(data))
+        \\    end
+        \\
+        \\    func flush(mut self: @) -> io::IoError!void
+        \\        self.flushes = self.flushes + 1
+        \\    end
+        \\end
+        \\func main() -> !void
+        \\    let mut source = Chunks(parts = ["ab", "cde"])
+        \\    let mut sink = Collector()
+        \\    let copied = try io::copy(source, sink)
+        \\    io::println("$copied ${sink.sizes} ${sink.flushes}")
+        \\end
+    ;
+    try expectStdinOutput(custom, (try pipeWithInput(""))[0], "5 [2, 3] 1\n");
+    try runCaseError("sema/io-copy-not-mutable.dsk", error.NotMutable);
+}
+
+const read_lines_source =
+    \\import "std/io"
+    \\func main() -> !void
+    \\    let input = io::stdin()
+    \\    for true do
+    \\        let next = try input.read_line()
+    \\        if next: line then
+    \\            io::println("[$line]")
+    \\        else
+    \\            break
+    \\        end
+    \\    end
+    \\    io::println("end")
+    \\end
+;
+
+fn expectStdinOutput(source: []const u8, stdin_fd: c_int, expected: []const u8) !void {
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try runWithStdin(source, stdin_fd, &output.writer);
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+fn runWithStdin(source: []const u8, stdin_fd: c_int, stdout: *std.Io.Writer) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = stdout } }, .stdin_fd = stdin_fd, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+fn closeFd(fd: c_int) void {
+    const file: std.Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
+    file.close(testing.io);
+}
+
+const DelayedWriter = struct {
+    fd: c_int,
+    parts: []const []const u8,
+
+    fn run(self: *DelayedWriter) void {
+        for (self.parts) |part| {
+            testing.io.sleep(std.Io.Duration.fromMilliseconds(30), .awake) catch {};
+            writeAllToFd(self.fd, part);
+        }
+        closeFd(self.fd);
+    }
+};
+
+fn writeAllToFd(fd: c_int, data: []const u8) void {
+    var written: usize = 0;
+    while (written < data.len) {
+        const count = std.c.write(fd, data[written..].ptr, data.len - written);
+        if (count <= 0) return;
+        written += @intCast(count);
+    }
+}
+
+fn pipeWithInput(input: []const u8) ![2]c_int {
+    const fds = try std.Io.Threaded.pipe2(.{});
+    writeAllToFd(fds[1], input);
+    closeFd(fds[1]);
+    return fds;
+}
+
 test "string interpolation" {
     try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++
         "Sum: 5\nDusk135\nDusk.length 20 yes\nNested: Dusk 5\n" ++
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 3 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 16 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -59,7 +1602,7 @@ test "string interpolation in batches" {
 test "string interpolation compiles to one STR_BUILD" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     const program = try dusk.compile("func main() -> void let a = 1 let b = [2] let s = \"a=$a b=$b\" end");
     const chunk = for (program.functions) |func| {
         if (std.mem.eql(u8, func.name, "main")) break func.kind.dusk;
@@ -76,10 +1619,17 @@ test "string interpolation compiles to one STR_BUILD" {
     try testing.expectEqual(@as(usize, 4), chunk.build_recipes[0].len);
 }
 
+test "string interpolation of a lone string reuses it" {
+    const lone = "func f(s: string) -> string return \"${s}\" end func main() -> void end";
+    const nullable = "func f(s: ?string) -> string return \"${s}\" end func main() -> void end";
+    try testing.expectEqual(@as(usize, 0), try countOps(lone, "f", .STR_BUILD));
+    try testing.expectEqual(@as(usize, 1), try countOps(nullable, "f", .STR_BUILD));
+}
+
 fn countOps(source: []const u8, function: []const u8, op: @import("runtime/bytecode.zig").OpCode) !usize {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     const program = try dusk.compile(source);
     const chunk = for (program.functions) |func| {
         if (std.mem.eql(u8, func.name, function)) break func.kind.dusk;
@@ -102,7 +1652,7 @@ test "when: dense cases compile to a jump table, sparse ones to compares" {
 }
 
 test "when: a nullable subject without a null case lowers else once" {
-    const source = "func f(n: ?int) -> void when n 1 then end 2 then end else then echo(7) end end end func main() -> void end";
+    const source = "import \"std/io\"\nfunc f(n: ?int) -> void when n 1 then end 2 then end else then io::println(\"7\") end end end func main() -> void end";
     try testing.expectEqual(@as(usize, 1), try countOps(source, "f", .CALL));
 }
 
@@ -116,12 +1666,12 @@ fn runLongWhen(step: usize, expected: []const u8) !void {
     defer arena.deinit();
     const allocator = arena.allocator();
     var source: std.ArrayList(u8) = .empty;
-    try source.appendSlice(allocator, "func f(x: int) -> int\n    when x\n");
+    try source.appendSlice(allocator, "import \"std/io\"\nfunc f(x: int) -> int\n    when x\n");
     for (0..300) |i| try source.print(allocator, "        {d} then return {d} end\n", .{ i * step, i });
-    try source.print(allocator, "        else then return -1 end\n    end\nend\nfunc main() -> void\n    echo([f(0), f({d}), f(5)])\nend\n", .{299 * step});
+    try source.print(allocator, "        else then return -1 end\n    end\nend\nfunc main() -> void\n    io::println(\"${{[f(0), f({d}), f(5)]}}\")\nend\n", .{299 * step});
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
-    var dusk = Dusk{ .allocator = allocator, .stdout_writer = &output.writer, .io = testing.io };
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
     try dusk.compileAndRun(source.items);
     try testing.expectEqualStrings(expected, output.written());
 }
@@ -159,7 +1709,7 @@ test "string interpolation ignores braces in comments" {
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         try dusk.compileAndRun(source);
     }
 }
@@ -295,7 +1845,7 @@ test "string constants outlive compilation and source storage" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const source = try testing.allocator.dupe(u8, "func main() -> void let mut text = \"a\\n\\u{1F319}\\0\" let mut same = \"a\\n🌙\\0\" let mut plain = \"plain\" end");
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     const program = dusk.compile(source) catch |failure| {
         testing.allocator.free(source);
         return failure;
@@ -305,7 +1855,7 @@ test "string constants outlive compilation and source storage" {
     try testing.expectEqual(@as(usize, 2), pool.values.len);
     try testing.expectEqualStrings("a\n🌙\x00", pool.textAt(0));
     try testing.expectEqualStrings("plain", pool.textAt(1));
-    var vm = @import("runtime/vm.zig").VM.init(&program, null);
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{}, testing.io);
     defer vm.deinit();
     try vm.run();
 }
@@ -388,15 +1938,43 @@ test "string conversion" {
 }
 
 test "string indexing and loops" {
-    try runCaseOutput("string-index.dsk", "out of range\nout of range\n108\nout of range\nout of range\n\u{E1}\nout of range\n" ++
-        "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
+    try runCaseOutput("string-index.dsk", "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
     try runCaseError("sema/string-index-read.dsk", error.InvalidIndexing);
     try runCaseError("sema/string-index-assign.dsk", error.InvalidIndexing);
-    try runCaseError("sema/str-byte-at-unhandled.dsk", error.UnhandledError);
+}
+
+test "string core additions" {
+    try runCase("string-core-additions.dsk");
+    try runCaseError("sema/string-find-start-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-find-reverse-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-find-reverse-start-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-compare-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-trim-start-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-trim-end-type.dsk", error.InvalidType);
 }
 
 test "string search" {
     try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
+}
+
+test "array mutators return their array" {
+    try runCase("array-mutator-returns.dsk");
+}
+
+test "array sorting and transforms" {
+    try runCase("array-sort.dsk");
+    try runCase("array-transform.dsk");
+    try runCaseError("sema/array-sort-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/array-sort-by-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/array-extend-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/array-sort-bool.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/array-sort-by-callback.dsk", error.InvalidReturnType);
+    try runCaseError("sema/array-map-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/array-filter-unhandled.dsk", error.UnhandledError);
+}
+
+test "string split limit" {
+    try runCase("string-split-limit.dsk");
 }
 
 test "string transforms" {
@@ -433,15 +2011,15 @@ test "more than 65536 distinct string literals are rejected" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var source: std.ArrayList(u8) = .empty;
-    try source.appendSlice(arena.allocator(), "func main() -> void\nend\n");
+    try source.appendSlice(arena.allocator(), "import \"std/io\"\nfunc main() -> void\nend\n");
     for (0..65536) |i| {
         if (i % 1000 == 0) try source.print(arena.allocator(), "func f{d}() -> void\n", .{i});
-        try source.print(arena.allocator(), "echo(\"s{d}\")\n", .{i});
+        try source.print(arena.allocator(), "io::println(\"s{d}\")\n", .{i});
         if (i % 1000 == 999 or i == 65535) try source.appendSlice(arena.allocator(), "end\n");
     }
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     _ = try dusk.compile(source.items);
-    try source.print(arena.allocator(), "func g() -> void\necho(\"one more\")\nend\n", .{});
+    try source.print(arena.allocator(), "func g() -> void\nio::println(\"one more\")\nend\n", .{});
     try testing.expectError(error.TooManyStrings, dusk.compile(source.items));
 }
 
@@ -452,7 +2030,7 @@ test "functions over 65535 instructions are rejected" {
     try source.appendSlice(arena.allocator(), "func main() -> void\nend\nfunc big(x: int) -> int\nlet mut y = x\n");
     for (0..20000) |_| try source.appendSlice(arena.allocator(), "if y > 5 then y = y - 1 end\n");
     try source.appendSlice(arena.allocator(), "return y\nend\n");
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try testing.expectError(error.FunctionTooLong, dusk.compile(source.items));
 }
 
@@ -465,7 +2043,7 @@ test "invalid string escapes are rejected" {
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         const program = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{source});
         try testing.expectError(error.ParserError, dusk.compile(program));
     }
@@ -497,6 +2075,10 @@ test "buffer annotations and parameters" {
     try runCaseOutput("buffer-params.dsk", "[[120, 120, 120, 120]]\n");
 }
 
+test "buffer put, put_bytes and slice" {
+    try runCase("buffer-put.dsk");
+}
+
 test "buffer GC" {
     try runCaseOutput("buffer-gc.dsk", "388894\n");
 }
@@ -523,7 +2105,7 @@ test "invalid byte literals are rejected" {
     for (parser_sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         const program = try std.fmt.allocPrint(arena.allocator(), "let b = {s}", .{source});
         try testing.expectError(error.ParserError, dusk.compile(program));
     }
@@ -531,7 +2113,7 @@ test "invalid byte literals are rejected" {
     for (lexer_sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         try testing.expectError(error.LexerError, dusk.compile(source));
     }
 }
@@ -546,7 +2128,7 @@ test "invalid UTF-8 and unterminated strings are rejected" {
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         try testing.expectError(error.LexerError, dusk.compile(source));
     }
 }
@@ -559,7 +2141,7 @@ fn runCase(src_file: []const u8) !void {
     const file_path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try dusk.compileAndRun(src);
 }
 
@@ -571,7 +2153,7 @@ fn runCaseError(src_file: []const u8, expected: anytype) !void {
     const file_path = try std.fmt.allocPrint(arena.allocator(), "test/error/{s}", .{src_file});
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try testing.expectError(expected, dusk.compile(src));
 }
 
@@ -583,12 +2165,12 @@ fn runCaseRuntimeError(src_file: []const u8, expected: anytype) !void {
     const file_path = try std.fmt.allocPrint(arena.allocator(), "test/runtime/{s}", .{src_file});
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try testing.expectError(expected, dusk.compileAndRun(src));
 }
 
-test "echo-2" {
-    try runCase("echo-2.dsk");
+test "a name starting with a builtin's name" {
+    try runCase("builtin-name-prefix.dsk");
 }
 
 test "fibonacci" {
@@ -647,8 +2229,8 @@ test "union with the max number of variants" {
     try runCase("union-max-variants.dsk");
 }
 
-test "nullable echo" {
-    try runCase("nullable-echo.dsk");
+test "printing nullables" {
+    try runCase("print-nullables.dsk");
 }
 
 test "optional chaining" {
@@ -697,6 +2279,16 @@ test "static fields structs" {
 
 test "simple tree" {
     try runCase("simple-tree.dsk");
+}
+
+test "anonymous structs fit a named struct only with the same layout" {
+    try runCase("anonymous-struct-reuse.dsk");
+    try runCaseError("sema/anonymous-null-field-into-int.dsk", error.InvalidType);
+    try runCaseError("sema/anonymous-null-field-write.dsk", error.InvalidType);
+    try runCaseError("sema/anonymous-empty-array-field.dsk", error.CantInferArrayLiteralType);
+    try runCaseError("sema/anonymous-struct-field-order.dsk", error.InvalidType);
+    try runCaseError("sema/anonymous-struct-field-type.dsk", error.InvalidType);
+    try runCaseError("sema/anonymous-struct-field-not-nullable-struct.dsk", error.InvalidType);
 }
 
 test "linked list" {
@@ -1200,9 +2792,7 @@ test "syntax error: anonymous struct missing end" {
     try runCaseError("parser/struct-static-keyword.dsk", error.ParserError);
 }
 
-test "syntax error: fn args mixed named positional" {
-    try runCaseError("parser/fn-args-mixed-named.dsk", error.ParserError);
-}
+test "syntax error: fn args mixed named positional" {}
 
 test "syntax error: fn args non identifier name" {
     try runCaseError("parser/fn-args-non-identifier.dsk", error.ParserError);
@@ -1295,6 +2885,49 @@ test "sema error: unhandled call statement" {
 
 test "sema error: unhandled call argument" {
     try runCaseError("sema/errors-unhandled-call-arg.dsk", error.UnhandledError);
+}
+
+test "defer and errdefer: order, block scope, values read at exit, returns, failing try, error returns, catch, break and continue, nested loops, compound statements, shadowing, branch values, when, lambdas, tasks" {
+    try runCase("defer.dsk");
+}
+
+test "sema error: try, return or break leaving deferred code, errdefer in a function that can't fail" {
+    try runCaseError("sema/defer-try.dsk", error.TryInsideDefer);
+    try runCaseError("sema/defer-return.dsk", error.ExitInsideDefer);
+    try runCaseError("sema/defer-break.dsk", error.ExitInsideDefer);
+    try runCaseError("sema/errdefer-non-failing.dsk", error.ErrdeferOutsideFailingFunction);
+}
+
+test "parser error: defer of a declaration or another defer" {
+    try runCaseError("parser/defer-let.dsk", error.ParserError);
+    try runCaseError("parser/defer-defer.dsk", error.ParserError);
+}
+
+test "optional chaining: method calls through ?. (values, void and mut self methods, arguments, chains, enums, unions) and fields of a struct's own nullable type" {
+    try runCase("optional-chain-methods.dsk");
+}
+
+test "sema error: ?. method call on a value that can't be null" {
+    try runCaseError("sema/optional-chain-method-not-nullable.dsk", error.UnecessaryOptionalChain);
+}
+
+test "sema error: a number passed where text is expected (the message suggests interpolation)" {
+    try runCaseError("sema/print-number-hint.dsk", error.InvalidType);
+}
+
+test "field and parameter defaults can call functions and use structs declared further down (function values, catch, inline returns, fields, methods, static fields)" {
+    try runCase("defaults-call-later-functions.dsk");
+}
+
+test "default values allow catch and failing lambdas using try" {
+    try runCase("default-catch-and-lambda-try.dsk");
+}
+
+test "sema error: try inside struct field or parameter default" {
+    try runCaseError("sema/default-try-struct-failing-caller.dsk", error.TryInsideDefault);
+    try runCaseError("sema/default-try-struct-non-failing-caller.dsk", error.TryInsideDefault);
+    try runCaseError("sema/default-try-param.dsk", error.TryInsideDefault);
+    try runCaseError("sema/default-try-generic-struct.dsk", error.TryInsideDefault);
 }
 
 test "sema error: try in non-failing function" {
@@ -2142,6 +3775,8 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("sema/generic-slot-equality.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-slot-from-int.dsk", error.InvalidType);
     try runCaseError("sema/generic-slot-default.dsk", error.SlotParamCantHaveDefault);
+    try runCaseError("sema/generic-slot-nullable-default.dsk", error.SlotParamCantHaveDefault);
+    try runCase("generics-null-slot-default.dsk");
     try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
     try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);
     try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);
@@ -2193,7 +3828,7 @@ test "tasks: spawn, await and sleep(0) on the scheduler" {
     try runCaseRuntimeError("task-awaits-itself.dsk", error.TaskAwaitsItself);
     try runCaseRuntimeError("tasks-all-waiting.dsk", error.AllTasksWaiting);
     try runCaseRuntimeError("task-unhandled-error.dsk", error.UnhandledTaskError);
-    try runCaseRuntimeError("sleep-negative.dsk", error.NegativeSleep);
+    try runCase("sleep-negative.dsk");
     try runCaseRuntimeError("task-runtime-error.dsk", error.ArrayOutOfBounds);
 }
 
@@ -2258,13 +3893,15 @@ fn runModuleCaseError(entry_file: []const u8, expected: anytype) !void {
     defer arena.deinit();
     const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
     const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try testing.expectError(expected, dusk.compileEntry(src, EntryFile.fromPath(path)));
 }
 
 test "modules: qualified names, selective imports and aliases across files" {
     try runModuleCase("shared-dependency/main.dsk");
     try runModuleCase("qualified-access/main.dsk");
+    try runModuleCase("non-ident-names/main.dsk");
+    try runModuleCase("non-ident-names/selective-only.dsk");
 }
 
 fn runModuleCase(entry_file: []const u8) !void {
@@ -2272,7 +3909,7 @@ fn runModuleCase(entry_file: []const u8) !void {
     defer arena.deinit();
     const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
     const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     const program = try dusk.compileEntry(src, EntryFile.fromPath(path));
     try dusk.runProgram(&program);
 }
@@ -2328,7 +3965,7 @@ fn runModuleCaseOutput(entry_file: []const u8, expected: []const u8) !void {
     defer output.deinit();
     const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
     const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
     const program = try dusk.compileEntry(src, EntryFile.fromPath(path));
     try dusk.runProgram(&program);
     try testing.expectEqualStrings(expected, output.written());
@@ -2360,6 +3997,18 @@ test "modules: imports come first in the file" {
     try runCaseError("parser/import-after-declaration.dsk", error.ParserError);
     try runCaseError("parser/import-inside-function.dsk", error.ParserError);
     try runCaseError("parser/import-std-alone.dsk", error.ParserError);
+}
+
+test "modules: string import path rules" {
+    try runCaseError("parser/import-non-ident-without-alias.dsk", error.ParserError);
+    try runCaseError("parser/import-keyword-without-alias.dsk", error.ParserError);
+    try runCaseError("parser/import-interpolated-path.dsk", error.ParserError);
+    try runCaseError("parser/import-interpolated-ident.dsk", error.ParserError);
+    try runCaseError("parser/import-unquoted-path.dsk", error.ParserError);
+    try runCaseError("parser/import-empty-path.dsk", error.ParserError);
+    try runCaseError("parser/import-empty-segment.dsk", error.ParserError);
+    try runCaseError("parser/import-trailing-slash.dsk", error.ParserError);
+    try runCaseError("parser/import-path-traversal.dsk", error.ParserError);
 }
 
 test "visibility: ~ marks top-level declarations, fields and methods as file-only" {
@@ -2396,6 +4045,26 @@ test "lambdas: return types come from the body" {
     try runCaseError("parser/func-block-without-return-type.dsk", error.ParserError);
 }
 
+test "generics: methods with their own type slots" {
+    try runCase("generic-methods.dsk");
+    try runModuleCase("generic-methods/main.dsk");
+    try runModuleCaseError("generic-methods/hidden.dsk", error.NotVisible);
+    try runCaseError("sema/generic-method-body-checked.dsk", error.InvalidStructField);
+    try runCaseError("sema/generic-method-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-method-wrong-slot-count.dsk", error.WrongSlotCount);
+    try runCaseError("sema/method-type-args-not-generic.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-method-duplicate.dsk", error.AlreadyDefined);
+    try runCaseError("sema/method-duplicate.dsk", error.AlreadyDefined);
+    try runCaseError("sema/generic-method-trait.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/generic-method-mut-self.dsk", error.NotMutable);
+}
+
+test "generics: methods with their own type slots on generic types" {
+    try runCase("generic-methods-generic-owner.dsk");
+    try runCaseError("sema/generic-method-owner-slot-reuse.dsk", error.AlreadyDefined);
+    try runCaseError("sema/generic-method-owner-body-checked.dsk", error.InvalidReturnType);
+}
+
 test "generics: error slots take the errors of failing callbacks" {
     try runCase("error-slots.dsk");
     try runCaseError("sema/error-slot-not-marked.dsk", error.SlotNotMarkedError);
@@ -2423,6 +4092,33 @@ test "generics: calls fill the slots from the arguments and compile one copy per
     try runCaseError("sema/generic-cant-infer-empty-array.dsk", error.CantInferSlot);
     try runCaseError("sema/generic-copy-too-deep.dsk", error.GenericCopyTooDeep);
     try runCaseError("sema/generic-void-argument.dsk", error.InvalidSlotType);
+}
+
+test "generics: explicit call types and indexed function calls" {
+    try runCase("generics-explicit-calls.dsk");
+    try runModuleCase("generic-calls/main.dsk");
+    try runModuleCase("generic-lambdas/main.dsk");
+    try runCaseError("sema/generic-call-value-as-type.dsk", error.InvalidType);
+    try runCaseError("sema/generic-call-nested-value-as-type.dsk", error.InvalidType);
+    try runCaseError("sema/generic-call-wrong-result-constraint.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-call-explicit-try-plain.dsk", error.NotAFailingCall);
+    try runCaseError("sema/generic-call-too-many-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-too-few-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-plain-function-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-plain-function-named-type.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-wrong-argument.dsk", error.InvalidType);
+    try runCaseError("sema/generic-call-constraint.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-call-void-type.dsk", error.InvalidSlotType);
+    try runCaseError("sema/generic-call-error-slot-type.dsk", error.SlotNeedsErrorSet);
+    try runCaseError("sema/generic-call-copy-wrong-type.dsk", error.InvalidType);
+    try runCaseError("sema/generic-call-copy-too-many-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-explicit-result-mismatch.dsk", error.InvalidType);
+}
+
+test "generics: failing calls infer their payload from try and catch context" {
+    try runCase("generics-failing-expected-type.dsk");
+    try runCaseError("sema/generic-failing-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-failing-error-not-in-set.dsk", error.ErrorNotInSet);
 }
 
 test "generics: slots the arguments don't fill come from the expected type" {
@@ -2491,13 +4187,17 @@ test "generics: traits constrain a slot to types with methods" {
     try runCaseError("sema/trait-duplicate-method.dsk", error.AlreadyDefined);
 }
 
-test "builtins: pop is a prelude function over a file-only builtin" {
+test "builtins: pop and pop_or_null report empty arrays" {
     try runCase("array-pop.dsk");
     try runCaseError("sema/prelude-file-only.dsk", error.NotDefined);
 }
 
 test "builtins: insert, remove and clear change arrays in place" {
     try runCase("array-insert-remove.dsk");
+    try runCase("array-checked-natives.dsk");
+    try runCaseError("sema/array-pop-as-value.dsk", error.BuiltinAsValue);
+    try runCaseError("sema/array-insert-as-value.dsk", error.BuiltinAsValue);
+    try runCaseError("sema/array-remove-as-value.dsk", error.BuiltinAsValue);
 }
 
 test "builtins: reverse, slice, index_of and contains" {
@@ -2532,7 +4232,14 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("fs"), @import("runtime/builtins/std/fs.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("url"), @import("runtime/builtins/std/url.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("http"), @import("runtime/builtins/std/http.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("buffer"), @import("runtime/builtins/std/buffer.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("compression"), @import("runtime/builtins/std/compression.zig").error_sets);
 }
 
 fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {
@@ -2564,4 +4271,508 @@ test "array index out of bounds is a runtime error" {
     try runCaseRuntimeError("array-index-out-of-bounds.dsk", error.ArrayOutOfBounds);
     try runCaseRuntimeError("array-negative-index.dsk", error.ArrayOutOfBounds);
     try runCaseRuntimeError("array-store-negative-index.dsk", error.ArrayOutOfBounds);
+}
+
+const tls = @import("runtime/io/net/tls.zig");
+
+fn readTlsFixture(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+    const path = try std.fmt.allocPrint(allocator, "test/fixtures/tls/{s}", .{name});
+    return std.Io.Dir.cwd().readFileAlloc(testing.io, path, allocator, .unlimited);
+}
+
+fn newTestCertificate(allocator: std.mem.Allocator, cert_name: []const u8, key_name: []const u8) !*tls.Certificate {
+    const cert_pem = try readTlsFixture(allocator, cert_name);
+    const key_pem = try readTlsFixture(allocator, key_name);
+    var status: tls.Status = .done;
+    const certificate = tls.dusk_tls_certificate_new(cert_pem.ptr, cert_pem.len, key_pem.ptr, key_pem.len, &status) orelse return error.InvalidCertificate;
+    try testing.expectEqual(tls.Status.done, status);
+    return certificate;
+}
+
+fn moveTlsOutput(from: *tls.Session, to: *tls.Session) !void {
+    const length = tls.dusk_tls_output_length(from);
+    if (length == 0) return;
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_feed(to, tls.dusk_tls_output_bytes(from), length));
+    tls.dusk_tls_consume_output(from, length);
+}
+
+fn runTlsHandshake(client: *tls.Session, server: *tls.Session) !tls.Status {
+    var client_status: tls.Status = .want_more;
+    var server_status: tls.Status = .want_more;
+    for (0..32) |_| {
+        if (client_status == .want_more) {
+            client_status = tls.dusk_tls_handshake(client);
+        }
+        try moveTlsOutput(client, server);
+        if (server_status == .want_more) {
+            server_status = tls.dusk_tls_handshake(server);
+        }
+        try moveTlsOutput(server, client);
+        const is_settled = client_status != .want_more and server_status != .want_more;
+        if (is_settled) break;
+        const has_client_failed = client_status != .want_more and client_status != .done;
+        if (has_client_failed) break;
+    }
+    return client_status;
+}
+
+fn clientHandshakeWith(cert_name: []const u8, key_name: []const u8, ca_name: ?[]const u8, host: []const u8) !tls.Status {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_global_init());
+    const certificate = try newTestCertificate(allocator, cert_name, key_name);
+    defer tls.dusk_tls_certificate_free(certificate);
+    const server_config = tls.dusk_tls_server_config_new(certificate) orelse return error.ConfigFailed;
+    defer tls.dusk_tls_config_free(server_config);
+    const client_config = tls.dusk_tls_client_config_new(1) orelse return error.ConfigFailed;
+    defer tls.dusk_tls_config_free(client_config);
+    if (ca_name) |name| {
+        const ca_pem = try readTlsFixture(allocator, name);
+        try testing.expectEqual(tls.Status.done, tls.dusk_tls_config_add_ca_pem(client_config, ca_pem.ptr, ca_pem.len));
+    }
+    const server = tls.dusk_tls_session_new(server_config, null, 0) orelse return error.SessionFailed;
+    defer tls.dusk_tls_session_free(server);
+    const client = tls.dusk_tls_session_new(client_config, host.ptr, host.len) orelse return error.SessionFailed;
+    defer tls.dusk_tls_session_free(client);
+    return runTlsHandshake(client, server);
+}
+
+test "tls: a client and a server session shake hands in memory and exchange data both ways" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_global_init());
+    const certificate = try newTestCertificate(allocator, "server.pem", "server.key");
+    defer tls.dusk_tls_certificate_free(certificate);
+    const server_config = tls.dusk_tls_server_config_new(certificate).?;
+    defer tls.dusk_tls_config_free(server_config);
+    const client_config = tls.dusk_tls_client_config_new(1).?;
+    defer tls.dusk_tls_config_free(client_config);
+    const ca_pem = try readTlsFixture(allocator, "ca.pem");
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_config_add_ca_pem(client_config, ca_pem.ptr, ca_pem.len));
+    const server = tls.dusk_tls_session_new(server_config, null, 0).?;
+    defer tls.dusk_tls_session_free(server);
+    const client = tls.dusk_tls_session_new(client_config, "localhost", 9).?;
+    defer tls.dusk_tls_session_free(client);
+
+    try testing.expectEqual(tls.Status.done, try runTlsHandshake(client, server));
+
+    const request = "hello over tls";
+    try testing.expectEqual(@as(isize, request.len), tls.dusk_tls_write(client, request, request.len));
+    try moveTlsOutput(client, server);
+    var buffer: [64]u8 = undefined;
+    const received = tls.dusk_tls_read(server, &buffer, buffer.len);
+    try testing.expectEqualStrings(request, buffer[0..@intCast(received)]);
+
+    const big = try allocator.alloc(u8, 100_000);
+    @memset(big, 'z');
+    try testing.expectEqual(@as(isize, @intCast(big.len)), tls.dusk_tls_write(server, big.ptr, big.len));
+    try moveTlsOutput(server, client);
+    var total: usize = 0;
+    var chunk: [16384]u8 = undefined;
+    while (true) {
+        const count = tls.dusk_tls_read(client, &chunk, chunk.len);
+        if (count <= 0) break;
+        total += @intCast(count);
+    }
+    try testing.expectEqual(big.len, total);
+    try testing.expectEqual(@as(isize, 0), tls.dusk_tls_read(client, &chunk, chunk.len));
+
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_close_notify(client));
+    try moveTlsOutput(client, server);
+    try testing.expectEqual(@intFromEnum(tls.Status.end), tls.dusk_tls_read(server, &buffer, buffer.len));
+}
+
+test "tls: verification tells untrusted, expired and wrong-host certificates apart" {
+    try testing.expectEqual(tls.Status.untrusted, try clientHandshakeWith("server.pem", "server.key", null, "localhost"));
+    try testing.expectEqual(tls.Status.untrusted, try clientHandshakeWith("self-signed.pem", "self-signed.key", "ca.pem", "localhost"));
+    try testing.expectEqual(tls.Status.expired, try clientHandshakeWith("expired.pem", "server.key", "ca.pem", "localhost"));
+    try testing.expectEqual(tls.Status.wrong_host, try clientHandshakeWith("other-host.pem", "server.key", "ca.pem", "localhost"));
+    try testing.expectEqual(tls.Status.done, try clientHandshakeWith("server.pem", "server.key", "ca.pem", "127.0.0.1"));
+}
+
+test "tls: a certificate whose key doesn't match, or that isn't PEM, is invalid" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_global_init());
+    const cert_pem = try readTlsFixture(allocator, "server.pem");
+    const wrong_key = try readTlsFixture(allocator, "ca.key");
+    var status: tls.Status = .done;
+    try testing.expect(tls.dusk_tls_certificate_new(cert_pem.ptr, cert_pem.len, wrong_key.ptr, wrong_key.len, &status) == null);
+    try testing.expectEqual(tls.Status.invalid, status);
+    const garbage = "not a certificate";
+    try testing.expect(tls.dusk_tls_certificate_new(garbage, garbage.len, wrong_key.ptr, wrong_key.len, &status) == null);
+    try testing.expectEqual(tls.Status.invalid, status);
+}
+
+const http = @import("runtime/io/http/http.zig");
+
+const ParsedResponse = struct {
+    status: c_int,
+    reason: []const u8,
+    headers: [][2][]const u8,
+    body: []const u8,
+    head_length: usize,
+    message_length: usize,
+    is_complete: bool,
+    can_keep_alive: bool,
+};
+
+const ResponseFeed = struct {
+    pieces: []const []const u8,
+    is_head_request: bool = false,
+    has_connection_ended: bool = false,
+};
+
+fn feedResponse(allocator: std.mem.Allocator, feed: ResponseFeed) !ParsedResponse {
+    const parser = http.dusk_http_response_parser_new(@intFromBool(feed.is_head_request)) orelse return error.OutOfMemory;
+    defer http.dusk_http_parser_free(parser);
+    var received: std.ArrayList(u8) = .empty;
+    var body: std.ArrayList(u8) = .empty;
+    var fed: usize = 0;
+    var head_length: ?usize = null;
+    for (feed.pieces) |piece| {
+        try received.appendSlice(allocator, piece);
+        if (head_length == null) {
+            var used: usize = 0;
+            const status = http.dusk_http_feed_head(parser, received.items[fed..].ptr, received.items.len - fed, &used);
+            fed += used;
+            if (status == .want_more) continue;
+            if (status != .done) {
+                return error.InvalidResponse;
+            }
+            head_length = fed;
+        }
+        try feedBody(allocator, parser, received.items, &fed, &body);
+    }
+    if (head_length == null) {
+        return error.IncompleteHead;
+    }
+    try feedBody(allocator, parser, received.items, &fed, &body);
+    if (feed.has_connection_ended) {
+        if (http.dusk_http_finish_body(parser) != .done) {
+            return error.InvalidResponse;
+        }
+    }
+    return .{
+        .status = http.dusk_http_status_code(parser),
+        .reason = reasonOf(parser, received.items),
+        .headers = try headersOf(allocator, parser, received.items),
+        .body = body.items,
+        .head_length = head_length.?,
+        .message_length = fed,
+        .is_complete = http.dusk_http_is_message_complete(parser) != 0,
+        .can_keep_alive = http.dusk_http_can_keep_alive(parser) != 0,
+    };
+}
+
+fn feedBody(allocator: std.mem.Allocator, parser: *http.Parser, received: []const u8, fed: *usize, body: *std.ArrayList(u8)) !void {
+    const input = received[fed.*..];
+    const out = try allocator.alloc(u8, input.len);
+    var used: usize = 0;
+    var produced: usize = 0;
+    const status = http.dusk_http_feed_body(parser, input.ptr, input.len, out.ptr, &used, &produced);
+    if (status == .invalid or status == .out_of_memory) {
+        return error.InvalidResponse;
+    }
+    fed.* += used;
+    try body.appendSlice(allocator, out[0..produced]);
+}
+
+fn reasonOf(parser: *const http.Parser, received: []const u8) []const u8 {
+    var start: usize = 0;
+    var end: usize = 0;
+    http.dusk_http_reason_span(parser, &start, &end);
+    return received[start..end];
+}
+
+fn headersOf(allocator: std.mem.Allocator, parser: *const http.Parser, received: []const u8) ![][2][]const u8 {
+    const count = http.dusk_http_header_count(parser);
+    const headers = try allocator.alloc([2][]const u8, count);
+    const offsets = http.dusk_http_header_offsets(parser) orelse return headers;
+    for (headers, 0..) |*header, i| {
+        const entry = offsets[i * http.offsets_per_header ..][0..http.offsets_per_header];
+        header.* = .{ received[entry[0]..entry[1]], received[entry[2]..entry[3]] };
+    }
+    return headers;
+}
+
+fn splitIntoBytes(allocator: std.mem.Allocator, text: []const u8) ![]const []const u8 {
+    const pieces = try allocator.alloc([]const u8, text.len);
+    for (pieces, 0..) |*piece, i| {
+        piece.* = text[i .. i + 1];
+    }
+    return pieces;
+}
+
+fn expectHeaders(expected: []const [2][]const u8, actual: []const [2][]const u8) !void {
+    try testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |want, got| {
+        try testing.expectEqualStrings(want[0], got[0]);
+        try testing.expectEqualStrings(want[1], got[1]);
+    }
+}
+
+test "http parser: a Content-Length response stops at its end and keeps the connection" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const message = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello";
+    const response = try feedResponse(allocator, .{ .pieces = &.{message ++ "HTTP/1.1 204 No Content\r\n\r\n"} });
+    try testing.expectEqual(@as(c_int, 200), response.status);
+    try testing.expectEqualStrings("OK", response.reason);
+    try expectHeaders(&.{ .{ "Content-Type", "text/plain" }, .{ "Content-Length", "5" } }, response.headers);
+    try testing.expectEqualStrings("hello", response.body);
+    try testing.expectEqual(message.len - 5, response.head_length);
+    try testing.expectEqual(message.len, response.message_length);
+    try testing.expect(response.is_complete);
+    try testing.expect(response.can_keep_alive);
+}
+
+test "http parser: a chunked response with extensions and trailers, fed one byte at a time" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const message = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4;name=value\r\nWiki\r\n5\r\npedia\r\n0\r\nExpires: never\r\n\r\n";
+    const response = try feedResponse(allocator, .{ .pieces = try splitIntoBytes(allocator, message) });
+    try testing.expectEqualStrings("Wikipedia", response.body);
+    try testing.expectEqual(message.len, response.message_length);
+    try testing.expect(response.is_complete);
+    try testing.expect(response.can_keep_alive);
+}
+
+test "http parser: a body that runs until the connection closes, and one cut short" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const until_close = try feedResponse(allocator, .{ .pieces = &.{ "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nfirst ", "second" }, .has_connection_ended = true });
+    try testing.expectEqualStrings("first second", until_close.body);
+    try testing.expect(until_close.is_complete);
+    try testing.expect(!until_close.can_keep_alive);
+
+    const open = try feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\npartial"} });
+    try testing.expect(!open.is_complete);
+
+    const cut_short = feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc"}, .has_connection_ended = true });
+    try testing.expectError(error.InvalidResponse, cut_short);
+    const cut_chunk = feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nab"}, .has_connection_ended = true });
+    try testing.expectError(error.InvalidResponse, cut_chunk);
+}
+
+test "http parser: HEAD, 204 and 304 responses have no body, 1xx responses are skipped" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const head = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n";
+    const head_response = try feedResponse(allocator, .{ .pieces = &.{head}, .is_head_request = true });
+    try testing.expect(head_response.is_complete);
+    try testing.expectEqual(head.len, head_response.message_length);
+    try testing.expectEqualStrings("", head_response.body);
+
+    const no_content = try feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 204 No Content\r\n\r\n"} });
+    try testing.expect(no_content.is_complete);
+    const not_modified = try feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 304 Not Modified\r\nContent-Length: 50\r\n\r\n"} });
+    try testing.expect(not_modified.is_complete);
+    try testing.expect(not_modified.can_keep_alive);
+
+    const pieces = &.{ "HTTP/1.1 100 Continue\r\nX-First: yes\r\n\r\n", "HTTP/1.1 201 Created\r\nLocation: /items/7\r\nContent-Length: 2\r\n\r\nok" };
+    const created = try feedResponse(allocator, .{ .pieces = pieces });
+    try testing.expectEqual(@as(c_int, 201), created.status);
+    try testing.expectEqualStrings("Created", created.reason);
+    try expectHeaders(&.{ .{ "Location", "/items/7" }, .{ "Content-Length", "2" } }, created.headers);
+    try testing.expectEqualStrings("ok", created.body);
+}
+
+test "http parser: repeated headers, empty values, an empty reason and a head split across feeds" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const message = "HTTP/1.1 404 \r\nSet-Cookie: a=1\r\nX-Empty:\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
+    const response = try feedResponse(allocator, .{ .pieces = &.{ message[0..7], message[7..20], message[20..41], message[41..] } });
+    try testing.expectEqual(@as(c_int, 404), response.status);
+    try testing.expectEqualStrings("", response.reason);
+    try expectHeaders(&.{ .{ "Set-Cookie", "a=1" }, .{ "X-Empty", "" }, .{ "Set-Cookie", "b=2" }, .{ "Content-Length", "0" } }, response.headers);
+    try testing.expect(response.is_complete);
+}
+
+test "http parser: smuggling shapes and malformed heads are rejected" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const rejected = [_][]const u8{
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!",
+        "HTTP/1.1 200 OK\r\nContent-Length : 5\r\n\r\nhello",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n",
+        "HTTP/1.1 200 OK\nContent-Length: 5\n\nhello",
+        "HTTP/1.1 2000 OK\r\n\r\n",
+        "HTTX/1.1 200 OK\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nBad Header: x\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nX-Value: a\x00b\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding:\r\n\r\n",
+    };
+    for (rejected) |message| {
+        try testing.expectError(error.InvalidResponse, feedResponse(allocator, .{ .pieces = &.{message} }));
+    }
+}
+
+const ParsedRequest = struct {
+    method: []const u8,
+    target: []const u8,
+    version: c_int,
+    keeps_alive: bool,
+    headers: [][2][]const u8,
+    body: []const u8,
+    message_length: usize,
+    is_complete: bool,
+};
+
+fn feedRequest(allocator: std.mem.Allocator, pieces: []const []const u8) !ParsedRequest {
+    const parser = http.dusk_http_request_parser_new() orelse return error.OutOfMemory;
+    defer http.dusk_http_parser_free(parser);
+    var received: std.ArrayList(u8) = .empty;
+    var body: std.ArrayList(u8) = .empty;
+    var fed: usize = 0;
+    var has_head = false;
+    for (pieces) |piece| {
+        try received.appendSlice(allocator, piece);
+        if (!has_head) {
+            var used: usize = 0;
+            const status = http.dusk_http_feed_head(parser, received.items[fed..].ptr, received.items.len - fed, &used);
+            fed += used;
+            if (status == .want_more) continue;
+            if (status != .done) {
+                return error.InvalidRequest;
+            }
+            has_head = true;
+        }
+        feedBody(allocator, parser, received.items, &fed, &body) catch return error.InvalidRequest;
+    }
+    if (!has_head) {
+        return error.IncompleteHead;
+    }
+    feedBody(allocator, parser, received.items, &fed, &body) catch return error.InvalidRequest;
+    var target_start: usize = 0;
+    var target_end: usize = 0;
+    http.dusk_http_url_span(parser, &target_start, &target_end);
+    return .{
+        .method = try allocator.dupe(u8, std.mem.span(http.dusk_http_method_name(parser))),
+        .target = received.items[target_start..target_end],
+        .version = http.dusk_http_version(parser),
+        .keeps_alive = http.dusk_http_head_keeps_alive(parser) != 0,
+        .headers = try headersOf(allocator, parser, received.items),
+        .body = body.items,
+        .message_length = fed,
+        .is_complete = http.dusk_http_is_message_complete(parser) != 0,
+    };
+}
+
+test "http request parser: a GET with headers, a POST body fed one byte at a time, a chunked upload" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const get = try feedRequest(allocator, &.{"GET /items?sort=name HTTP/1.1\r\nHost: example.com\r\nAccept: */*\r\n\r\n"});
+    try testing.expectEqualStrings("GET", get.method);
+    try testing.expectEqualStrings("/items?sort=name", get.target);
+    try testing.expectEqual(@as(c_int, 11), get.version);
+    try testing.expect(get.keeps_alive);
+    try expectHeaders(&.{ .{ "Host", "example.com" }, .{ "Accept", "*/*" } }, get.headers);
+    try testing.expect(get.is_complete);
+    try testing.expectEqualStrings("", get.body);
+
+    const post_text = "POST /users HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\n\r\n{\"id\":1234}";
+    const post = try feedRequest(allocator, try splitIntoBytes(allocator, post_text));
+    try testing.expectEqualStrings("POST", post.method);
+    try testing.expectEqualStrings("{\"id\":1234}", post.body);
+    try testing.expectEqual(post_text.len, post.message_length);
+    try testing.expect(post.is_complete);
+
+    const upload = try feedRequest(allocator, &.{ "PUT /file HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n", "2;x=y\r\nde\r\n0\r\nChecksum: 1\r\n\r\n" });
+    try testing.expectEqualStrings("abcde", upload.body);
+    try testing.expect(upload.is_complete);
+}
+
+test "http request parser: pipelined requests, keep-alive rules, other targets and methods, upgrades" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const first_text = "GET /a HTTP/1.1\r\nHost: x\r\n\r\n";
+    const both = first_text ++ "DELETE /b HTTP/1.1\r\nHost: x\r\n\r\n";
+    const first = try feedRequest(allocator, &.{both});
+    try testing.expectEqualStrings("/a", first.target);
+    try testing.expectEqual(first_text.len, first.message_length);
+    const second = try feedRequest(allocator, &.{both[first.message_length..]});
+    try testing.expectEqualStrings("DELETE", second.method);
+    try testing.expectEqualStrings("/b", second.target);
+
+    try testing.expect(!(try feedRequest(allocator, &.{"GET / HTTP/1.0\r\n\r\n"})).keeps_alive);
+    try testing.expect((try feedRequest(allocator, &.{"GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"})).keeps_alive);
+    try testing.expect(!(try feedRequest(allocator, &.{"GET / HTTP/1.1\r\nConnection: close\r\n\r\n"})).keeps_alive);
+    try testing.expectEqual(@as(c_int, 10), (try feedRequest(allocator, &.{"GET / HTTP/1.0\r\n\r\n"})).version);
+
+    try testing.expectEqualStrings("http://example.com/x?y=1", (try feedRequest(allocator, &.{"GET http://example.com/x?y=1 HTTP/1.1\r\n\r\n"})).target);
+    const options = try feedRequest(allocator, &.{"OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n"});
+    try testing.expectEqualStrings("OPTIONS", options.method);
+    try testing.expectEqualStrings("*", options.target);
+    try testing.expectEqualStrings("PROPFIND", (try feedRequest(allocator, &.{"PROPFIND /dav HTTP/1.1\r\nContent-Length: 0\r\n\r\n"})).method);
+
+    const upgrade = try feedRequest(allocator, &.{"GET /chat HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"});
+    try testing.expectEqualStrings("/chat", upgrade.target);
+    try testing.expect(upgrade.is_complete);
+}
+
+test "http request parser: smuggling shapes, unknown methods and malformed heads are rejected" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const rejected = [_][]const u8{
+        "POST / HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+        "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!",
+        "POST / HTTP/1.1\r\nContent-Length : 5\r\n\r\nhello",
+        "POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\nabc",
+        "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n",
+        "GET / HTTP/1.1\nHost: x\n\n",
+        "GE T / HTTP/1.1\r\n\r\n",
+        "FOO / HTTP/1.1\r\n\r\n",
+        "GET /a\x01b HTTP/1.1\r\n\r\n",
+        "GET / HTTP/2.5\r\n\r\n",
+        "GET / HTTP/1.1\r\nBad Header: x\r\n\r\n",
+    };
+    for (rejected) |message| {
+        try testing.expectError(error.InvalidRequest, feedRequest(allocator, &.{message}));
+    }
+}
+
+test "cr phase 1: defer re-emission, return try errdefer, when gc, anonymous null aliasing, cyclic defaults" {
+    try runCase("defer-reemit-and-tail-call.dsk");
+    try runCaseError("sema/anonymous-null-aliasing.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/cyclic-struct-default.dsk", error.CyclicDefault);
+    try runCaseError("sema/cyclic-param-default.dsk", error.CyclicDefault);
+}
+
+test "cr phase 2: generic methods, optional chain calls, lambda hints, errdefer lambdas, forward defaults, catch inference" {
+    try runCase("compiler-phase2-edge-cases.dsk");
+    try runCaseError("sema/errdefer-inferred-lambda.dsk", error.ErrdeferOutsideFailingFunction);
+    try runCaseError("sema/copy-unknown-named-arg.dsk", error.UnknownArgumentName);
+}
+
+test "cr phase 4: file close races, seek overflow, write-only read, nul path, split crlf line boundary" {
+    try runCase("stream-fs-phase4.dsk");
+}
+
+test "cr phase 5: compression reader overflow and close, decompressor too large invalidation" {
+    try runCase("tls-compression-phase5.dsk");
+}
+
+test "cr phase 6: http pool double-close, response splitting, empty location, trailers, head keep-alive, nul path, url dot-segments" {
+    try runCase("http-url-phase6.dsk");
+}
+
+test "parser error: stray top-level block keywords" {
+    try runCaseError("parser/stray-end-at-eof.dsk", error.ParserError);
+    try runCaseError("parser/stray-end-mid-file.dsk", error.ParserError);
+    try runCaseError("parser/stray-else-top-level.dsk", error.ParserError);
+    try runCaseError("parser/stray-elif-top-level.dsk", error.ParserError);
 }

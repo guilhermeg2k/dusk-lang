@@ -1,4 +1,4 @@
-import std/array: len
+import "std/array": len
 
 func choose(is_present: bool) -> int
     let optional: ?int = if is_present then

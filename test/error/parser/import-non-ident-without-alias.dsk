@@ -1,0 +1,4 @@
+import "@/sub-dir/my-mod"
+
+func main() -> void
+end

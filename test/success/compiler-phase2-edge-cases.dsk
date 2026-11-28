@@ -1,0 +1,117 @@
+import "std/array": append, len
+
+struct Box[T]
+    value: T
+end
+
+struct Holder
+    value: int
+    cb: func() -> void
+
+    func wrap[U](self: @, item: U) -> Box[U]
+        return Box[U](value = item)
+    end
+
+    func set_from[U](mut self: @, x: U, f: func(U) -> int) -> void
+        self.value = f(x)
+    end
+
+    func apply[R](self: @, f: func(@) -> R) -> R
+        return f(self)
+    end
+
+    func pick[U](self: Holder, other: U) -> U
+        return other
+    end
+end
+
+struct Runner[E: error]
+    func call[T](self: @, f: func() -> E!T) -> E!T
+        return try f()
+    end
+end
+
+struct Outer
+    inner: Inner = @(n = 7)
+    mode: Mode = Mode.Fast
+    val: Val = Val(num = 9)
+end
+
+struct Inner
+    n: int
+end
+
+enum Mode
+    Fast
+    Slow
+end
+
+union Val
+    num: int
+    text: string
+end
+
+error ParseErr
+    Bad
+end
+
+func parse_constrained[T: int | string](ok: bool, v: T) -> ParseErr!T
+    if !ok then
+        return ParseErr.Bad
+    end
+    return v
+end
+
+func main() -> void
+    let mut called = 0
+    let mut h: ?Holder = Holder(value = 10, cb = func() -> void
+        called = called + 1
+    end)
+
+    let boxed = h?.wrap[Box[int]](Box[int](value = 5))
+    if boxed: b then
+        assert(b.value.value == 5)
+    else
+        assert(false)
+    end
+
+    h?.set_from(3, func(x: int) -> return x * 4)
+    if h: inner then
+        assert(inner.value == 12)
+        assert(inner.apply(func(item) -> return item.value + 1) == 13)
+        assert(inner.pick[int](99) == 99)
+    else
+        assert(false)
+    end
+
+    h?.cb()
+    assert(called == 1)
+
+    let mut missing: ?Holder = null
+    missing?.cb()
+    missing?.set_from(1, func(x: int) -> return x)
+    assert(called == 1)
+
+    let runner = Runner[none]()
+    let r = runner.call(func() -> return 123)
+    assert(r == 123)
+
+    let outer = Outer()
+    assert(outer.inner.n == 7)
+    assert(outer.mode == Mode.Fast)
+    if outer.val.num: n then
+        assert(n == 9)
+    else
+        assert(false)
+    end
+
+    let parsed: ?int = parse_constrained(true, 42) catch null
+    assert(parsed == 42)
+    let missed: ?int = parse_constrained(false, 42) catch null
+    assert(missed == null)
+
+    let key = Inner(n = 1)
+    let mut lookup: map[Inner, int] = {key: 55}
+    assert((lookup[key] orelse 0) == 55)
+    assert(lookup[@(n = 1)] == null)
+end

@@ -1,0 +1,9 @@
+import "std/string"
+
+struct Config
+    port: int = try string::to_int("bad")
+end
+
+func main() -> !void
+    let cfg = Config()
+end

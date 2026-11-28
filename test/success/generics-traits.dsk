@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 trait Shape
     func area(self: @) -> float

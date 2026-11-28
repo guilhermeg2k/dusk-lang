@@ -1,6 +1,7 @@
-import std/array: len, append
-import std/string
-import std/buffer
+import "std/array": len, append
+import "std/string"
+import "std/buffer"
+import "std/io"
 
 func main() -> !void
     let mut kept: []buffer = []
@@ -22,5 +23,5 @@ func main() -> !void
         assert(data[63] == 7)
         assert(buffer::len(data) == 64)
     end
-    echo(total)
+    io::println("${total}")
 end

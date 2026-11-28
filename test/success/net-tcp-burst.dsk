@@ -1,0 +1,43 @@
+import "std/net"
+import "std/string"
+import "std/task"
+
+func send_number(port: int, number: int) -> !void
+    let conn = try net::tcp_connect("127.0.0.1", port)
+    try conn.write("${number}\n")
+    conn.close()
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0, backlog = 512)
+    let port = listener.port()
+    let total = 300
+    let mut i = 0
+    for i < total do
+        let number = i
+        spawn(func() -> void
+            send_number(port, number) catch e then
+                return
+            end
+        end)
+        i = i + 1
+    end
+
+    let mut sum = 0
+    let mut accepted = 0
+    for accepted < total do
+        let conn = try listener.accept(timeout_ms = 5000)
+        let line = try conn.read_line(timeout_ms = 5000)
+        conn.close()
+        if line: text then
+            sum = sum + try string::to_int(text)
+        end
+        accepted = accepted + 1
+    end
+    assert(sum == total * (total - 1) // 2)
+
+    let held = try net::tcp_connect("127.0.0.1", port)
+    task::sleep(10)
+    listener.close()
+    held.close()
+end

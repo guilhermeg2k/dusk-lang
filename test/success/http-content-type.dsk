@@ -1,0 +1,50 @@
+import "std/http"
+
+func route(req: http::Request) -> !http::Response
+    let path = "test/fixtures/compression${req.path}"
+    return try http::file(path, http::content_type_of(path))
+end
+
+func main() -> !void
+    assert(http::ContentType.HTML == "text/html; charset=utf-8")
+    assert(http::ContentType.JSON == "application/json")
+    assert(http::ContentType.BINARY == "application/octet-stream")
+    assert(http::ContentType.EVENT_STREAM == "text/event-stream")
+
+    assert(http::content_type_of("site/index.html") == http::ContentType.HTML)
+    assert(http::content_type_of("INDEX.HTM") == http::ContentType.HTML)
+    assert(http::content_type_of("/static/app.css") == http::ContentType.CSS)
+    assert(http::content_type_of("app.mjs") == http::ContentType.JS)
+    assert(http::content_type_of("app.js.map") == http::ContentType.JSON)
+    assert(http::content_type_of("logo.SVG") == http::ContentType.SVG)
+    assert(http::content_type_of("photo.jpg") == http::ContentType.JPEG)
+    assert(http::content_type_of("photo.jpeg") == http::ContentType.JPEG)
+    assert(http::content_type_of("font.woff2") == "font/woff2")
+    assert(http::content_type_of("backup.tar.gz") == "application/gzip")
+    assert(http::content_type_of("notes.md") == "text/markdown; charset=utf-8")
+    assert(http::content_type_of("Makefile") == http::ContentType.BINARY)
+    assert(http::content_type_of(".env") == http::ContentType.BINARY)
+    assert(http::content_type_of("config/.env") == http::ContentType.BINARY)
+    assert(http::content_type_of("release.v2/run") == http::ContentType.BINARY)
+    assert(http::content_type_of("data.") == http::ContentType.BINARY)
+    assert(http::content_type_of("data.unknown") == http::ContentType.BINARY)
+    assert(http::content_type_of("") == http::ContentType.BINARY)
+
+    assert(http::text("x").headers.get("content-type") == http::ContentType.TEXT)
+    assert(http::html("x").headers.get("content-type") == http::ContentType.HTML)
+    assert(http::bytes(http::text("x").body).headers.get("content-type") == http::ContentType.BINARY)
+
+    let server = try http::listen("127.0.0.1", 0)
+    let running = spawn(func() -> void
+        server.serve(route)
+    end)
+    let base = "http://127.0.0.1:${server.port()}"
+    let text = try http::request("$base/sample.txt")
+    assert(text.headers.get("content-type") == http::ContentType.TEXT)
+    assert(text.headers.get("content-encoding") == "gzip")
+    let packed = try http::request("$base/sample.gz")
+    assert(packed.headers.get("content-type") == "application/gzip")
+    assert(!packed.headers.has("content-encoding"))
+    server.close()
+    await(running)
+end

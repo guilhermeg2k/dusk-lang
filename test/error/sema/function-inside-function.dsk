@@ -1,6 +1,8 @@
+import "std/io"
+
 func main() -> void
     func helper() -> int
         return 1
     end
-    echo(helper())
+    io::println("${helper()}")
 end

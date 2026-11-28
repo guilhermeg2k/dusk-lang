@@ -1,0 +1,5 @@
+import "std/array"
+
+func main() -> void
+    let f: func(mut []int) -> array::ArrayError!int = array::pop
+end

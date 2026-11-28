@@ -1,3 +1,5 @@
+import "std/io"
+
 enum Color
     Red
     Green
@@ -12,8 +14,8 @@ end
 func main() -> void
     let c: ?Color = Color.Red
     when c
-        Color.Red then echo(1) end
-        Color.Green then echo(2) end
-        Color.Blue then echo(3) end
+        Color.Red then io::println("${1}") end
+        Color.Green then io::println("${2}") end
+        Color.Blue then io::println("${3}") end
     end
 end

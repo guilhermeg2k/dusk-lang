@@ -1,0 +1,6 @@
+import "std/array"
+
+func main() -> void
+    let numbers = [2, 1]
+    array::extend(numbers, [3])
+end

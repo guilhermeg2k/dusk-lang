@@ -1,3 +1,5 @@
+import "std/io"
+
 func add(x: int, y = 2) -> return x + y
 
 func add2(x: int = 2, y: int) -> return x + y
@@ -8,25 +10,25 @@ struct User
 end
 
 func main() -> void
-    echo(add(50))
-    echo(add(x = 50))
-    echo(add(50,50))
-    echo(add(y = 50,x = 50))
+    io::println("${add(50)}")
+    io::println("${add(x = 50)}")
+    io::println("${add(50,50)}")
+    io::println("${add(y = 50,x = 50)}")
 
-    echo(add2(10, 10))
-    echo(add2(y = 10, x = 10))
-    echo(add2(y = 45))
+    io::println("${add2(10, 10)}")
+    io::println("${add2(y = 10, x = 10)}")
+    io::println("${add2(y = 45)}")
 
-    echo(User("Rogerinho"))
+    io::println("${User("Rogerinho")}")
 
-    echo(User("Rogerinho", "Y"))
+    io::println("${User("Rogerinho", "Y")}")
 
-    echo(User(
+    io::println("${User(
         username="Rogerinho",
-    ))
+    )}")
 
-    echo(User(
+    io::println("${User(
         username="Rogerinho",
         auth_method="T"
-    ))
+    )}")
 end

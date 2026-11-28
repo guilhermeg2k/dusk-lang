@@ -1,3 +1,5 @@
+import "std/io"
+
 let a: byte = 119
 let c = 'w'
 let n = 200
@@ -27,18 +29,18 @@ func main() -> !void
     assert(c < 200.5)
     assert(-c == -119)
     assert(try to_byte(c) == c)
-    echo(c)
-    echo("c=$c newline=${'\n'}")
-    echo(kind('q'))
-    echo(kind('5'))
-    echo(kind('\n'))
-    echo(kind(65))
+    io::println("${c}")
+    io::println("c=$c newline=${'\n'}")
+    io::println("${kind('q')}")
+    io::println("${kind('5')}")
+    io::println("${kind('\n')}")
+    io::println("${kind(65)}")
     let mut maybe: ?byte = null
     assert((maybe orelse 'x') == 'x')
     maybe = 'y'
     assert(maybe == 'y')
     let items: []byte = ['a', 98, '\'', '\\', '"', '\u{41}', '\0', '\t', '\r', '$']
-    echo(items)
+    io::println("${items}")
     let numbers = [10, 20, 30]
     assert(numbers[try to_byte(1)] == 20)
     let mut total = 0

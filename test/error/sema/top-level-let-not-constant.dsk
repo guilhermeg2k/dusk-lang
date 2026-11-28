@@ -1,5 +1,7 @@
+import "std/io"
+
 let names = ["a", "b"]
 
 func main() -> void
-    echo(names)
+    io::println("${names}")
 end

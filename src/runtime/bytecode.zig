@@ -119,7 +119,7 @@ pub const Chunk = struct {
                 .function => std.debug.print("<func>", .{}),
                 .cell => std.debug.print("<cell>", .{}),
                 .task => std.debug.print("<task>", .{}),
-                .string, .buffer => unreachable,
+                .string, .buffer => @panic("disassemble: strings and buffers don't live in the constant pool"),
             }
             std.debug.print("\n", .{});
         }
@@ -139,7 +139,6 @@ pub const Chunk = struct {
             .LOAD_CONST => std.debug.print("R[{d}] C[{d}]", .{ inst.a, inst.bEx() }),
             .LOAD_STRING => std.debug.print("R[{d}] STR[{d}]", .{ inst.a, inst.bEx() }),
             .LOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .STORE_VAR => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .I_ADD,
             .I_SUB,
             .I_MULT,
@@ -167,6 +166,8 @@ pub const Chunk = struct {
             .B_EQ,
             .B_NEQ,
             .STR_EQ,
+            .ARR_EQ,
+            .ARR_NEQ,
             .I_TO_F,
             .F_TO_I,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -184,7 +185,7 @@ pub const Chunk = struct {
             .ARRAY_STORE,
             .MAP_GET,
             .MAP_SET,
-            .MAP_FIND,
+            .MAP_GET_UNBOXED,
             .MAP_NEXT,
             .MAP_KEY_AT,
             .MAP_VALUE_AT,
@@ -193,7 +194,6 @@ pub const Chunk = struct {
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .ARRAY_APPEND,
             .ARRAY_LEN,
-            .ARRAY_POP,
             .BYTES_NEW,
             .BYTES_LEN,
             .DEEP_COPY,
@@ -250,7 +250,6 @@ pub const OpCode = enum(u8) {
 
     LOAD_CONST,
     LOAD,
-    STORE_VAR,
 
     LOAD_STRING,
     STR_BUILD,
@@ -261,12 +260,11 @@ pub const OpCode = enum(u8) {
     ARRAY_STORE,
     ARRAY_LEN,
     ARRAY_APPEND,
-    ARRAY_POP,
 
     MAP_INIT,
     MAP_GET,
     MAP_SET,
-    MAP_FIND,
+    MAP_GET_UNBOXED,
     MAP_NEXT,
     MAP_KEY_AT,
     MAP_VALUE_AT,
@@ -274,6 +272,8 @@ pub const OpCode = enum(u8) {
     BYTES_NEW,
     BYTES_LEN,
     STR_EQ,
+    ARR_EQ,
+    ARR_NEQ,
     BYTES_GET,
     BYTES_SET,
     DEEP_COPY,
@@ -376,5 +376,4 @@ pub const OpCode = enum(u8) {
             else => false,
         };
     }
-
 };

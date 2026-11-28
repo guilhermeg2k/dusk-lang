@@ -1,4 +1,4 @@
-import @/counter: helper
+import "@/counter": helper
 
 func main() -> void
 end

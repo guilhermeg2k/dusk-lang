@@ -1,5 +1,7 @@
+import "std/io"
+
 func main() -> void
     let a = spawn(func() -> return 1)
     let b = spawn(func() -> return 2)
-    echo(a == b)
+    io::println("${a == b}")
 end

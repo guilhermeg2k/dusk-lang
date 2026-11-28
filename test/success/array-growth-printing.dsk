@@ -1,13 +1,14 @@
-import std/array: len, append
-import std/string
+import "std/array": len, append
+import "std/string"
+import "std/io"
 
 func main() -> void
     let mut numbers = [1]
     for 0..9: i do
         append(numbers, i)
     end
-    echo(numbers)
-    echo("${numbers}")
+    io::println("${numbers}")
+    io::println("${numbers}")
 
     let mut parts = string::split("a", ",")
     for 0..20: i do
@@ -19,5 +20,5 @@ func main() -> void
     let mut short = string::split("a", ",")
     append(short, "b")
     append(short, "c")
-    echo(short)
+    io::println("${short}")
 end

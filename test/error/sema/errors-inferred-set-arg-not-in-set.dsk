@@ -1,3 +1,5 @@
+import "std/io"
+
 error ParseError
     Empty
 end
@@ -17,7 +19,7 @@ func load(n: int) -> !int
 end
 
 func handle_error(e: ParseError) -> void
-    echo(e)
+    io::println("${e}")
 end
 
 func main() -> void

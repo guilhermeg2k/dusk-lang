@@ -1,4 +1,4 @@
-import std/array: len, insert, remove, clear, ArrayError
+import "std/array": len, insert, remove, clear, ArrayError
 
 struct Point
     x: int

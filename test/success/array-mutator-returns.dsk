@@ -1,0 +1,59 @@
+import "std/array"
+
+struct Item
+    values: []int
+end
+
+func main() -> !void
+    let mut original = [3, 1, 2]
+    assert(array::append(original, 4) == original)
+    assert(array::extend(original, []) == original)
+    assert((try array::insert(original, 1, 8)) == original)
+    assert(array::reverse(original) == original)
+    let extended = array::extend(copy(original), [5, 6])
+    assert(array::len(extended) == 7 and extended[6] == 6)
+    assert(array::len(original) == 5 and original[0] == 4)
+    let cleared = array::clear(copy(original))
+    assert(array::len(cleared) == 0 and array::len(original) == 5)
+    let inserted = try array::insert(copy(original), 0, 99)
+    assert(inserted[0] == 99 and original[0] == 4)
+    let appended = array::append(copy(original), 99)
+    assert(appended[5] == 99 and array::len(original) == 5)
+    let reversed = array::reverse(copy(original))
+    assert(reversed[0] == 3 and original[0] == 4)
+    let chained = array::sort(array::append(array::extend(copy(original), [5]), -1))
+    assert(chained[0] == -1 and chained[6] == 8)
+    let reset = array::append(array::clear(copy(original)), 7)
+    assert(array::len(reset) == 1 and reset[0] == 7)
+    let mut empty: []int = []
+    assert(array::clear(empty) == empty)
+    assert(array::reverse(empty) == empty)
+    let mut single = [1]
+    assert(array::reverse(single) == single)
+    let mut nested = [Item(values = [1, 2])]
+    let mut independent = array::reverse(copy(nested))
+    independent[0].values[0] = 9
+    assert(nested[0].values[0] == 1)
+    let mut strings: []string = []
+    for 1..20000: i do
+        let mut appended_ref = array::append(strings, "value$i")
+        assert(appended_ref[i - 1] == "value$i")
+        appended_ref[0] = "first$i"
+        assert(strings[0] == "first$i")
+    end
+    let mut grown_ref = array::extend(strings, strings)
+    assert(array::len(grown_ref) == 40000)
+    grown_ref[20000] = "changed"
+    assert(strings[20000] == "changed")
+    let mut inserted_ref = try array::insert(strings, 0, "front")
+    inserted_ref[1] = "second"
+    assert(strings[0] == "front" and strings[1] == "second")
+    let mut nested_calls: []string = []
+    for 1..10000: i do
+        let result = array::append(array::append(nested_calls, "left$i"), "right$i")
+        assert(array::len(result) == i * 2)
+        assert(result[i * 2 - 1] == "right$i")
+    end
+    assert(array::clear(strings) == array::clear(strings))
+    assert(array::len(strings) == 0)
+end

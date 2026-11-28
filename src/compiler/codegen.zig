@@ -33,7 +33,6 @@ pub const BytecodeGen = struct {
     break_patches: std.ArrayList(usize),
     continue_patches: std.ArrayList(usize),
     intrinsic_by_uid: std.AutoHashMap(usize, native.Intrinsic),
-    native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     cell_type_by_uid: std.AutoHashMapUnmanaged(usize, tt.TypeId) = .empty,
@@ -67,7 +66,6 @@ pub const BytecodeGen = struct {
             .break_patches = .empty,
             .continue_patches = .empty,
             .intrinsic_by_uid = std.AutoHashMap(usize, native.Intrinsic).init(alloc),
-            .native_params_by_uid = std.AutoHashMap(usize, []const tt.TypedIdentifier).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
@@ -153,28 +151,13 @@ pub const BytecodeGen = struct {
     fn bindExtern(self: *Self, ext: ir.Extern) !bc.Function {
         const num_args: u8 = @intCast(ext.params.len);
         const kind: bc.FunctionKind = switch (ext.binding) {
-            .native => |func| blk: {
-                try self.native_params_by_uid.put(ext.uid, ext.params);
-                break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params), .error_base = ext.error_base } };
-            },
+            .native => |func| .{ .native = .{ .func = func, .num_args = num_args, .error_base = ext.error_base } },
             .intrinsic => |intrinsic| blk: {
                 try self.intrinsic_by_uid.put(ext.uid, intrinsic);
                 break :blk .{ .intrinsic = intrinsic };
             },
         };
         return .{ .uid = ext.uid, .name = try self.allocator.dupe(u8, ext.identifier), .kind = kind };
-    }
-
-    fn dynamicParamCount(self: *Self, params: []const tt.TypedIdentifier) u8 {
-        var count: u8 = 0;
-        for (params) |param| {
-            if (self.isDynamicParam(param)) count += 1;
-        }
-        return count;
-    }
-
-    fn isDynamicParam(self: *Self, param: tt.TypedIdentifier) bool {
-        return param.type_id == self.type_table.getPrimitive(.dynamic);
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !bc.Function {
@@ -260,6 +243,11 @@ pub const BytecodeGen = struct {
                     try self.genWhen(when);
                 },
                 .block => |instructions| {
+                    const saved_variables = try self.var_register_id_by_uid.clone();
+                    defer {
+                        self.var_register_id_by_uid.deinit();
+                        self.var_register_id_by_uid = saved_variables;
+                    }
                     const saved_next_free = self.next_free_register;
                     try self.genInstructionBlock(instructions);
                     self.freeRegisterN(self.next_free_register - saved_next_free);
@@ -280,8 +268,8 @@ pub const BytecodeGen = struct {
                 .unwrap_null_box => |stmt| {
                     _ = try self.genUnwrapNullBox(stmt, try self.consumeRegister());
                 },
-                .map_find => |stmt| {
-                    try self.genMapFind(stmt);
+                .map_get_unboxed => |stmt| {
+                    try self.genMapGetUnboxed(stmt);
                 },
                 .update_capture => |stmt| {
                     try self.genUpdateCapture(stmt);
@@ -528,6 +516,12 @@ pub const BytecodeGen = struct {
     }
 
     fn genStringBuild(self: *Self, parts: []const *ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
+        const is_lone_string = parts.len == 1 and parts[0].type_id == self.type_table.getPrimitive(.string);
+        if (is_lone_string) {
+            _ = try self.genValue(parts[0], target_reg);
+            self.register_types[target_reg] = result_type;
+            return;
+        }
         const build_reg = try self.consumeRegister();
         defer self.freeRegister();
         var kinds: std.ArrayList(v.ValueType) = .empty;
@@ -1078,6 +1072,7 @@ pub const BytecodeGen = struct {
             .f_add, .f_sub, .f_mult, .f_div, .f_mod => self.type_table.getPrimitive(.float),
             .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => self.type_table.getPrimitive(.boolean),
             .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => self.type_table.getPrimitive(.boolean),
+            .arr_cmp_eq, .arr_cmp_neq => self.type_table.getPrimitive(.boolean),
         };
     }
 
@@ -1159,8 +1154,6 @@ pub const BytecodeGen = struct {
             return;
         }
 
-        const kind_count = try self.genArgKinds(fc);
-
         var fn_call = bc.Instruction{
             .op = .CALL,
             .a = target_reg,
@@ -1171,7 +1164,7 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, fn_call);
         try self.recordHeapMap();
 
-        self.freeRegisterN(fc.args.len + kind_count);
+        self.freeRegisterN(fc.args.len);
         self.register_types[target_reg] = value.type_id;
     }
 
@@ -1179,7 +1172,6 @@ pub const BytecodeGen = struct {
         const arg = target_reg + 1;
         switch (intrinsic) {
             .array_len => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_LEN, .a = target_reg, .b = arg }),
-            .array_pop => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_POP, .a = target_reg, .b = arg }),
             .bytes_len => try self.appendIntrinsicInstruction(.{ .op = .BYTES_LEN, .a = target_reg, .b = arg }),
             .new_buffer => try self.appendIntrinsicInstruction(.{ .op = .BYTES_NEW, .a = target_reg, .b = arg }),
             .to_byte => try self.appendIntrinsicInstruction(.{ .op = .I_TO_BYTE, .a = target_reg, .b = arg }),
@@ -1190,9 +1182,14 @@ pub const BytecodeGen = struct {
             .to_float => {
                 try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
                 const is_float_arg = fc.args[0].type_id == self.type_table.getPrimitive(.float);
-                if (!is_float_arg) try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
+                if (!is_float_arg) {
+                    try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
+                }
             },
-            .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
+            .append => {
+                try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 });
+                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
+            },
             .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
             .task_spawn => {
                 const payload = self.type_table.getTypePtrById(value.type_id).kind.task.payload;
@@ -1208,23 +1205,6 @@ pub const BytecodeGen = struct {
     fn appendIntrinsicInstruction(self: *Self, instruction: bc.Instruction) !void {
         try self.chunk_instructions.append(self.allocator, instruction);
         if (instruction.op.canTriggerGc()) try self.recordHeapMap();
-    }
-
-    fn genArgKinds(self: *Self, fc: ir.FnCall) !usize {
-        const params = self.native_params_by_uid.get(fc.fn_uid) orelse return 0;
-        var count: usize = 0;
-        for (params, fc.args) |param, arg| {
-            if (!self.isDynamicParam(param)) continue;
-            const kind_reg = try self.consumeRegister();
-            const kind_value = ir.Value{
-                .type_id = self.type_table.getPrimitive(.int),
-                .data = .{ .i_int = @intFromEnum(valueTypeFromTypeId(self.type_table, arg.type_id)) },
-            };
-            try self.genLoadConst(typedValueFromIr(&kind_value), kind_reg);
-            self.register_types[kind_reg] = self.type_table.getPrimitive(.int);
-            count += 1;
-        }
-        return count;
     }
 
     fn genCallValue(self: *Self, cv: ir.CallValue, value: *const ir.Value, target_reg: u8) !void {
@@ -1279,12 +1259,17 @@ pub const BytecodeGen = struct {
         try self.genCall(call, call_reg);
         self.register_types[call_reg] = error_union.error_set;
 
-        std.debug.assert(self.chunk_instructions.items[self.chunk_instructions.items.len - 1].op.canFail());
+        if (!self.chunk_instructions.items[self.chunk_instructions.items.len - 1].op.canFail()) {
+            @panic("genFailingCall: call did not emit a failing instruction");
+        }
         try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
         const jump_ok_idx = self.chunk_instructions.items.len - 1;
 
         switch (handler) {
             .try_call => |tc| {
+                const saved_next_free = self.next_free_register;
+                try self.genInstructionBlock(tc.cleanup);
+                self.freeRegisterN(self.next_free_register - saved_next_free);
                 const op: bc.OpCode = if (tc.is_top_level) .PANIC_ERR else .RETURN_ERR;
                 try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = call_reg });
             },
@@ -1468,7 +1453,9 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, jump_into_else);
         const jump_into_else_idx = self.chunk_instructions.items.len - 1;
 
+        const branch_next_free = self.next_free_register;
         try self.genInstructionBlock(ifStmt.then_block);
+        self.freeRegisterN(self.next_free_register - branch_next_free);
 
         if (ifStmt.else_block.len > 0) {
             const jump_pass_else = bc.Instruction{
@@ -1539,8 +1526,10 @@ pub const BytecodeGen = struct {
             }
         }
 
+        const default_next_free = self.next_free_register;
         const default_position = try self.currentPosition();
         try self.genInstructionBlock(when.default_block);
+        self.freeRegisterN(self.next_free_register - default_next_free);
         if (when.table) |table| {
             const target_offsets = try self.allocator.alloc(u16, table.case_by_offset.len);
             for (table.case_by_offset, target_offsets) |case_index, *target| {
@@ -1653,8 +1642,16 @@ pub const BytecodeGen = struct {
     }
 
     fn tailCallOf(self: *Self, value: *const ir.Value) ?*const ir.Value {
-        if (value.data == .try_call) return if (value.data.try_call.is_top_level) null else value.data.try_call.call;
-        if (self.type_table.isErrorUnion(value.type_id)) return null;
+        if (value.data == .try_call) {
+            const tc = value.data.try_call;
+            if (tc.is_top_level or tc.cleanup.len > 0) {
+                return null;
+            }
+            return tc.call;
+        }
+        if (self.type_table.isErrorUnion(value.type_id)) {
+            return null;
+        }
         return value;
     }
 
@@ -1747,13 +1744,13 @@ pub const BytecodeGen = struct {
         return target_reg;
     }
 
-    fn genMapFind(self: *Self, stmt: ir.MapFind) !void {
+    fn genMapGetUnboxed(self: *Self, stmt: ir.MapGetUnboxed) !void {
         const found_reg = try self.consumeRegister();
         const value_reg = try self.consumeRegister();
         const map_reg = try self.genValue(stmt.map, try self.consumeRegister());
         const key_reg = try self.genValue(stmt.key, try self.consumeRegister());
         self.freeRegisterN(2);
-        try self.chunk_instructions.append(self.allocator, .{ .op = .MAP_FIND, .a = found_reg, .b = map_reg, .c = key_reg });
+        try self.chunk_instructions.append(self.allocator, .{ .op = .MAP_GET_UNBOXED, .a = found_reg, .b = map_reg, .c = key_reg });
         self.register_types[found_reg] = self.type_table.getPrimitive(.boolean);
         self.register_types[value_reg] = stmt.value_type;
         try self.bindVariable(stmt.found_uid, found_reg);
@@ -1820,22 +1817,6 @@ pub const BytecodeGen = struct {
         return names;
     }
 
-    fn genArrayStore(self: *Self, array_reg: u8, index_value: *ir.Value, value: *ir.Value) !void {
-        const index_reg = try self.genValue(index_value, try self.consumeRegister());
-        defer self.freeRegister();
-
-        const value_reg = try self.genValue(value, try self.consumeRegister());
-        defer self.freeRegister();
-
-        const store_inst = bc.Instruction{
-            .op = .ARRAY_STORE,
-            .a = array_reg,
-            .b = index_reg,
-            .c = value_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, store_inst);
-    }
 };
 
 const TypedValue = struct {
@@ -1853,7 +1834,7 @@ const TypedValueHashContext = struct {
             .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
             .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
             .null => {},
-            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map => @panic("TypedValueHashContext.hash: constants are only primitives"),
+            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map, .resource => @panic("TypedValueHashContext.hash: constants are only primitives"),
         }
         return hasher.final();
     }
@@ -1865,7 +1846,7 @@ const TypedValueHashContext = struct {
             .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
             .bool => a.value.bool == b.value.bool,
             .null => true,
-            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map => @panic("TypedValueHashContext.eql: constants are only primitives"),
+            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map, .resource => @panic("TypedValueHashContext.eql: constants are only primitives"),
         };
     }
 };
@@ -1895,6 +1876,7 @@ fn valueTypeFromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) v.ValueTyp
         .func_type => .function,
         .task => .task,
         .cell => .cell,
+        .resource => .resource,
         .@"enum" => .int64,
         //note: void -> null
         .void => .null,
@@ -1955,6 +1937,9 @@ fn opCodeFromBinaryOp(op: ir.BinaryOpKind) bc.OpCode {
         .b_or => .B_OR,
         .b_cmp_eq => .B_EQ,
         .b_cmp_neq => .B_NEQ,
+
+        .arr_cmp_eq => .ARR_EQ,
+        .arr_cmp_neq => .ARR_NEQ,
     };
 }
 

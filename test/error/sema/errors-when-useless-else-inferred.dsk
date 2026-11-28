@@ -1,3 +1,5 @@
+import "std/io"
+
 error ParseError
     Empty
     BadDigit
@@ -21,8 +23,8 @@ end
 func main() -> void
     load(0) catch e then
         when e
-            ParseError.Empty, ParseError.BadDigit then echo(1) end
-            else then echo(2) end
+            ParseError.Empty, ParseError.BadDigit then io::println("${1}") end
+            else then io::println("${2}") end
         end
     end
 end

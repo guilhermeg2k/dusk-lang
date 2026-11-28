@@ -1,5 +1,7 @@
+import "std/io"
+
 let x = "hello"
 
 func main() -> void
-    echo(-x)
+    io::println("${-x}")
 end

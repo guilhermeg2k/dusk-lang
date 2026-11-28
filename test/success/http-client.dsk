@@ -1,0 +1,1186 @@
+import "std/array": append, len
+import "std/buffer"
+import "std/compression"
+import "std/fs"
+import "std/http"
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/task"
+
+struct Received
+    lines: []string
+    body: string
+end
+
+func read_request(conn: net::TcpConn) -> !Received
+    let mut lines: []string = []
+    let mut length = 0
+    for true do
+        let line = try conn.read_line() orelse ""
+        if line == "" then
+            break
+        end
+        append(lines, line)
+        if string::starts_with(string::lower(line), "content-length: ") then
+            length = try string::to_int(try string::slice(line, 16, string::len(line)))
+        end
+    end
+    if length == 0 then
+        return Received(lines = lines, body = "")
+    end
+    let data = try conn.read_exact(length) orelse buffer::from_string("")
+    return Received(lines = lines, body = try string::from_bytes(data))
+end
+
+func answer(listener: net::TcpListener, response: string) -> !Received
+    let conn = try listener.accept()
+    let received = try read_request(conn)
+    try conn.write(closing(response))
+    conn.close()
+    return received
+end
+
+func closing(response: string) -> string
+    let head_end = string::find(response, "\r\n\r\n") orelse -1
+    let is_informational = string::starts_with(response, "HTTP/1.1 1") and head_end >= 0
+    if is_informational then
+        let informational = string::slice(response, 0, head_end + 4) catch ""
+        let rest = string::slice(response, head_end + 4, string::len(response)) catch ""
+        return "$informational${closing(rest)}"
+    end
+    let line_end = string::find(response, "\r\n") orelse -1
+    if line_end < 0 then
+        return response
+    end
+    let status_line = string::slice(response, 0, line_end) catch ""
+    let rest = string::slice(response, line_end + 2, string::len(response)) catch ""
+    return "$status_line\r\nConnection: close\r\n$rest"
+end
+
+func answer_bytes(listener: net::TcpListener, response: buffer) -> !Received
+    let conn = try listener.accept()
+    let received = try read_request(conn)
+    try conn.write_bytes(response)
+    conn.close()
+    return received
+end
+
+func serve_bytes_once(listener: net::TcpListener, response: buffer) -> Task[Received]
+    return spawn(func() -> Received
+        return answer_bytes(listener, response) catch e then
+            return Received(lines = [], body = "")
+        end
+    end)
+end
+
+func serve_once(listener: net::TcpListener, response: string) -> Task[Received]
+    return spawn(func() -> Received
+        return answer(listener, response) catch e then
+            return Received(lines = [], body = "")
+        end
+    end)
+end
+
+func accept_and_wait(listener: net::TcpListener, response: string, wait_ms: int) -> Task[void]
+    return spawn(func() -> void
+        let conn = listener.accept() catch e then
+            return
+        end
+        read_request(conn) catch e then
+            conn.close()
+            return
+        end
+        conn.write(response) catch e then
+        end
+        task::sleep(wait_ms)
+        conn.close()
+    end)
+end
+
+func has_line(received: Received, wanted: string) -> bool
+    for received.lines: line do
+        if line == wanted then
+            return true
+        end
+    end
+    return false
+end
+
+func expect_error(expected: http::HttpError, call: func() -> http::HttpError!http::Response) -> void
+    call() catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func base(listener: net::TcpListener) -> string
+    return "http://127.0.0.1:${listener.port()}"
+end
+
+func check_get(listener: net::TcpListener) -> !void
+    let server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nSet-Cookie: a=1\r\nset-cookie: b=2\r\nContent-Length: 5\r\n\r\nhello")
+    let resp = try http::request("${base(listener)}/items?sort=name#top", query = {"q": "dusk lang", "page": "2"}, headers = {"Accept": "text/plain", "X-Trace": "abc"})
+    let received = await(server)
+    assert(received.lines[0] == "GET /items?sort=name&q=dusk%20lang&page=2 HTTP/1.1")
+    assert(has_line(received, "Accept: text/plain"))
+    assert(has_line(received, "X-Trace: abc"))
+    assert(has_line(received, "Host: 127.0.0.1:${listener.port()}"))
+    assert(has_line(received, "User-Agent: dusk-http-client"))
+    assert(!has_header_named(received, "connection"))
+    assert(!has_line(received, "Content-Length: 0"))
+    assert(resp.status == 200)
+    assert(resp.reason == "OK")
+    assert(resp.is_success())
+    assert(try resp.text() == "hello")
+    assert(buffer::len(resp.body) == 5)
+    assert(resp.headers.get("CONTENT-TYPE") == "text/plain")
+    assert(resp.headers.has("content-length"))
+    assert(!resp.headers.has("x-missing"))
+    assert(resp.headers.get("x-missing") == null)
+    let cookies = resp.headers.get_all("Set-Cookie")
+    assert(len(cookies) == 2)
+    assert(cookies[0] == "a=1")
+    assert(cookies[1] == "b=2")
+    let entries = resp.headers.entries()
+    assert(len(entries) == 5)
+    assert(entries[3].name == "set-cookie")
+    assert(resp.url == "${base(listener)}/items?sort=name&q=dusk%20lang&page=2#top")
+end
+
+func check_request_bodies(listener: net::TcpListener) -> !void
+    let created = "HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n"
+    let text_server = serve_once(listener, created)
+    let text_response = try http::request(base(listener), method = "POST", body = @(text = "{\"name\":\"ada\"}"), headers = {"Content-Type": "application/json", "Content-Length": "999"})
+    let text_request = await(text_server)
+    assert(text_response.status == 201)
+    assert(text_request.lines[0] == "POST / HTTP/1.1")
+    assert(has_line(text_request, "Content-Type: application/json"))
+    assert(has_line(text_request, "Content-Length: 14"))
+    assert(!has_line(text_request, "Content-Length: 999"))
+    assert(text_request.body == "{\"name\":\"ada\"}")
+
+    let bytes_server = serve_once(listener, created)
+    let bytes_response = try http::request(base(listener), method = "PUT", body = http::Body(bytes = buffer::from_string("raw")))
+    let bytes_request = await(bytes_server)
+    assert(bytes_response.status == 201)
+    assert(has_line(bytes_request, "Content-Length: 3"))
+    assert(bytes_request.body == "raw")
+
+    let empty_server = serve_once(listener, created)
+    let empty_response = try http::request(base(listener), method = "POST")
+    assert(empty_response.status == 201)
+    assert(has_line(await(empty_server), "Content-Length: 0"))
+
+    let custom_server = serve_once(listener, created)
+    let custom_response = try http::request(base(listener), method = "DELETE", headers = {"Host": "api.example", "User-Agent": "tests/1", "Connection": "keep-alive"})
+    let custom_request = await(custom_server)
+    assert(custom_response.status == 201)
+    assert(custom_request.lines[0] == "DELETE / HTTP/1.1")
+    assert(has_line(custom_request, "Host: api.example"))
+    assert(has_line(custom_request, "User-Agent: tests/1"))
+    assert(has_line(custom_request, "Connection: keep-alive"))
+end
+
+func check_response_bodies(listener: net::TcpListener) -> !void
+    let chunked_server = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n")
+    let chunked = try http::request(base(listener))
+    assert(try chunked.text() == "Wikipedia")
+    await(chunked_server)
+
+    let until_close_server = serve_once(listener, "HTTP/1.1 200 OK\r\n\r\nuntil the end")
+    let until_close = try http::request(base(listener))
+    assert(try until_close.text() == "until the end")
+    await(until_close_server)
+
+    let head_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+    let head = try http::request(base(listener), method = "HEAD")
+    assert(head.status == 200)
+    assert(buffer::len(head.body) == 0)
+    assert(head.headers.get("content-length") == "1000")
+    assert(await(head_server).lines[0] == "HEAD / HTTP/1.1")
+
+    let no_content_server = serve_once(listener, "HTTP/1.1 204 No Content\r\n\r\n")
+    let no_content = try http::request(base(listener), method = "DELETE")
+    assert(no_content.status == 204)
+    assert(buffer::len(no_content.body) == 0)
+    await(no_content_server)
+
+    let continue_server = serve_once(listener, "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\nnope")
+    let missing = try http::request(base(listener))
+    assert(missing.status == 404)
+    assert(missing.reason == "Not Found")
+    assert(!missing.is_success())
+    assert(try missing.text() == "nope")
+    await(continue_server)
+
+    let exact_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nfour")
+    let exact = try http::request(base(listener), max_body = 4)
+    assert(try exact.text() == "four")
+    await(exact_server)
+
+    let mut raw = buffer::from_string("HTTP/1.1 200 Ok#\r\nContent-Length: 2\r\n\r\n##")
+    raw[15] = 233
+    raw[buffer::len(raw) - 2] = 255
+    raw[buffer::len(raw) - 1] = 254
+    let binary_server = serve_bytes_once(listener, raw)
+    let binary = try http::request(base(listener))
+    assert(binary.reason == "Ok\u{FFFD}")
+    assert(buffer::len(binary.body) == 2)
+    assert(binary.body[0] == 255)
+    let mut text_failure: ?http::HttpError = null
+    binary.text() catch e then
+        text_failure = e
+    end
+    assert(text_failure == http::HttpError.InvalidUtf8)
+    await(binary_server)
+end
+
+func check_bad_responses(listener: net::TcpListener) -> void
+    let large = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try http::request(base(listener), max_body = 4))
+    await(large)
+
+    let large_chunked = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n")
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try http::request(base(listener), max_body = 5))
+    await(large_chunked)
+
+    let huge_head = serve_once(listener, "HTTP/1.1 200 OK\r\nX-Big: ${string::repeat("a", 70000) catch ""}\r\n\r\n")
+    expect_error(http::HttpError.HeadersTooLarge, func() -> return try http::request(base(listener)))
+    await(huge_head)
+
+    let garbage = serve_once(listener, "SMTP ready\r\n\r\n")
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(garbage)
+
+    let smuggling = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(smuggling)
+
+    let cut_short = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc")
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(cut_short)
+
+    let cut_head = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-")
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(cut_head)
+
+    let silent = serve_once(listener, "")
+    expect_error(http::HttpError.ConnectionReset, func() -> return try http::request(base(listener)))
+    await(silent)
+end
+
+func check_request_checks() -> void
+    let target = "http://127.0.0.1:9/"
+    expect_error(http::HttpError.InvalidUrl, func() -> return try http::request("not a url"))
+    expect_error(http::HttpError.InvalidUrl, func() -> return try http::request("http://host:99999/"))
+    expect_error(http::HttpError.UnsupportedScheme, func() -> return try http::request("ftp://example.com/file"))
+    expect_error(http::HttpError.InvalidMethod, func() -> return try http::request(target, method = "get"))
+    expect_error(http::HttpError.InvalidMethod, func() -> return try http::request(target, method = ""))
+    expect_error(http::HttpError.InvalidMethod, func() -> return try http::request(target, method = "GE T"))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"Bad Name": "x"}))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"X-Inject": "a\r\nHost: evil"}))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"X-Null": "a\u{0}b"}))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"": "x"}))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"Transfer-Encoding": "chunked"}))
+end
+
+func check_timeouts_and_refusals(listener: net::TcpListener) -> !void
+    let stalled = accept_and_wait(listener, "", 400)
+    expect_error(http::HttpError.TimedOut, func() -> return try http::request(base(listener), timeout_ms = 100))
+    await(stalled)
+
+    let stalled_body = accept_and_wait(listener, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc", 400)
+    expect_error(http::HttpError.TimedOut, func() -> return try http::request(base(listener), timeout_ms = 100))
+    await(stalled_body)
+
+    let closed = try net::tcp_listen("127.0.0.1", 0)
+    let closed_port = closed.port()
+    closed.close()
+    expect_error(http::HttpError.ConnectionRefused, func() -> return try http::request("http://127.0.0.1:$closed_port/"))
+end
+
+func answer_all(listener: net::TcpListener, responses: []string) -> ![]Received
+    let mut all: []Received = []
+    for responses: response do
+        append(all, try answer(listener, response))
+    end
+    return all
+end
+
+func serve_sequence(listener: net::TcpListener, responses: []string) -> Task[[]Received]
+    return spawn(func() -> []Received
+        return answer_all(listener, responses) catch e then
+            return []
+        end
+    end)
+end
+
+func has_header_named(received: Received, lowered_name: string) -> bool
+    for received.lines: line do
+        if string::starts_with(string::lower(line), "$lowered_name:") then
+            return true
+        end
+    end
+    return false
+end
+
+func redirect_to(status: int, location: string) -> string
+    return "HTTP/1.1 $status Moved\r\nLocation: $location\r\nContent-Length: 9\r\n\r\nignore me"
+end
+
+func check_redirects(listener: net::TcpListener) -> !void
+    let done = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone"
+    let relative = serve_sequence(listener, [redirect_to(302, "../new/place?x=1"), done])
+    let followed = try http::request("${base(listener)}/old/path", headers = {"Authorization": "Bearer t", "Cookie": "s=1"})
+    let relative_requests = await(relative)
+    assert(len(relative_requests) == 2)
+    assert(relative_requests[0].lines[0] == "GET /old/path HTTP/1.1")
+    assert(relative_requests[1].lines[0] == "GET /new/place?x=1 HTTP/1.1")
+    assert(has_line(relative_requests[1], "Authorization: Bearer t"))
+    assert(has_line(relative_requests[1], "Cookie: s=1"))
+    assert(followed.status == 200)
+    assert(try followed.text() == "done")
+    assert(followed.url == "${base(listener)}/new/place?x=1")
+
+    let see_other = serve_sequence(listener, [redirect_to(303, "/result"), done])
+    let posted = try http::request("${base(listener)}/form", method = "POST", body = @(text = "a=1"), headers = {"Content-Type": "application/x-www-form-urlencoded", "X-Keep": "yes"})
+    let see_other_requests = await(see_other)
+    assert(posted.status == 200)
+    assert(see_other_requests[0].body == "a=1")
+    assert(see_other_requests[1].lines[0] == "GET /result HTTP/1.1")
+    assert(see_other_requests[1].body == "")
+    assert(!has_header_named(see_other_requests[1], "content-type"))
+    assert(!has_header_named(see_other_requests[1], "content-length"))
+    assert(has_line(see_other_requests[1], "X-Keep: yes"))
+
+    let moved = serve_sequence(listener, [redirect_to(301, "/moved"), done])
+    let moved_response = try http::request(base(listener), method = "DELETE")
+    assert(moved_response.status == 200)
+    assert(await(moved)[1].lines[0] == "GET /moved HTTP/1.1")
+
+    let temporary = serve_sequence(listener, [redirect_to(307, "/again"), done])
+    let temporary_response = try http::request(base(listener), method = "POST", body = @(text = "keep me"))
+    let temporary_requests = await(temporary)
+    assert(temporary_response.status == 200)
+    assert(temporary_requests[1].lines[0] == "POST /again HTTP/1.1")
+    assert(temporary_requests[1].body == "keep me")
+
+    let permanent = serve_sequence(listener, [redirect_to(308, "/forever"), done])
+    let permanent_response = try http::request(base(listener), method = "PUT", body = @(bytes = buffer::from_string("bytes")))
+    let permanent_requests = await(permanent)
+    assert(permanent_response.status == 200)
+    assert(permanent_requests[1].lines[0] == "PUT /forever HTTP/1.1")
+    assert(permanent_requests[1].body == "bytes")
+
+    let head = serve_sequence(listener, [redirect_to(303, "/head"), "HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\n"])
+    let head_response = try http::request(base(listener), method = "HEAD")
+    assert(head_response.status == 200)
+    assert(await(head)[1].lines[0] == "HEAD /head HTTP/1.1")
+
+    let other_host = serve_sequence(listener, [redirect_to(302, "http://localhost:${listener.port()}/elsewhere"), done])
+    let crossed = try http::request(base(listener), headers = {"Authorization": "Bearer t", "Cookie": "s=1", "Host": "api.example", "X-Keep": "yes"})
+    let other_host_requests = await(other_host)
+    assert(crossed.status == 200)
+    assert(crossed.url == "http://localhost:${listener.port()}/elsewhere")
+    assert(has_line(other_host_requests[0], "Authorization: Bearer t"))
+    assert(!has_header_named(other_host_requests[1], "authorization"))
+    assert(!has_header_named(other_host_requests[1], "cookie"))
+    assert(has_line(other_host_requests[1], "Host: localhost:${listener.port()}"))
+    assert(has_line(other_host_requests[1], "X-Keep: yes"))
+
+    let not_followed = serve_once(listener, redirect_to(302, "/next"))
+    let raw = try http::request(base(listener), max_redirects = 0)
+    assert(raw.status == 302)
+    assert(raw.headers.get("location") == "/next")
+    assert(try raw.text() == "ignore me")
+    await(not_followed)
+
+    let no_location = serve_once(listener, "HTTP/1.1 302 Found\r\nContent-Length: 2\r\n\r\nhi")
+    let unmoved = try http::request(base(listener))
+    assert(unmoved.status == 302)
+    assert(try unmoved.text() == "hi")
+    await(no_location)
+
+    let looping = serve_sequence(listener, [redirect_to(302, "/a"), redirect_to(302, "/b"), redirect_to(302, "/c")])
+    expect_error(http::HttpError.TooManyRedirects, func() -> return try http::request(base(listener), max_redirects = 2))
+    assert(len(await(looping)) == 3)
+
+    let to_ftp = serve_once(listener, redirect_to(302, "ftp://example.com/file"))
+    expect_error(http::HttpError.UnsupportedScheme, func() -> return try http::request(base(listener)))
+    await(to_ftp)
+end
+
+func fixture(name: string) -> !string
+    return try fs::read("test/fixtures/tls/$name")
+end
+
+func tls_listener(cert_name: string) -> !net::TcpListener
+    let cert = try net::certificate(try fixture(cert_name), try fixture("server.key"))
+    return try net::tls_listen("127.0.0.1", 0, cert)
+end
+
+func check_client(listener: net::TcpListener) -> !void
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    let mut api = http::Client(base_url = "${base(listener)}/v1", headers = {"X-Token": "abc", "Accept": "text/plain"})
+
+    let plain_server = serve_once(listener, ok)
+    let plain = try api.request("/users")
+    let plain_request = await(plain_server)
+    assert(try plain.text() == "hello")
+    assert(plain_request.lines[0] == "GET /v1/users HTTP/1.1")
+    assert(has_line(plain_request, "X-Token: abc"))
+    assert(has_line(plain_request, "Accept: text/plain"))
+
+    let no_slash_server = serve_once(listener, ok)
+    let no_slash = try api.request("users/7", query = {"full": "yes"})
+    assert(await(no_slash_server).lines[0] == "GET /v1/users/7?full=yes HTTP/1.1")
+
+    let slashed = http::Client(base_url = "${base(listener)}/v1/")
+    let both_server = serve_once(listener, ok)
+    let both = try slashed.request("/items")
+    assert(await(both_server).lines[0] == "GET /v1/items HTTP/1.1")
+    let query_server = serve_once(listener, ok)
+    let query_only = try api.request("?page=2")
+    assert(await(query_server).lines[0] == "GET /v1?page=2 HTTP/1.1")
+    let empty_server = serve_once(listener, ok)
+    let empty_path = try api.request("")
+    assert(await(empty_server).lines[0] == "GET /v1 HTTP/1.1")
+
+    let elsewhere = http::Client(base_url = "http://nowhere.invalid/base")
+    let absolute_server = serve_once(listener, ok)
+    let absolute = try elsewhere.request("${base(listener)}/direct")
+    assert(await(absolute_server).lines[0] == "GET /direct HTTP/1.1")
+
+    let override_server = serve_once(listener, ok)
+    let overridden = try api.request("/me", method = "POST", body = @(text = "x"), headers = {"x-token": "xyz", "X-Extra": "1"})
+    let override_request = await(override_server)
+    assert(override_request.lines[0] == "POST /v1/me HTTP/1.1")
+    assert(has_line(override_request, "x-token: xyz"))
+    assert(!has_line(override_request, "X-Token: abc"))
+    assert(has_line(override_request, "X-Extra: 1"))
+    assert(has_line(override_request, "Accept: text/plain"))
+
+    api.headers["X-Late"] = "yes"
+    let late_server = serve_once(listener, ok)
+    let late = try api.request("/late")
+    assert(has_line(await(late_server), "X-Late: yes"))
+
+    let tight = http::Client(base_url = base(listener), max_body = 3)
+    let tight_server = serve_once(listener, ok)
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try tight.request("/big"))
+    await(tight_server)
+    let loose_server = serve_once(listener, ok)
+    assert(try (try tight.request("/big", max_body = 100)).text() == "hello")
+    await(loose_server)
+
+    let done = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone"
+    let stays = http::Client(base_url = base(listener), max_redirects = 0, headers = {"Authorization": "Bearer t"})
+    let stay_server = serve_once(listener, redirect_to(302, "/next"))
+    assert((try stays.request("/start")).status == 302)
+    await(stay_server)
+    let follow_server = serve_sequence(listener, [redirect_to(302, "/next"), done])
+    assert(try (try stays.request("/start", max_redirects = 3)).text() == "done")
+    let followed = await(follow_server)
+    assert(followed[1].lines[0] == "GET /next HTTP/1.1")
+    assert(has_line(followed[1], "Authorization: Bearer t"))
+
+    let stream_server = serve_once(listener, ok)
+    let mut streamed = try api.open("/stream")
+    assert(try streamed.read_all() == "hello")
+    streamed.close()
+    let stream_request = await(stream_server)
+    assert(stream_request.lines[0] == "GET /v1/stream HTTP/1.1")
+    assert(has_line(stream_request, "X-Token: abc"))
+
+    let quick = http::Client(base_url = base(listener), timeout_ms = 100)
+    let silent = accept_and_wait(listener, "", 400)
+    expect_error(http::HttpError.TimedOut, func() -> return try quick.request("/slow"))
+    await(silent)
+end
+
+func pipe(from: net::TcpConn, to: net::TcpConn) -> void
+    for true do
+        let next = from.read_bytes(65536) catch e then
+            break
+        end
+        if next: data then
+            to.write_bytes(data) catch e then
+                break
+            end
+        else
+            break
+        end
+    end
+    to.close()
+    from.close()
+end
+
+func tunnel_once(proxy: net::TcpListener, target_port: int, answer: string) -> Task[Received]
+    return spawn(func() -> Received
+        let conn = proxy.accept() catch e then
+            return Received(lines = [], body = "")
+        end
+        let received = read_request(conn) catch e then
+            conn.close()
+            return Received(lines = [], body = "")
+        end
+        if answer != "" then
+            conn.write(answer) catch e then
+            end
+            conn.close()
+            return received
+        end
+        let target = net::tcp_connect("127.0.0.1", target_port) catch e then
+            conn.close()
+            return received
+        end
+        conn.write("HTTP/1.1 200 Connection established\r\n\r\n") catch e then
+        end
+        let upstream = spawn(func() -> void
+            pipe(conn, target)
+        end)
+        pipe(target, conn)
+        await(upstream)
+        return received
+    end)
+end
+
+func proxy_error(client: http::Client, url: string) -> ?http::HttpError
+    let resp = client.request(url, timeout_ms = 3000) catch e then
+        return e
+    end
+    return null
+end
+
+func check_proxy(listener: net::TcpListener) -> !void
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    let port = listener.port()
+    let via = http::Client(proxy = "http://127.0.0.1:$port")
+    let forward_server = serve_once(listener, ok)
+    let forwarded = try via.request("http://example.test/items?page=2", headers = {"X-Token": "abc"})
+    let forward_request = await(forward_server)
+    assert(try forwarded.text() == "hello")
+    assert(forward_request.lines[0] == "GET http://example.test/items?page=2 HTTP/1.1")
+    assert(has_line(forward_request, "Host: example.test"))
+    assert(has_line(forward_request, "X-Token: abc"))
+    assert(!has_header_named(forward_request, "proxy-authorization"))
+
+    let port_server = serve_once(listener, ok)
+    let with_port = try via.request("http://example.test:8080/x")
+    assert(await(port_server).lines[0] == "GET http://example.test:8080/x HTTP/1.1")
+
+    let secret = http::Client(proxy = "http://user:p%40ss@127.0.0.1:$port")
+    let secret_server = serve_once(listener, ok)
+    let authorized = try secret.request("http://example.test/")
+    assert(has_line(await(secret_server), "Proxy-Authorization: Basic dXNlcjpwQHNz"))
+
+    let nowhere = http::Client(proxy = "http://127.0.0.1:1")
+    let local_server = serve_once(listener, ok)
+    assert(try (try nowhere.request("${base(listener)}/local")).text() == "hello")
+    assert(await(local_server).lines[0] == "GET /local HTTP/1.1")
+    let named_local = serve_once(listener, ok)
+    assert(try (try nowhere.request("http://localhost:$port/named")).text() == "hello")
+    assert(await(named_local).lines[0] == "GET /named HTTP/1.1")
+    assert(proxy_error(nowhere, "http://example.test/") == http::HttpError.ConnectionRefused)
+    assert(proxy_error(http::Client(proxy = "not a url"), "http://example.test/") == http::HttpError.InvalidUrl)
+    assert(proxy_error(http::Client(proxy = "socks5://127.0.0.1:1080"), "http://example.test/") == http::HttpError.UnsupportedScheme)
+    let direct_server = serve_once(listener, ok)
+    assert(try (try http::Client(proxy = "").request("${base(listener)}/direct")).text() == "hello")
+    assert(await(direct_server).lines[0] == "GET /direct HTTP/1.1")
+end
+
+func check_proxy_tunnels() -> !void
+    let ca = try fixture("ca.pem")
+    let target = try tls_listener("other-host.pem")
+    let plain_proxy = try net::tcp_listen("127.0.0.1", 0)
+    let secure_proxy = try tls_listener("server.pem")
+    let secret = "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecret"
+
+    let tunnel = tunnel_once(plain_proxy, target.port(), "")
+    let target_server = serve_once(target, secret)
+    let through_plain = http::Client(proxy = "http://u:pw@127.0.0.1:${plain_proxy.port()}", ca = ca)
+    let tunneled = try through_plain.request("https://other.example/secure")
+    assert(try tunneled.text() == "secret")
+    let connect = await(tunnel)
+    assert(connect.lines[0] == "CONNECT other.example:443 HTTP/1.1")
+    assert(has_line(connect, "Host: other.example:443"))
+    assert(has_line(connect, "Proxy-Authorization: Basic dTpwdw=="))
+    let target_request = await(target_server)
+    assert(target_request.lines[0] == "GET /secure HTTP/1.1")
+    assert(!has_header_named(target_request, "proxy-authorization"))
+
+    let double = tunnel_once(secure_proxy, target.port(), "")
+    let double_server = serve_once(target, secret)
+    let through_secure = http::Client(proxy = "https://localhost:${secure_proxy.port()}", ca = ca)
+    let doubly = try through_secure.request("https://other.example:8443/twice")
+    assert(try doubly.text() == "secret")
+    assert(await(double).lines[0] == "CONNECT other.example:8443 HTTP/1.1")
+    assert(await(double_server).lines[0] == "GET /twice HTTP/1.1")
+
+    let streamed_tunnel = tunnel_once(secure_proxy, target.port(), "")
+    let streamed_server = serve_once(target, secret)
+    let mut streamed = try through_secure.open("https://other.example/stream")
+    assert(try streamed.read_all() == "secret")
+    streamed.close()
+    await(streamed_tunnel)
+    await(streamed_server)
+
+    let forward = tunnel_once(secure_proxy, 0, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+    let forwarded = try through_secure.request("http://example.test/plain")
+    assert(try forwarded.text() == "ok")
+    assert(await(forward).lines[0] == "GET http://example.test/plain HTTP/1.1")
+
+    let refusing = tunnel_once(plain_proxy, 0, "HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
+    assert(proxy_error(through_plain, "https://other.example/") == http::HttpError.ProxyRefused)
+    await(refusing)
+
+    let untrusting = http::Client(proxy = "https://localhost:${secure_proxy.port()}")
+    let untrusted_proxy = tunnel_once(secure_proxy, 0, "x")
+    assert(proxy_error(untrusting, "https://other.example/") == http::HttpError.UntrustedCertificate)
+    await(untrusted_proxy)
+
+    target.close()
+    plain_proxy.close()
+    secure_proxy.close()
+end
+
+func check_url_details(listener: net::TcpListener) -> !void
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    let port = listener.port()
+
+    let spaced_server = serve_once(listener, ok)
+    let spaced = try http::request("${base(listener)}/my files/café?q=a b&tag=\"x\"#part one")
+    assert(await(spaced_server).lines[0] == "GET /my%20files/caf%C3%A9?q=a%20b&tag=%22x%22 HTTP/1.1")
+    assert(spaced.url == "${base(listener)}/my%20files/caf%C3%A9?q=a%20b&tag=%22x%22#part%20one")
+
+    let kept_server = serve_once(listener, ok)
+    let kept = try http::request("${base(listener)}/already%20encoded/a+b?x=%C3%A9")
+    assert(await(kept_server).lines[0] == "GET /already%20encoded/a+b?x=%C3%A9 HTTP/1.1")
+
+    let user_server = serve_once(listener, ok)
+    let with_user = try http::request("http://user:pa%3Ass@127.0.0.1:$port/private")
+    let user_request = await(user_server)
+    assert(user_request.lines[0] == "GET /private HTTP/1.1")
+    assert(has_line(user_request, "Authorization: Basic dXNlcjpwYTpzcw=="))
+    assert(has_line(user_request, "Host: 127.0.0.1:$port"))
+    assert(with_user.url == "http://127.0.0.1:$port/private")
+
+    let token_server = serve_once(listener, ok)
+    let token = try http::request("http://token@127.0.0.1:$port/")
+    assert(has_line(await(token_server), "Authorization: Basic dG9rZW46"))
+
+    let explicit_server = serve_once(listener, ok)
+    let explicit = try http::request("http://user:pw@127.0.0.1:$port/", headers = {"authorization": "Bearer mine"})
+    let explicit_request = await(explicit_server)
+    assert(has_line(explicit_request, "authorization: Bearer mine"))
+    assert(!has_line(explicit_request, "Authorization: Basic dXNlcjpwdw=="))
+
+    let done = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone"
+    let hops = serve_sequence(listener, [redirect_to(302, "http://localhost:$port/elsewhere"), done])
+    let hopped = try http::request("http://user:pw@127.0.0.1:$port/start")
+    let hop_requests = await(hops)
+    assert(has_line(hop_requests[0], "Authorization: Basic dXNlcjpwdw=="))
+    assert(!has_header_named(hop_requests[1], "authorization"))
+
+    let api = http::Client(base_url = "http://user:pw@127.0.0.1:$port/v1")
+    let client_server = serve_once(listener, ok)
+    let through_client = try api.request("/a b")
+    let client_request = await(client_server)
+    assert(client_request.lines[0] == "GET /v1/a%20b HTTP/1.1")
+    assert(has_line(client_request, "Authorization: Basic dXNlcjpwdw=="))
+end
+
+func check_https() -> !void
+    let ca = try fixture("ca.pem")
+    let secure = try tls_listener("server.pem")
+    let secure_base = "https://localhost:${secure.port()}"
+    let server = serve_once(secure, "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecret")
+    let resp = try http::request("$secure_base/private", ca = ca, headers = {"Authorization": "Bearer t"})
+    let received = await(server)
+    assert(try resp.text() == "secret")
+    assert(resp.url == "$secure_base/private")
+    assert(received.lines[0] == "GET /private HTTP/1.1")
+    assert(has_line(received, "Host: localhost:${secure.port()}"))
+
+    let hops = serve_sequence(secure, [redirect_to(302, "/next"), "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"])
+    let hopped = try http::request("$secure_base/", ca = ca)
+    assert(try hopped.text() == "ok")
+    assert(len(await(hops)) == 2)
+
+    let trusted = http::Client(base_url = secure_base, ca = ca)
+    let trusted_server = serve_once(secure, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    assert(try (try trusted.request("/client")).text() == "ok")
+    await(trusted_server)
+
+    let other_ca = try fixture("self-signed.pem")
+    let untrusted = serve_once(secure, "")
+    expect_error(http::HttpError.UntrustedCertificate, func() -> return try http::request("$secure_base/", ca = other_ca))
+    await(untrusted)
+    let wrongly_trusting = http::Client(base_url = secure_base, ca = other_ca)
+    let override_ca_server = serve_once(secure, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    assert(try (try wrongly_trusting.request("/client", ca = ca)).text() == "ok")
+    await(override_ca_server)
+    let bad_ca = serve_once(secure, "")
+    expect_error(http::HttpError.InvalidCertificate, func() -> return try http::request("$secure_base/", ca = "not a certificate"))
+    await(bad_ca)
+    secure.close()
+
+    let other_host = try tls_listener("other-host.pem")
+    let other_host_server = serve_once(other_host, "")
+    expect_error(http::HttpError.WrongHostCertificate, func() -> return try http::request("https://localhost:${other_host.port()}/", ca = ca))
+    await(other_host_server)
+    other_host.close()
+
+    let expired = try tls_listener("expired.pem")
+    let expired_server = serve_once(expired, "")
+    expect_error(http::HttpError.ExpiredCertificate, func() -> return try http::request("https://localhost:${expired.port()}/", ca = ca))
+    await(expired_server)
+    expired.close()
+
+    let self_signed_cert = try net::certificate(try fixture("self-signed.pem"), try fixture("self-signed.key"))
+    let self_signed = try net::tls_listen("127.0.0.1", 0, self_signed_cert)
+    let lab_server = serve_once(self_signed, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nlab")
+    let lab = try http::request("https://localhost:${self_signed.port()}/", verify = false)
+    assert(try lab.text() == "lab")
+    await(lab_server)
+    self_signed.close()
+end
+
+struct Collector
+    total: int
+    last: string
+
+    func write(mut self: @, text: string) -> io::IoError!void
+        self.total = self.total + string::len(text)
+        self.last = text
+    end
+
+    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        self.total = self.total + buffer::len(data)
+    end
+
+    func flush(mut self: @) -> io::IoError!void
+    end
+end
+
+func expect_read_error(expected: io::IoError, call: func() -> io::IoError!string) -> void
+    call() catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func check_streams(listener: net::TcpListener) -> !void
+    let lines_server = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-Kind: lines\r\n\r\n2\r\nli\r\n9\r\nne1\nline2\r\n6\r\n\r\nlast\r\n0\r\n\r\n")
+    let mut lines = try http::open("${base(listener)}/lines")
+    assert(lines.status == 200)
+    assert(lines.headers.get("x-kind") == "lines")
+    assert(lines.url == "${base(listener)}/lines")
+    assert(try lines.read_line() == "line1")
+    assert(try lines.read_line() == "line2")
+    assert(try lines.read_line() == "last")
+    assert(try lines.read_line() == null)
+    assert(try lines.read_bytes(10) == null)
+    lines.close()
+    assert(await(lines_server).lines[0] == "GET /lines HTTP/1.1")
+
+    let pieces_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789")
+    let mut pieces = try http::open(base(listener))
+    let first = try pieces.read_bytes(4) orelse buffer::from_string("")
+    assert(buffer::len(first) == 4)
+    assert(try string::from_bytes(first) == "0123")
+    assert(try pieces.read_all() == "456789")
+    assert(try pieces.read_all() == "")
+    pieces.close()
+    await(pieces_server)
+
+    let big = string::repeat("x", 300000) catch ""
+    let big_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 300000\r\n\r\n$big")
+    let mut download = try http::open(base(listener))
+    let mut collector = Collector(total = 0, last = "")
+    assert(try io::copy(download, collector) == 300000)
+    assert(collector.total == 300000)
+    download.close()
+    await(big_server)
+
+    let bytes_server = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n")
+    let mut all_bytes = try http::open(base(listener))
+    assert(buffer::len(try all_bytes.read_all_bytes()) == 6)
+    all_bytes.close()
+    await(bytes_server)
+
+    let empty_server = serve_once(listener, "HTTP/1.1 204 No Content\r\n\r\n")
+    let mut empty = try http::open(base(listener), method = "DELETE")
+    assert(empty.status == 204)
+    assert(try empty.read_bytes(10) == null)
+    empty.close()
+    await(empty_server)
+
+    let redirect_server = serve_sequence(listener, [redirect_to(302, "/final"), "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfinal"])
+    let mut redirected = try http::open(base(listener))
+    assert(redirected.url == "${base(listener)}/final")
+    assert(try redirected.read_all() == "final")
+    redirected.close()
+    assert(len(await(redirect_server)) == 2)
+
+    let raw_server = serve_once(listener, redirect_to(301, "/next"))
+    let mut raw = try http::open(base(listener), max_redirects = 0)
+    assert(raw.status == 301)
+    assert(try raw.read_all() == "ignore me")
+    raw.close()
+    await(raw_server)
+end
+
+func check_stream_errors(listener: net::TcpListener) -> !void
+    let early_server = accept_and_wait(listener, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nstart", 300)
+    let mut early = try http::open(base(listener))
+    assert(try string::from_bytes(try early.read_bytes(5) orelse buffer::from_string("")) == "start")
+    early.close()
+    expect_read_error(io::IoError.Closed, func() -> return try early.read_all())
+    await(early_server)
+
+    let stalled_server = accept_and_wait(listener, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nabc", 400)
+    let mut stalled = try http::open(base(listener))
+    expect_read_error(io::IoError.TimedOut, func() -> return try stalled.read_all(timeout_ms = 100))
+    stalled.close()
+    await(stalled_server)
+
+    let truncated_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nabc")
+    let mut truncated = try http::open(base(listener))
+    expect_read_error(io::IoError.UnexpectedEnd, func() -> return try truncated.read_all())
+    truncated.close()
+    await(truncated_server)
+
+    let bad_chunk_server = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n")
+    let mut bad_chunk = try http::open(base(listener))
+    expect_read_error(io::IoError.Other, func() -> return try bad_chunk.read_all())
+    bad_chunk.close()
+    await(bad_chunk_server)
+
+    let long_line_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nmuch too long")
+    let mut long_line = try http::open(base(listener))
+    expect_read_error(io::IoError.LineTooLong, func() -> return try long_line.read_line(max = 4) orelse "")
+    long_line.close()
+    await(long_line_server)
+
+    expect_error(http::HttpError.InvalidMethod, func() -> return try http::request(base(listener), method = "bad method"))
+    let mut failed: ?http::HttpError = null
+    http::open(base(listener), method = "bad method") catch e then
+        failed = e
+    end
+    assert(failed == http::HttpError.InvalidMethod)
+end
+
+func answer_on_one_connection(listener: net::TcpListener, responses: []string, reads_one_more: bool) -> ![]Received
+    let conn = try listener.accept()
+    let mut all: []Received = []
+    for responses: response do
+        append(all, try read_request(conn))
+        try conn.write(response)
+    end
+    if reads_one_more then
+        append(all, try read_request(conn))
+    end
+    conn.close()
+    return all
+end
+
+func serve_connection(listener: net::TcpListener, responses: []string, reads_one_more: bool) -> Task[[]Received]
+    return spawn(func() -> []Received
+        return answer_on_one_connection(listener, responses, reads_one_more) catch e then
+            return []
+        end
+    end)
+end
+
+func serve_dropped_then_fresh(listener: net::TcpListener, first: string, fresh: string) -> Task[[]Received]
+    return spawn(func() -> []Received
+        let mut all = answer_on_one_connection(listener, [first], true) catch e then
+            return []
+        end
+        let mut retried = answer(listener, fresh) catch e then
+            return all
+        end
+        append(all, retried)
+        return all
+    end)
+end
+
+func check_pool(listener: net::TcpListener) -> !void
+    let kept = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nkept"
+    let reuse = serve_connection(listener, [kept, kept], false)
+    let first = try http::request("${base(listener)}/one", timeout_ms = 2000)
+    let second = try http::request("${base(listener)}/two", timeout_ms = 2000)
+    let reuse_requests = await(reuse)
+    assert(try first.text() == "kept")
+    assert(try second.text() == "kept")
+    assert(len(reuse_requests) == 2)
+    assert(reuse_requests[1].lines[0] == "GET /two HTTP/1.1")
+
+    let after_close = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfresh")
+    let fresh = try http::request(base(listener), timeout_ms = 2000)
+    assert(try fresh.text() == "fresh")
+    await(after_close)
+
+    let retry = serve_dropped_then_fresh(listener, kept, "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nretried")
+    let before_retry = try http::request("${base(listener)}/a", timeout_ms = 2000)
+    let retried = try http::request("${base(listener)}/b", timeout_ms = 2000)
+    let retry_requests = await(retry)
+    assert(try before_retry.text() == "kept")
+    assert(try retried.text() == "retried")
+    assert(len(retry_requests) == 3)
+    assert(retry_requests[1].lines[0] == "GET /b HTTP/1.1")
+    assert(retry_requests[2].lines[0] == "GET /b HTTP/1.1")
+
+    let no_retry = serve_connection(listener, [kept], true)
+    let before_post = try http::request(base(listener), timeout_ms = 2000)
+    assert(try before_post.text() == "kept")
+    expect_error(http::HttpError.ConnectionReset, func() -> return try http::request(base(listener), method = "POST", body = @(text = "once"), timeout_ms = 2000))
+    let no_retry_requests = await(no_retry)
+    assert(len(no_retry_requests) == 2)
+    assert(no_retry_requests[1].body == "once")
+
+    let streamed = serve_connection(listener, [kept, kept], false)
+    let mut stream = try http::open(base(listener), timeout_ms = 2000)
+    assert(try stream.read_all() == "kept")
+    stream.close()
+    let after_stream = try http::request(base(listener), timeout_ms = 2000)
+    assert(try after_stream.text() == "kept")
+    assert(len(await(streamed)) == 2)
+
+    let partial = serve_connection(listener, ["HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123"], true)
+    let mut unfinished = try http::open(base(listener), timeout_ms = 2000)
+    assert(try string::from_bytes(try unfinished.read_bytes(3) orelse buffer::from_string("")) == "012")
+    unfinished.close()
+    let partial_requests = await(partial)
+    assert(len(partial_requests) == 2)
+    assert(len(partial_requests[1].lines) == 0)
+
+    let arrived = serve_connection(listener, ["HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789", kept], false)
+    let mut skimmed = try http::open(base(listener), timeout_ms = 2000)
+    let skimmed_start = try skimmed.read_bytes(3)
+    skimmed.close()
+    let after_skim = try http::request(base(listener), timeout_ms = 2000)
+    assert(try after_skim.text() == "kept")
+    assert(len(await(arrived)) == 2)
+
+    let redirect = serve_connection(listener, [redirect_to(302, "/landed"), kept], false)
+    let landed = try http::request(base(listener), timeout_ms = 2000)
+    assert(landed.url == "${base(listener)}/landed")
+    assert(try landed.text() == "kept")
+    assert(len(await(redirect)) == 2)
+end
+
+func answer_with_body(listener: net::TcpListener, head: string, body: buffer) -> !Received
+    let conn = try listener.accept()
+    let received = try read_request(conn)
+    try conn.write(head)
+    try conn.write_bytes(body)
+    conn.close()
+    return received
+end
+
+func serve_body_once(listener: net::TcpListener, head: string, body: buffer) -> Task[Received]
+    return spawn(func() -> Received
+        return answer_with_body(listener, head, body) catch e then
+            return Received(lines = [], body = "")
+        end
+    end)
+end
+
+func encoded_head(encoding: string, body: buffer) -> string
+    return "HTTP/1.1 200 OK\r\nContent-Encoding: $encoding\r\nContent-Length: ${buffer::len(body)}\r\nConnection: close\r\n\r\n"
+end
+
+func stream_error(mut stream: http::ResponseStream) -> ?io::IoError
+    let data = stream.read_all_bytes() catch e then
+        return e
+    end
+    return null
+end
+
+func to_hex(value: int) -> string
+    let digits = "0123456789abcdef"
+    if value < 16 then
+        return string::slice(digits, value, value + 1) catch ""
+    end
+    return "${to_hex(value // 16)}${to_hex(value % 16)}"
+end
+
+func check_gzip(listener: net::TcpListener) -> !void
+    let hello = try fs::read_bytes("test/fixtures/http/hello.gz")
+    let zeros = try fs::read_bytes("test/fixtures/http/zeros.gz")
+    let broken = try fs::read_bytes("test/fixtures/http/broken.gz")
+    let expected = string::repeat("hello from gzip\n", 64) catch ""
+
+    let plain_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let plain = try http::request(base(listener))
+    let plain_request = await(plain_server)
+    assert(has_line(plain_request, "Accept-Encoding: gzip, deflate"))
+    assert(try plain.text() == expected)
+    assert(plain.headers.get("content-encoding") == "gzip")
+    assert(plain.headers.get("content-length") == "${buffer::len(hello)}")
+
+    let shouting_server = serve_body_once(listener, encoded_head("X-GZIP ", hello), hello)
+    let shouting = try http::request(base(listener))
+    assert(try shouting.text() == expected)
+    await(shouting_server)
+
+    let raw_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let raw = try http::request(base(listener), headers = {"accept-encoding": "gzip"})
+    let raw_request = await(raw_server)
+    assert(buffer::len(raw.body) == buffer::len(hello))
+    assert(has_line(raw_request, "accept-encoding: gzip"))
+    assert(!has_line(raw_request, "Accept-Encoding: gzip, deflate"))
+
+    let bomb_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try http::request(base(listener), max_body = 100000))
+    await(bomb_server)
+
+    let zeros_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let unpacked = try http::request(base(listener))
+    assert(buffer::len(unpacked.body) == 1048576)
+    assert(unpacked.body[1048575] == 0)
+    await(zeros_server)
+
+    let broken_server = serve_body_once(listener, encoded_head("gzip", broken), broken)
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(broken_server)
+
+    let unknown_server = serve_body_once(listener, encoded_head("br", hello), hello)
+    let unknown = try http::request(base(listener))
+    assert(buffer::len(unknown.body) == buffer::len(hello))
+    await(unknown_server)
+
+    let text = buffer::from_string(expected)
+    let mut zlibbed = try compression::compress(text, compression::Format.Zlib)
+    let deflate_server = serve_body_once(listener, encoded_head("deflate", zlibbed), zlibbed)
+    assert(try (try http::request(base(listener))).text() == expected)
+    await(deflate_server)
+    let mut raw_deflate = try compression::compress(text, compression::Format.Deflate)
+    let raw_deflate_server = serve_body_once(listener, encoded_head("Deflate", raw_deflate), raw_deflate)
+    assert(try (try http::request(base(listener))).text() == expected)
+    await(raw_deflate_server)
+    let mut bad_deflate = buffer::from_string("not deflate at all")
+    let bad_deflate_server = serve_body_once(listener, encoded_head("deflate", bad_deflate), bad_deflate)
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(bad_deflate_server)
+    let empty_gzip_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    assert(buffer::len((try http::request(base(listener))).body) == 0)
+    await(empty_gzip_server)
+
+    let streamed_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let mut streamed = try http::open(base(listener))
+    assert(try string::from_bytes(try streamed.read_all_bytes()) == expected)
+    streamed.close()
+    assert(has_line(await(streamed_server), "Accept-Encoding: gzip, deflate"))
+
+    let lines_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let mut lines = try http::open(base(listener))
+    let mut line_count = 0
+    for true do
+        let next = try lines.read_line()
+        if next: line then
+            assert(line == "hello from gzip")
+            line_count = line_count + 1
+        else
+            break
+        end
+    end
+    assert(line_count == 64)
+    lines.close()
+    await(lines_server)
+
+    let pieces_server = serve_body_once(listener, encoded_head("deflate", zlibbed), zlibbed)
+    let mut pieces = try http::open(base(listener))
+    let mut collected: []string = []
+    for true do
+        let next = try pieces.read_bytes(10)
+        if next: piece then
+            assert(buffer::len(piece) <= 10)
+            append(collected, try string::from_bytes(piece))
+        else
+            break
+        end
+    end
+    assert(string::join(collected) == expected)
+    pieces.close()
+    await(pieces_server)
+
+    let big_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let mut big = try http::open(base(listener))
+    let mut total = 0
+    for true do
+        let next = try big.read_bytes(1000)
+        if next: piece then
+            total = total + buffer::len(piece)
+        else
+            break
+        end
+    end
+    assert(total == 1048576)
+    big.close()
+    await(big_server)
+
+    let mut framed = try buffer::new(buffer::len(hello) + 32)
+    let half = buffer::len(hello) // 2
+    let mut at = try buffer::put(framed, 0, "${string::lower(to_hex(half))}\r\n")
+    at = try buffer::put_bytes(framed, at, try buffer::slice(hello, 0, half))
+    at = try buffer::put(framed, at, "\r\n${to_hex(buffer::len(hello) - half)}\r\n")
+    at = try buffer::put_bytes(framed, at, try buffer::slice(hello, half, buffer::len(hello)))
+    at = try buffer::put(framed, at, "\r\n0\r\n\r\n")
+    let mut chunked_body = try buffer::slice(framed, 0, at)
+    let chunked_server = serve_body_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", chunked_body)
+    let mut chunked = try http::open(base(listener))
+    assert(try chunked.read_all() == expected)
+    chunked.close()
+    await(chunked_server)
+
+    let broken_stream_server = serve_body_once(listener, encoded_head("gzip", broken), broken)
+    let mut broken_stream = try http::open(base(listener))
+    assert(stream_error(broken_stream) == io::IoError.Other)
+    broken_stream.close()
+    await(broken_stream_server)
+
+    let mut cut = try buffer::slice(hello, 0, buffer::len(hello) - 4)
+    let cut_server = serve_body_once(listener, encoded_head("gzip", cut), cut)
+    let mut cut_stream = try http::open(base(listener))
+    assert(stream_error(cut_stream) == io::IoError.UnexpectedEnd)
+    cut_stream.close()
+    await(cut_server)
+
+    let raw_stream_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let mut raw_stream = try http::open(base(listener), headers = {"Accept-Encoding": "gzip"})
+    assert(buffer::len(try raw_stream.read_all_bytes()) == buffer::len(hello))
+    raw_stream.close()
+    await(raw_stream_server)
+
+    let head_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 45\r\n\r\n")
+    let head = try http::request(base(listener), method = "HEAD")
+    assert(buffer::len(head.body) == 0)
+    assert(!has_header_named(await(head_server), "accept-encoding"))
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    try check_get(listener)
+    try check_request_bodies(listener)
+    try check_response_bodies(listener)
+    check_bad_responses(listener)
+    check_request_checks()
+    try check_timeouts_and_refusals(listener)
+    try check_redirects(listener)
+    try check_streams(listener)
+    try check_stream_errors(listener)
+    try check_pool(listener)
+    try check_gzip(listener)
+    try check_client(listener)
+    try check_proxy(listener)
+    try check_url_details(listener)
+    listener.close()
+    try check_https()
+    try check_proxy_tunnels()
+end

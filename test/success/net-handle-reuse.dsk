@@ -1,0 +1,48 @@
+import "std/io"
+import "std/net"
+
+func write_error(conn: net::TcpConn, text: string) -> ?io::IoError
+    conn.write(text) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    let port = listener.port()
+    let server = spawn(func() -> !string
+        let mut lines = ""
+        for 1..202: i do
+            let conn = try listener.accept()
+            let line = try conn.read_line() orelse ""
+            if line != "" then
+                lines = "$lines$line;"
+            end
+            conn.close()
+        end
+        return lines
+    end)
+
+    for 1..200: i do
+        let conn = try net::tcp_connect("127.0.0.1", port)
+        conn.close()
+    end
+
+    let old = try net::tcp_connect("127.0.0.1", port)
+    old.close()
+    let fresh = try net::tcp_connect("127.0.0.1", port)
+    assert(write_error(old, "from the old handle\n") == io::IoError.Closed)
+    try fresh.write("from the new connection\n")
+    fresh.close()
+    assert(try await(server) == "from the new connection;")
+    listener.close()
+
+    let reopened = try net::tcp_listen("127.0.0.1", 0)
+    let accept_error = reopened.accept(timeout_ms = 1) catch e then
+        assert(e == io::IoError.TimedOut)
+        reopened.close()
+        return
+    end
+    assert(false)
+end

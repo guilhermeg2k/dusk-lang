@@ -1,0 +1,37 @@
+let pi = 3.141592653589793
+let tau = 6.283185307179586
+let e = 2.718281828459045
+let inf = 1.0 / 0.0
+let nan = 0.0 / 0.0
+
+error MathError
+    InvalidBounds
+    Empty
+end
+
+extern func min[T: int | float](values: []T) -> MathError!T
+extern func max[T: int | float](values: []T) -> MathError!T
+extern func abs(value: int) -> int
+extern func f_abs(value: float) -> float
+extern func clamp(value: int, lower: int, upper: int) -> MathError!int
+extern func f_clamp(value: float, lower: float, upper: float) -> MathError!float
+extern func floor(value: float) -> int
+extern func ceil(value: float) -> int
+extern func round(value: float) -> int
+extern func trunc(value: float) -> int
+extern func sqrt(value: float) -> float
+extern func pow(base: float, exponent: float) -> float
+extern func exp(value: float) -> float
+extern func log(value: float) -> float
+extern func log2(value: float) -> float
+extern func log10(value: float) -> float
+extern func sin(value: float) -> float
+extern func cos(value: float) -> float
+extern func tan(value: float) -> float
+extern func asin(value: float) -> float
+extern func acos(value: float) -> float
+extern func atan(value: float) -> float
+extern func atan2(y: float, x: float) -> float
+extern func is_nan(value: float) -> bool
+extern func is_inf(value: float) -> bool
+extern func is_finite(value: float) -> bool

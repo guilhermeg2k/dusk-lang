@@ -1,0 +1,6 @@
+import "std/http"
+
+func main() -> !void
+    let server = try http::listen("127.0.0.1", 0, compression_level = 10)
+    server.close()
+end

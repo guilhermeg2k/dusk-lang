@@ -36,6 +36,8 @@ pub const Lexer = struct {
         .{ "func", Tag.func_kw },
         .{ "extern", Tag.extern_kw },
         .{ "return", Tag.return_kw },
+        .{ "defer", Tag.defer_kw },
+        .{ "errdefer", Tag.errdefer_kw },
         .{ "try", Tag.try_kw },
         .{ "catch", Tag.catch_kw },
         .{ "null", Tag.null_literal },
@@ -59,6 +61,25 @@ pub const Lexer = struct {
             .end_index = src.len,
             .err_reporter = .{ .allocator = allocator, .src = src },
         };
+    }
+
+    pub fn isValidModuleName(name: []const u8) bool {
+        if (name.len == 0) {
+            return false;
+        }
+        const first = name[0];
+        const is_valid_start = std.ascii.isAlphabetic(first) or first == '_';
+        if (!is_valid_start) {
+            return false;
+        }
+        for (name[1..]) |ch| {
+            const is_valid_char = std.ascii.isAlphanumeric(ch) or ch == '_';
+            if (!is_valid_char) {
+                return false;
+            }
+        }
+        const keyword_tag = keywords.get(name) orelse return true;
+        return keyword_tag == .string_kw or keyword_tag == .buffer_kw;
     }
 
     pub fn list(self: *Self) err.CompileError!std.ArrayList(Token) {
@@ -471,6 +492,8 @@ pub const Tag = enum {
     func_kw,
     extern_kw,
     return_kw,
+    defer_kw,
+    errdefer_kw,
     try_kw,
     catch_kw,
     then_kw,

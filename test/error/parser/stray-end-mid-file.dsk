@@ -1,0 +1,7 @@
+func helper() -> int
+    return 1
+end
+end
+
+func main() -> void
+end

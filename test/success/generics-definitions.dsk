@@ -1,4 +1,4 @@
-import std/array: len, append
+import "std/array": len, append
 
 func first[T](xs: []T) -> T
     return xs[0]
