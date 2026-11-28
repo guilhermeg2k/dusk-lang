@@ -476,7 +476,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer, terminal_output, worker_async, sqlite_timer };
+    pub const Kind = enum { process, process_lifetime_timer, process_wait_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer, terminal_output, worker_async, sqlite_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -495,8 +495,12 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
             const process: *Process = @alignCast(@fieldParentPtr("owner", owner));
             process.markHandleClosed();
         },
-        .process_timer => {
-            const process: *Process = @alignCast(@fieldParentPtr("timer_owner", owner));
+        .process_lifetime_timer => {
+            const process: *Process = @alignCast(@fieldParentPtr("lifetime_timer_owner", owner));
+            process.markHandleClosed();
+        },
+        .process_wait_timer => {
+            const process: *Process = @alignCast(@fieldParentPtr("wait_timer_owner", owner));
             process.markHandleClosed();
         },
         .process_pipe => process_runtime.captureHandleClosed(owner),

@@ -33,12 +33,14 @@ pub const Launch = struct {
 
 pub const Process = struct {
     owner: HandleOwner = .{ .kind = .process },
-    timer_owner: HandleOwner = .{ .kind = .process_timer },
+    lifetime_timer_owner: HandleOwner = .{ .kind = .process_lifetime_timer },
+    wait_timer_owner: HandleOwner = .{ .kind = .process_wait_timer },
     event_loop: *EventLoop,
     scheduler: *Scheduler,
     table_index: i64,
     process_memory: []align(16) u8 = &.{},
-    timer_memory: []align(16) u8 = &.{},
+    lifetime_timer_memory: []align(16) u8 = &.{},
+    wait_timer_memory: []align(16) u8 = &.{},
     captures: [2]CapturePipe = undefined,
     outputs: [2]std.ArrayList(u8) = .{ .empty, .empty },
     pipe_handles: [3]?i64 = .{ null, null, null },
@@ -52,7 +54,8 @@ pub const Process = struct {
     is_captured: bool = false,
     is_released: bool = false,
     should_release_on_exit: bool = false,
-    is_timer_running: bool = false,
+    is_lifetime_timer_running: bool = false,
+    is_wait_timer_running: bool = false,
     has_spawned: bool = false,
     has_exited: bool = false,
 
@@ -93,11 +96,11 @@ pub const Process = struct {
                     return error.Other;
                 }
             }
-            if (options.timeout_ms) |ms| {
-                const elapsed_ns = options.started.durationTo(std.Io.Clock.awake.now(options.io)).nanoseconds;
-                const elapsed: u64 = if (elapsed_ns > 0) @intCast(@divTrunc(elapsed_ns, std.time.ns_per_ms)) else 0;
-                try self.startTimer(ms -| elapsed);
-            }
+        }
+        if (options.timeout_ms) |ms| {
+            const elapsed_ns = options.started.durationTo(std.Io.Clock.awake.now(options.io)).nanoseconds;
+            const elapsed: u64 = if (elapsed_ns > 0) @intCast(@divTrunc(elapsed_ns, std.time.ns_per_ms)) else 0;
+            try self.startLifetimeTimer(ms -| elapsed);
         }
         return self;
     }
@@ -108,7 +111,7 @@ pub const Process = struct {
         }
         if (!self.is_captured) {
             if (timeout_ms) |ms| {
-                try self.startTimer(ms);
+                try self.startWaitTimer(ms);
             }
         }
         self.waiter = task;
@@ -116,26 +119,30 @@ pub const Process = struct {
         task.park();
     }
 
-    fn startTimer(self: *Process, ms: u64) !void {
-        if (self.timer_memory.len == 0) {
+    fn startLifetimeTimer(self: *Process, ms: u64) !void {
+        try self.startTimer(&self.lifetime_timer_memory, &self.lifetime_timer_owner, &self.is_lifetime_timer_running, onLifetimeTimeout, ms);
+    }
+
+    fn startWaitTimer(self: *Process, ms: u64) !void {
+        try self.startTimer(&self.wait_timer_memory, &self.wait_timer_owner, &self.is_wait_timer_running, onWaitTimeout, ms);
+    }
+
+    fn startTimer(self: *Process, memory_slot: *[]align(16) u8, owner: *HandleOwner, is_running: *bool, callback: uv.TimerCallback, ms: u64) !void {
+        if (memory_slot.len == 0) {
             const memory = try self.event_loop.allocator.alignedAlloc(u8, .@"16", uv.uv_handle_size(.timer));
             if (uv.uv_timer_init(self.event_loop.loop.?, @ptrCast(memory.ptr)) < 0) {
                 self.event_loop.allocator.free(memory);
                 return error.Other;
             }
-            self.timer_memory = memory;
+            memory_slot.* = memory;
             self.open_handles += 1;
-            uv.uv_handle_set_data(self.timer(), &self.timer_owner);
+            uv.uv_handle_set_data(@ptrCast(memory.ptr), owner);
         }
         uv.uv_update_time(self.event_loop.loop.?);
-        if (uv.uv_timer_start(self.timer(), onTimeout, ms, 0) < 0) {
+        if (uv.uv_timer_start(@ptrCast(memory_slot.ptr), callback, ms, 0) < 0) {
             return error.Other;
         }
-        self.is_timer_running = true;
-    }
-
-    fn timer(self: *Process) *uv.Handle {
-        return @ptrCast(self.timer_memory.ptr);
+        is_running.* = true;
     }
 
     pub fn kill(self: *Process) !void {
@@ -165,12 +172,8 @@ pub const Process = struct {
             capture.close();
         }
         self.closePipes();
-        self.stopTimer();
-        if (self.timer_memory.len != 0) {
-            if (uv.uv_is_closing(self.timer()) == 0) {
-                uv.uv_close(self.timer(), onHandleClosed);
-            }
-        }
+        self.closeTimer(self.lifetime_timer_memory, &self.is_lifetime_timer_running);
+        self.closeTimer(self.wait_timer_memory, &self.is_wait_timer_running);
         self.freeIfClosed();
     }
 
@@ -192,10 +195,20 @@ pub const Process = struct {
         }
     }
 
-    fn stopTimer(self: *Process) void {
-        if (!self.is_timer_running) return;
-        _ = uv.uv_timer_stop(self.timer());
-        self.is_timer_running = false;
+    fn closeTimer(self: *Process, memory: []align(16) u8, is_running: *bool) void {
+        _ = self;
+        stopTimer(memory, is_running);
+        if (memory.len == 0) return;
+        const timer_handle: *uv.Handle = @ptrCast(memory.ptr);
+        if (uv.uv_is_closing(timer_handle) == 0) {
+            uv.uv_close(timer_handle, onHandleClosed);
+        }
+    }
+
+    fn stopTimer(memory: []align(16) u8, is_running: *bool) void {
+        if (!is_running.*) return;
+        _ = uv.uv_timer_stop(@ptrCast(memory.ptr));
+        is_running.* = false;
     }
 
     pub fn markHandleClosed(self: *Process) void {
@@ -216,7 +229,8 @@ pub const Process = struct {
             allocator.free(capture.read_memory);
         }
         allocator.free(self.process_memory);
-        allocator.free(self.timer_memory);
+        allocator.free(self.lifetime_timer_memory);
+        allocator.free(self.wait_timer_memory);
         allocator.destroy(self);
     }
 
@@ -241,7 +255,8 @@ pub const Process = struct {
         }
         const task = self.waiter orelse return;
         self.waiter = null;
-        self.stopTimer();
+        stopTimer(self.lifetime_timer_memory, &self.is_lifetime_timer_running);
+        stopTimer(self.wait_timer_memory, &self.is_wait_timer_running);
         self.event_loop.pending_operations -= 1;
         if (self.failure) |failure| {
             self.wake(task, .{ .value = .{ .int64 = @intFromEnum(failure) }, .kind = .int64, .has_failed = true, .error_is_relative = true });
@@ -483,6 +498,9 @@ fn onExit(handle: *uv.Handle, status: i64, signal: c_int) callconv(.c) void {
     self.exit_status = status;
     self.term_signal = signal;
     self.event_loop.live_processes -= 1;
+    if (!self.is_captured) {
+        Process.stopTimer(self.lifetime_timer_memory, &self.is_lifetime_timer_running);
+    }
     uv.uv_close(handle, onHandleClosed);
     self.completeIfReady();
     const should_release = self.should_release_on_exit and !self.is_released;
@@ -491,14 +509,23 @@ fn onExit(handle: *uv.Handle, status: i64, signal: c_int) callconv(.c) void {
     }
 }
 
-fn onTimeout(timer: *uv.Handle) callconv(.c) void {
-    const self: *Process = @alignCast(@fieldParentPtr("timer_owner", HandleOwner.of(timer)));
-    self.is_timer_running = false;
+fn onLifetimeTimeout(timer: *uv.Handle) callconv(.c) void {
+    const self: *Process = @alignCast(@fieldParentPtr("lifetime_timer_owner", HandleOwner.of(timer)));
+    self.is_lifetime_timer_running = false;
     if (self.is_released) return;
     if (self.is_captured) {
         self.fail(.TimedOut);
         return;
     }
+    self.kill() catch |cause| {
+        self.event_loop.callback_failure = cause;
+    };
+}
+
+fn onWaitTimeout(timer: *uv.Handle) callconv(.c) void {
+    const self: *Process = @alignCast(@fieldParentPtr("wait_timer_owner", HandleOwner.of(timer)));
+    self.is_wait_timer_running = false;
+    if (self.is_released) return;
     const task = self.waiter orelse return;
     self.waiter = null;
     self.event_loop.pending_operations -= 1;

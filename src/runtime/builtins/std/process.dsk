@@ -88,8 +88,8 @@ struct Child
     end
 end
 
-func start(args: []string, cwd: ?string = null, env: ?map[string, string] = null, stdin_mode: Stdio = Stdio.Ignore, stdout_mode: Stdio = Stdio.Inherit, stderr_mode: Stdio = Stdio.Inherit) -> ProcessError!Child
-    let handle = try start_handle(args, cwd, env, stdin_mode, stdout_mode, stderr_mode)
+func start(args: []string, cwd: ?string = null, env: ?map[string, string] = null, stdin_mode: Stdio = Stdio.Ignore, stdout_mode: Stdio = Stdio.Inherit, stderr_mode: Stdio = Stdio.Inherit, timeout_ms: int = -1) -> ProcessError!Child
+    let handle = try start_handle(args, cwd, env, stdin_mode, stdout_mode, stderr_mode, timeout_ms)
     return Child(handle = handle, owner = own(3, handle))
 end
 
@@ -155,7 +155,7 @@ struct PipeWriter
 end
 
 extern func ~run_handle(args: []string, cwd: ?string, env: ?map[string, string], timeout_ms: int, max_output: int) -> ProcessError!int
-extern func ~start_handle(args: []string, cwd: ?string, env: ?map[string, string], stdin_mode: Stdio, stdout_mode: Stdio, stderr_mode: Stdio) -> ProcessError!int
+extern func ~start_handle(args: []string, cwd: ?string, env: ?map[string, string], stdin_mode: Stdio, stdout_mode: Stdio, stderr_mode: Stdio, timeout_ms: int) -> ProcessError!int
 extern func ~capture_bytes(handle: int, channel: int) -> buffer
 extern func ~child_status(handle: int) -> []int
 extern func ~release_run(handle: int) -> void

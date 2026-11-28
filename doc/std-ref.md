@@ -337,7 +337,7 @@ Functions that can fail return an error union with the module's error set `Proce
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
 | `run(args, cwd = null, env = null, timeout_ms = -1, max_output = 16777216)` | `ProcessError!Result` | Runs a program and waits for it, collecting its stdout and stderr. |
-| `start(args, cwd = null, env = null, stdin_mode = Stdio.Ignore, stdout_mode = Stdio.Inherit, stderr_mode = Stdio.Inherit)` | `ProcessError!Child` | Starts a program and returns right away. |
+| `start(args, cwd = null, env = null, stdin_mode = Stdio.Ignore, stdout_mode = Stdio.Inherit, stderr_mode = Stdio.Inherit, timeout_ms = -1)` | `ProcessError!Child` | Starts a program and returns right away. |
 
 **Arguments.** `args[0]` is the program and the rest are passed exactly as written: spaces, quotes and empty strings stay as they are. Nothing goes through a shell, so `*`, `>` and `|` are plain characters. A program name with a `/` (or on Windows a `\` or `:`) is a path, relative to the child's folder; a bare name is looked up in the folders of `PATH`, from the program's own environment even when `env` gives the child a different one. Empty or relative `PATH` entries (such as `.`) would point into the child's folder, so a name found through one fails with `RelativePath` instead of running: a file placed in that folder can't take the place of a system program. The search still goes on past such entries when they don't hold the name, and a path such as `./tool` runs a program from the child's folder on purpose. On Windows the lookup also tries the `.exe` and `.com` endings.
 
@@ -353,11 +353,15 @@ Functions that can fail return an error union with the module's error set `Proce
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `wait(timeout_ms = -1)` | `ProcessError!Termination` | Waits for the child to exit. Calling it again gives the same answer. Running out of time fails with `TimedOut` and leaves the child running. |
+| `wait(timeout_ms = -1)` | `ProcessError!Termination` | Waits for the child to exit. Calling it again gives the same answer. Running out of time fails with `TimedOut` and leaves the child running; call `kill()` and `wait()` to stop it. |
 | `kill()` | `ProcessError!void` | Asks the system to stop the child, without waiting; `wait` tells when it's gone. Does nothing once it has exited. |
 | `stdin()` | `ProcessError!PipeWriter` | Writes to the child's stdin. |
 | `stdout()` / `stderr()` | `ProcessError!PipeReader` | Reads the child's output. |
 | `close()` | `ProcessError!void` | Frees the child once it has exited, closing its pipes and dropping unread output. Fails with `Busy` while it runs; closing again does nothing. |
+
+**Timeouts.** `start` and `wait` both take `timeout_ms`, and they do different things:
+- `start`'s `timeout_ms` (`-1` for no limit, `0` fails at once with `TimedOut`) caps the child's whole lifetime, starting from the `start` call. When time runs out, the child is killed automatically; `wait` then returns its `Termination` (not `TimedOut`). Use this when you want a hard deadline so a child can't outlive its budget.
+- `wait`'s `timeout_ms` (`-1` waits forever, `0` checks without waiting) only limits how long that `wait` call waits. When time runs out, `wait` fails with `TimedOut` and leaves the child running, so you can decide what to do next—for example, close its stdin, wait again, or call `kill()` followed by `wait()` to stop and reap it.
 
 Only one task at a time can wait for a child. Copies of a `Child` (including `copy`) all refer to the same process, so closing one closes them all.
 

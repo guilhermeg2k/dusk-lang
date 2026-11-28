@@ -217,6 +217,12 @@ fn launchFailure(failure: anyerror) !NativeResult {
 }
 
 fn startHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const host_io = vm.io orelse return native.fail(ProcessError.Unsupported);
+    const started = std.Io.Clock.awake.now(host_io);
+    const timeout_ms = args[6].int64;
+    if (timeout_ms < -1) {
+        return native.fail(ProcessError.InvalidArgument);
+    }
     const arena = try createArena(vm);
     var is_arena_handed_off = false;
     defer if (!is_arena_handed_off) {
@@ -234,6 +240,11 @@ fn startHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (has_custom_output) {
         return native.fail(ProcessError.Unsupported);
     }
+    if (timeout_ms == 0) {
+        return native.fail(ProcessError.TimedOut);
+    }
+    prepared.launch.timeout_ms = if (timeout_ms < 0) null else @intCast(timeout_ms);
+    prepared.launch.started = started;
     if (prepared.launch.modes[1] == 0) {
         try vm.stdio.tryFlush(.stdout);
     }

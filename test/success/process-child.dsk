@@ -88,4 +88,27 @@ func main() -> !void
     let consumer_term = try consumer.wait()
     try producer.close()
     try consumer.close()
+    let limited = try process::start([helper, "ignore_term"], stdout_mode = process::Stdio.Pipe, stderr_mode = process::Stdio.Ignore, timeout_ms = 80)
+    let limited_reader = try limited.stdout()
+    assert(try limited_reader.read_line() == "ready")
+    let mut has_wait_timeout = false
+    limited.wait(timeout_ms = 10) catch e then
+        assert(e == process::ProcessError.TimedOut)
+        has_wait_timeout = true
+    end
+    assert(has_wait_timeout)
+    let limited_term = try limited.wait()
+    if os::platform() != os::Platform.Windows then
+        when limited_term
+            Signaled: number then assert(number == 9) end
+            else then assert(false) end
+        end
+    end
+    try limited.close()
+    let fast = try process::start([helper, "exit", "0"], stdout_mode = process::Stdio.Ignore, stderr_mode = process::Stdio.Ignore, timeout_ms = 5000)
+    when try fast.wait()
+        Exited: code then assert(code == 0) end
+        else then assert(false) end
+    end
+    try fast.close()
 end
