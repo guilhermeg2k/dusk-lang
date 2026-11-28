@@ -108,7 +108,9 @@ extern func is_proxied[T, S: schema]() -> bool
 extern func has_proxies[T, S: schema]() -> bool
 
 extern func ~derive_decode[T, R: ScalarReader, S: schema](mut reader: R, mut pending: []func() -> void, depth: int) -> SerializationError!T
-extern func ~derive_encode[T, W: ScalarWriter, S: schema](value: T, mut writer: W, depth: int) -> SerializationError!void
+extern func ~derive_encode[T, W: ScalarWriter, S: schema](value: T, mut writer: W, mut active: []string, depth: int) -> SerializationError!void
+extern func ~push_active[T](mut active: []string, value: T) -> bool
+extern func ~pop_active(mut active: []string) -> void
 extern func ~set_payload[U, T](mut target: U, tag: int, value: T) -> void
 extern func ~blank[T]() -> T
 extern func ~field_default[T, F](index: int) -> F
@@ -133,7 +135,8 @@ func decode_document[T, R: ScalarReader + DocumentReader, S: schema](mut reader:
 end
 
 func encode[T, W: ScalarWriter, S: schema](value: T, mut writer: W) -> SerializationError!void
-    try derive_encode[T, W, S](value, writer, 0)
+    let mut active: []string = []
+    try derive_encode[T, W, S](value, writer, active, 0)
 end
 
 func ~read_byte[R: ScalarReader](mut reader: R) -> SerializationError!byte

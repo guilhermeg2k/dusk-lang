@@ -19,6 +19,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "is_proxied", Binding{ .serialization = .is_proxied } },
     .{ "has_proxies", Binding{ .serialization = .has_proxies } },
     .{ "set_payload", Binding{ .native = &setPayload } },
+    .{ "push_active", Binding{ .native = &pushActive } },
+    .{ "pop_active", Binding{ .native = &popActive } },
     .{ "derive_decode", Binding{ .serialization = .derive_decode } },
     .{ "derive_encode", Binding{ .serialization = .derive_encode } },
     .{ "blank", Binding{ .serialization = .blank } },
@@ -89,6 +91,29 @@ fn findVariantIn(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn setPayload(_: *VM, args: []v.Value) anyerror!NativeResult {
     const target = v.HeapValue.getParentPtr(v.Union, args[0].heap_obj);
     target.set(@intCast(args[1].int64), args[2]);
+    return native.ok(.{ .null = {} });
+}
+
+fn pushActive(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var array = v.HeapValue.getParentPtr(v.Array, args[0].heap_obj).newestCopy();
+    const target = args[1].heap_obj.followRelocated();
+    for (array.getDataPtr()[0..array.len]) |item| {
+        if (item.heap_obj.followRelocated() == target) {
+            return native.ok(.{ .bool = false });
+        }
+    }
+    if (array.len == array.capacity) {
+        array = try vm.growArray(&args[0]);
+    }
+    try array.append(.{ .heap_obj = args[1].heap_obj.followRelocated() });
+    return native.ok(.{ .bool = true });
+}
+
+fn popActive(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const array = v.HeapValue.getParentPtr(v.Array, args[0].heap_obj).newestCopy();
+    if (array.len > 0) {
+        array.len -= 1;
+    }
     return native.ok(.{ .null = {} });
 }
 

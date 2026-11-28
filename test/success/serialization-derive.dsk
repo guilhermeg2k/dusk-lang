@@ -385,6 +385,11 @@ struct NullableDefault
     count: ?int = 5
 end
 
+struct Branch
+    left: ?Branch = null
+    right: ?Branch = null
+end
+
 func main() -> !void
     let text = "{\"colors\": [\"Red\", \"Blue\"], \"shapes\": [{\"circle\": 3}, {\"square\": {\"side\": 200}}, {\"nothing\": null}], \"labels\": {\"a\": 1, \"b\": 2}, \"notes\": {\"x\": null, \"y\": \"why\"}, \"level\": \"Mid\", \"nested\": [[1, 2], [], [3]], \"maybe_shape\": null, \"small\": 7}"
     let mut reader = reader_for(text)
@@ -450,9 +455,27 @@ func main() -> !void
     let mut second = Chain(value = 2, next = first)
     first.next = second
     let mut cycle_writer = JsonWriter()
-    let cycle_error = serialization::encode(first, cycle_writer) catch e then
-        assert(e == serialization::SerializationError.DepthExceeded)
-        return
+    let mut cycle_failed = false
+    serialization::encode(first, cycle_writer) catch e then
+        assert(e == serialization::SerializationError.CycleDetected)
+        cycle_failed = true
     end
-    assert(false)
+    assert(cycle_failed)
+
+    let shared_leaf = Branch()
+    let dag = Branch(left = shared_leaf, right = shared_leaf)
+    let mut dag_writer = JsonWriter()
+    try serialization::encode(dag, dag_writer)
+    assert(text_of(dag_writer) == "{\"left\":{\"left\":null,\"right\":null},\"right\":{\"left\":null,\"right\":null}}")
+
+    let mut fan = Branch()
+    fan.left = fan
+    fan.right = fan
+    let mut fan_writer = JsonWriter()
+    let mut fan_failed = false
+    serialization::encode(fan, fan_writer) catch e then
+        assert(e == serialization::SerializationError.CycleDetected)
+        fan_failed = true
+    end
+    assert(fan_failed)
 end

@@ -5852,10 +5852,13 @@ pub const SemaAnalyzer = struct {
         if (key.operation == .derive_decode) {
             try self.emit(&out, "func ~{s}[R: {s}](mut reader: R, mut pending: []func() -> void, depth: int) -> SerializationError!{s}\n", .{ name, bound, type_text });
         } else {
-            try self.emit(&out, "func ~{s}[W: {s}](value: {s}, mut writer: W, depth: int) -> SerializationError!void\n", .{ name, bound, type_text });
+            try self.emit(&out, "func ~{s}[W: {s}](value: {s}, mut writer: W, mut active: []string, depth: int) -> SerializationError!void\n", .{ name, bound, type_text });
         }
         if (is_container) {
             try out.appendSlice(self.allocator, "if depth > MAX_DEPTH then\nreturn SerializationError.DepthExceeded\nend\n");
+            if (key.operation == .derive_encode) {
+                try out.appendSlice(self.allocator, "if !push_active(active, value) then\nreturn SerializationError.CycleDetected\nend\ndefer pop_active(active)\n");
+            }
         }
         const proxy: ?Proxy = if (key.proxy > 0) self.proxies.items[key.proxy - 1] else null;
         if (proxy) |found| {
@@ -6025,11 +6028,11 @@ pub const SemaAnalyzer = struct {
         const index = proxy orelse return self.emitEncode(out, source, type_id, number, loc);
         const name = try self.derivedFunctionName(self.proxyKey(.derive_encode, self.nonNullType(type_id), index), loc);
         if (!self.type_table.getTypePtrById(type_id).is_nullable) {
-            try self.emit(out, "try {s}({s}, writer, depth + 1)\n", .{ name, source });
+            try self.emit(out, "try {s}({s}, writer, active, depth + 1)\n", .{ name, source });
             return;
         }
         const capture = try allocPrint(self.allocator, "present_{d}", .{number});
-        try self.emit(out, "if {s}: {s} then\ntry {s}({s}, writer, depth + 1)\nelse\ntry writer.write_null()\nend\n", .{ source, capture, name, capture });
+        try self.emit(out, "if {s}: {s} then\ntry {s}({s}, writer, active, depth + 1)\nelse\ntry writer.write_null()\nend\n", .{ source, capture, name, capture });
     }
 
     fn emitDecodeInto(self: *Self, out: *std.ArrayList(u8), target: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
@@ -6143,7 +6146,7 @@ pub const SemaAnalyzer = struct {
 
     fn encodeStatement(self: *Self, source: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
         if (try self.typeProxy(type_id, self.derive_schema)) |proxy| {
-            return allocPrint(self.allocator, "try {s}({s}, writer, depth + 1)", .{ try self.derivedFunctionName(self.proxyKey(.derive_encode, type_id, proxy), loc), source });
+            return allocPrint(self.allocator, "try {s}({s}, writer, active, depth + 1)", .{ try self.derivedFunctionName(self.proxyKey(.derive_encode, type_id, proxy), loc), source });
         }
         const method = switch (self.type_table.getTypePtrById(type_id).kind) {
             .int, .byte => "write_int",
@@ -6152,7 +6155,7 @@ pub const SemaAnalyzer = struct {
             .string => "write_string",
             .@"struct", .array, .map, .@"enum", .@"union" => {
                 const name = try self.derivedFunctionName(.{ .operation = .derive_encode, .type_id = type_id, .schema = self.derive_schema }, loc);
-                return allocPrint(self.allocator, "try {s}({s}, writer, depth + 1)", .{ name, source });
+                return allocPrint(self.allocator, "try {s}({s}, writer, active, depth + 1)", .{ name, source });
             },
             else => return self.unserializableType(type_id, "", loc),
         };
