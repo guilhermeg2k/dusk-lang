@@ -19,8 +19,10 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "decompressor_new", Binding{ .native = &decompressorNew } },
     .{ "compress_part", Binding{ .native = &compressPart } },
     .{ "decompress_part", Binding{ .native = &decompressPart } },
+    .{ "decompress_chunk", Binding{ .native = &decompressChunk } },
     .{ "decompress_finish", Binding{ .native = &decompressFinish } },
     .{ "is_stream_at_end", Binding{ .native = &isStreamAtEnd } },
+    .{ "has_buffered_input", Binding{ .native = &hasBufferedInput } },
     .{ "close_stream", Binding{ .native = &closeStream } },
 });
 
@@ -48,11 +50,13 @@ fn compress(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn decompress(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const format: compression.Format = @enumFromInt(args[1].int64);
     const input = bytesArg(args, 0);
+    const max = maxArg(args[2]);
     if (input.len > pool_threshold) {
-        return startJob(vm, .{ .kind = .decompress, .format = format, .max = maxArg(args[2]) }, input);
+        return startJob(vm, .{ .kind = .decompress, .format = format, .max = max }, input);
     }
     const allocator = std.heap.smp_allocator;
-    const output = compression.decompressAll(allocator, format, input, maxArg(args[2])) catch |err| switch (err) {
+    const output = compression.decompressAllInline(allocator, format, input, max, pool_threshold) catch |err| switch (err) {
+        error.NeedsPool => return startJob(vm, .{ .kind = .decompress, .format = format, .max = max }, input),
         error.InvalidData => return fail(CompressionError.InvalidData),
         error.TooLarge => return fail(CompressionError.TooLarge),
         error.OutOfMemory => return err,
@@ -71,7 +75,10 @@ fn maxArg(value: v.Value) ?usize {
 
 fn startJob(vm: *VM, settings: CompressionJob.Settings, input: []const u8) anyerror!NativeResult {
     const current = vm.running_task.?;
-    try vm.event_loop.startCompressionJob(&vm.scheduler, current, settings, input);
+    vm.event_loop.startCompressionJob(&vm.scheduler, current, settings, input) catch |err| switch (err) {
+        error.QueueFull, error.ShuttingDown => return fail(CompressionError.Other),
+        else => return err,
+    };
     current.park();
     return native.parked();
 }
@@ -109,7 +116,12 @@ fn compressPart(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.compressionStreamAt(compression_id) orelse return fail(CompressionError.Finished);
     const mode: compression.FlushMode = @enumFromInt(args[2].int64);
     const allocator = std.heap.smp_allocator;
-    const output = compression.compressPart(allocator, stream.zip, bytesArg(args, 1), mode) catch |err| return streamFailure(err);
+    const output = compression.compressPart(allocator, stream.zip, bytesArg(args, 1), mode) catch |err| {
+        if (err == error.InvalidData) {
+            vm.event_loop.closeCompressionStream(compression_id);
+        }
+        return streamFailure(err);
+    };
     defer allocator.free(output);
     if (mode == .finish) {
         vm.event_loop.closeCompressionStream(compression_id);
@@ -122,7 +134,22 @@ fn decompressPart(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.compressionStreamAt(compression_id) orelse return fail(CompressionError.Finished);
     const allocator = std.heap.smp_allocator;
     const output = compression.decompressPart(allocator, stream, bytesArg(args, 1)) catch |err| {
-        if (err == error.TooLarge) {
+        if (err == error.TooLarge or err == error.InvalidData) {
+            vm.event_loop.closeCompressionStream(compression_id);
+        }
+        return streamFailure(err);
+    };
+    defer allocator.free(output);
+    return ok(try vm.allocBytesValue(output, .buffer));
+}
+
+fn decompressChunk(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const compression_id = args[0].int64;
+    const stream = vm.event_loop.compressionStreamAt(compression_id) orelse return fail(CompressionError.Finished);
+    const max_output: usize = if (args[2].int64 < 0) 0 else @intCast(args[2].int64);
+    const allocator = std.heap.smp_allocator;
+    const output = compression.decompressChunk(allocator, vm.event_loop.allocator, stream, bytesArg(args, 1), max_output) catch |err| {
+        if (err == error.TooLarge or err == error.InvalidData) {
             vm.event_loop.closeCompressionStream(compression_id);
         }
         return streamFailure(err);
@@ -134,7 +161,7 @@ fn decompressPart(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn decompressFinish(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const compression_id = args[0].int64;
     const stream = vm.event_loop.compressionStreamAt(compression_id) orelse return fail(CompressionError.Finished);
-    const is_complete = stream.is_at_end;
+    const is_complete = stream.is_at_end and !stream.hasBufferedInput();
     vm.event_loop.closeCompressionStream(compression_id);
     if (!is_complete) {
         return fail(CompressionError.InvalidData);
@@ -145,6 +172,11 @@ fn decompressFinish(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn isStreamAtEnd(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.compressionStreamAt(args[0].int64) orelse return ok(.{ .bool = false });
     return ok(.{ .bool = stream.is_at_end });
+}
+
+fn hasBufferedInput(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.compressionStreamAt(args[0].int64) orelse return ok(.{ .bool = false });
+    return ok(.{ .bool = stream.hasBufferedInput() });
 }
 
 fn closeStream(vm: *VM, args: []v.Value) anyerror!NativeResult {

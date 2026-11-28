@@ -5965,3 +5965,28 @@ test "parser error: stray top-level block keywords" {
     try runCaseError("parser/stray-else-top-level.dsk", error.ParserError);
     try runCaseError("parser/stray-elif-top-level.dsk", error.ParserError);
 }
+
+test "compression security: bounded reader refill, inline budget pool offload, zero-output DoS guard, InvalidData stream close" {
+    try runCase("compression-security.dsk");
+}
+
+test "http reader: decodeBody clamps output room to limit" {
+    const compression = @import("runtime/io/compression/compression.zig");
+    const HttpReader = @import("runtime/io/http/http_reader.zig").HttpReader;
+    const raw_zeros = try testing.allocator.alloc(u8, 256 * 1024);
+    defer testing.allocator.free(raw_zeros);
+    @memset(raw_zeros, 0);
+    const packed_zeros = try compression.compressAll(testing.allocator, .gzip, 6, raw_zeros);
+    defer testing.allocator.free(packed_zeros);
+
+    const reader = try HttpReader.create(testing.allocator, .response);
+    defer reader.destroy();
+    try reader.startDecoding(.gzip);
+    try reader.body.appendSlice(testing.allocator, packed_zeros);
+    try reader.decodeBody(100);
+    try testing.expectEqual(@as(usize, 100), reader.pendingBody().len);
+    reader.taken = 100;
+    reader.dropTakenBody();
+    try reader.decodeBody(250);
+    try testing.expectEqual(@as(usize, 250), reader.pendingBody().len);
+}

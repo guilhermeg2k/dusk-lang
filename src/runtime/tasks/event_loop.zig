@@ -48,6 +48,7 @@ pub const EventLoop = struct {
     connection_pool: ConnectionPool = .{},
     http_servers: SlotTable(ServerState) = .{},
     compression_streams: SlotTable(CompressionStream) = .{},
+    compression_workers: ?*WorkerDispatch = null,
     host_slots: HostSlots = .{},
     resources: ResourceRegistry = .{},
     stdin_stream_id: ?i64 = null,
@@ -190,18 +191,16 @@ pub const EventLoop = struct {
     }
 
     pub fn startCompressionJob(self: *Self, scheduler: *Scheduler, task: *TaskState, settings: CompressionJob.Settings, input: []const u8) !void {
-        const loop = try self.ensureLoopStarted();
-        const job = try CompressionJob.create(self.allocator, settings, input, uv.uv_req_size(.work));
-        errdefer job.destroy();
-        job.event_loop = self;
-        job.scheduler = scheduler;
-        job.task = task;
-        const work: *uv.Request = @ptrCast(job.workRequest());
-        uv.uv_req_set_data(work, job);
-        if (uv.uv_queue_work(loop, work, onCompressionJobWork, onCompressionJobDone) != 0) {
-            return error.PoolJobFailed;
-        }
-        self.pending_operations += 1;
+        const dispatch = self.compression_workers orelse blk: {
+            const started = try self.startWorkerDispatch(.{ .thread_count = 2, .max_outstanding = 128 });
+            self.compression_workers = started;
+            break :blk started;
+        };
+        const entry = try CompressionJob.create(self.allocator, settings, input);
+        errdefer entry.destroy();
+        entry.scheduler = scheduler;
+        entry.task = task;
+        try dispatch.submit(&entry.job);
     }
 
     pub fn parkForHostSlot(self: *Self, scheduler: *Scheduler, task: *TaskState, key: []const u8, timeout_ms: ?u64) !void {
@@ -617,27 +616,6 @@ fn onTimer(handle: *uv.Handle) callconv(.c) void {
         event_loop.callback_failure = failure;
     };
     uv.uv_close(handle, onHandleClosed);
-}
-
-fn onCompressionJobWork(work: *uv.Request) callconv(.c) void {
-    compressionJobOf(work).runOnPoolThread();
-}
-
-fn compressionJobOf(work: *uv.Request) *CompressionJob {
-    return @ptrCast(@alignCast(uv.uv_req_get_data(work).?));
-}
-
-fn onCompressionJobDone(work: *uv.Request, _: c_int) callconv(.c) void {
-    const job = compressionJobOf(work);
-    defer job.destroy();
-    const event_loop = job.event_loop;
-    event_loop.pending_operations -= 1;
-    if (event_loop.is_shutting_down) return;
-    const wake_result = job.takeWakeResult();
-    job.scheduler.wake(job.task, wake_result) catch |failure| {
-        wake_result.payload.free(event_loop.allocator);
-        event_loop.callback_failure = failure;
-    };
 }
 
 fn onFsJobWork(work: *uv.Request) callconv(.c) void {

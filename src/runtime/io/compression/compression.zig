@@ -27,8 +27,10 @@ pub extern fn dusk_zip_compress(zip: *Zip, in: [*]const u8, in_len: usize, out: 
 pub extern fn dusk_zip_decompress(zip: *Zip, in: [*]const u8, in_len: usize, out: [*]u8, out_cap: usize, consumed: *usize, produced: *usize) Status;
 
 pub const DecompressError = error{ InvalidData, TooLarge, OutOfMemory };
+pub const InlineDecompressError = DecompressError || error{NeedsPool};
 
 const first_output_capacity = 64 * 1024;
+const max_first_capacity = 256 * 1024;
 const gzip_magic = [_]u8{ 0x1f, 0x8b };
 
 pub fn compressAll(allocator: std.mem.Allocator, format: Format, level: u4, input: []const u8) error{OutOfMemory}![]u8 {
@@ -46,13 +48,27 @@ pub fn compressAll(allocator: std.mem.Allocator, format: Format, level: u4, inpu
 }
 
 pub fn decompressAll(allocator: std.mem.Allocator, format: Format, input: []const u8, max: ?usize) DecompressError![]u8 {
+    return decompressAllWithinBudget(allocator, format, input, max, null) catch |err| switch (err) {
+        error.NeedsPool => unreachable,
+        error.InvalidData, error.TooLarge, error.OutOfMemory => |e| e,
+    };
+}
+
+pub fn decompressAllInline(allocator: std.mem.Allocator, format: Format, input: []const u8, max: ?usize, budget: usize) InlineDecompressError![]u8 {
+    return decompressAllWithinBudget(allocator, format, input, max, budget);
+}
+
+fn decompressAllWithinBudget(allocator: std.mem.Allocator, format: Format, input: []const u8, max: ?usize, inline_budget: ?usize) InlineDecompressError![]u8 {
     const zip = dusk_zip_decompressor_new(format) orelse return error.OutOfMemory;
     defer dusk_zip_free(zip);
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
     const limit = if (max) |bytes| bytes +| 1 else std.math.maxInt(usize);
-    const first_capacity = @min(@max(input.len *| 4, first_output_capacity), limit);
-    if (max != null) {
+    const step_limit = if (inline_budget) |budget| @min(limit, budget +| 1) else limit;
+    const has_cap = max != null or inline_budget != null;
+    const initial_guess = @min(@max(input.len *| 4, first_output_capacity), max_first_capacity);
+    const first_capacity = @min(initial_guess, step_limit);
+    if (has_cap) {
         try output.ensureTotalCapacityPrecise(allocator, first_capacity);
     } else {
         try output.ensureTotalCapacity(allocator, first_capacity);
@@ -60,15 +76,15 @@ pub fn decompressAll(allocator: std.mem.Allocator, format: Format, input: []cons
     var rest = input;
     while (true) {
         if (output.items.len == output.capacity) {
-            const next_capacity = @min(output.capacity *| 2, limit);
-            if (max != null) {
+            const next_capacity = @min(output.capacity *| 2, step_limit);
+            if (has_cap) {
                 try output.ensureTotalCapacityPrecise(allocator, next_capacity);
             } else {
                 try output.ensureTotalCapacity(allocator, next_capacity);
             }
         }
         const raw_room = output.allocatedSlice()[output.items.len..];
-        const room = raw_room[0..@min(raw_room.len, limit - output.items.len)];
+        const room = raw_room[0..@min(raw_room.len, step_limit - output.items.len)];
         var consumed: usize = 0;
         var produced: usize = 0;
         const status = dusk_zip_decompress(zip, rest.ptr, rest.len, room.ptr, room.len, &consumed, &produced);
@@ -76,6 +92,11 @@ pub fn decompressAll(allocator: std.mem.Allocator, format: Format, input: []cons
         rest = rest[consumed..];
         if (output.items.len >= limit) {
             return error.TooLarge;
+        }
+        if (inline_budget) |budget| {
+            if (output.items.len > budget) {
+                return error.NeedsPool;
+            }
         }
         switch (status) {
             .done => {
@@ -113,9 +134,17 @@ pub const CompressionStream = struct {
     max: ?usize = null,
     produced: usize = 0,
     is_at_end: bool = false,
+    pending_input: std.ArrayList(u8) = .empty,
+    pending_offset: usize = 0,
+    has_pending_output: bool = false,
+
+    pub fn hasBufferedInput(self: *const CompressionStream) bool {
+        return self.pending_offset < self.pending_input.items.len or self.has_pending_output;
+    }
 
     pub fn destroy(self: *CompressionStream, allocator: std.mem.Allocator) void {
         dusk_zip_free(self.zip);
+        self.pending_input.deinit(allocator);
         allocator.destroy(self);
     }
 };
@@ -159,7 +188,8 @@ pub fn decompressPart(allocator: std.mem.Allocator, stream: *CompressionStream, 
         stream.is_at_end = false;
     }
     const limit = if (stream.max) |max| (max -| stream.produced) +| 1 else std.math.maxInt(usize);
-    const first_capacity = @min(@max(input.len *| 4, first_part_capacity), limit);
+    const initial_guess = @min(@max(input.len *| 4, first_part_capacity), max_first_capacity);
+    const first_capacity = @min(initial_guess, limit);
     if (stream.max != null) {
         try output.ensureTotalCapacityPrecise(allocator, first_capacity);
     } else {
@@ -210,4 +240,83 @@ pub fn decompressPart(allocator: std.mem.Allocator, stream: *CompressionStream, 
     }
     stream.produced += output.items.len;
     return output.toOwnedSlice(allocator);
+}
+
+pub fn decompressChunk(allocator: std.mem.Allocator, stream_allocator: std.mem.Allocator, stream: *CompressionStream, input: []const u8, max_output: usize) StreamError![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    if (input.len > 0) {
+        try stream.pending_input.appendSlice(stream_allocator, input);
+    }
+    defer compactPendingInput(stream);
+    if (!stream.hasBufferedInput() or max_output == 0) {
+        return output.toOwnedSlice(allocator);
+    }
+    const remaining_max = if (stream.max) |max| (max -| stream.produced) +| 1 else std.math.maxInt(usize);
+    const output_cap = @min(max_output, remaining_max);
+    const pending_len = stream.pending_input.items.len - stream.pending_offset;
+    const initial_guess = @min(@max(pending_len *| 4, first_part_capacity), max_first_capacity);
+    const first_capacity = @min(initial_guess, output_cap);
+    try output.ensureTotalCapacityPrecise(allocator, first_capacity);
+    while (stream.hasBufferedInput() and output.items.len < output_cap) {
+        if (stream.is_at_end) {
+            if (stream.pending_offset == stream.pending_input.items.len) break;
+            if (stream.format != .gzip or dusk_zip_restart(stream.zip) != .ok) {
+                return error.InvalidData;
+            }
+            stream.is_at_end = false;
+        }
+        if (output.items.len == output.capacity) {
+            const next_capacity = @min(output.capacity *| 2, output_cap);
+            try output.ensureTotalCapacityPrecise(allocator, next_capacity);
+        }
+        const rest = stream.pending_input.items[stream.pending_offset..];
+        const raw_room = output.unusedCapacitySlice();
+        const room = raw_room[0..@min(raw_room.len, output_cap - output.items.len)];
+        var consumed: usize = 0;
+        var produced: usize = 0;
+        const status = dusk_zip_decompress(stream.zip, rest.ptr, rest.len, room.ptr, room.len, &consumed, &produced);
+        output.items.len += produced;
+        stream.pending_offset += consumed;
+        if (output.items.len >= remaining_max) {
+            return error.TooLarge;
+        }
+        switch (status) {
+            .done => {
+                stream.is_at_end = true;
+                stream.has_pending_output = false;
+                if (stream.pending_offset == stream.pending_input.items.len) break;
+                if (stream.format != .gzip or dusk_zip_restart(stream.zip) != .ok) {
+                    return error.InvalidData;
+                }
+                stream.is_at_end = false;
+            },
+            .ok => {
+                stream.has_pending_output = produced == room.len;
+                const has_no_input_left = stream.pending_offset == stream.pending_input.items.len;
+                if (has_no_input_left and produced < room.len) break;
+                if (consumed == 0 and produced == 0) {
+                    if (has_no_input_left) break;
+                    return error.InvalidData;
+                }
+            },
+            .out_of_memory => return error.OutOfMemory,
+            else => return error.InvalidData,
+        }
+    }
+    stream.produced += output.items.len;
+    return output.toOwnedSlice(allocator);
+}
+
+fn compactPendingInput(stream: *CompressionStream) void {
+    if (stream.pending_offset == 0) return;
+    const remaining = stream.pending_input.items.len - stream.pending_offset;
+    if (remaining == 0) {
+        stream.pending_input.clearRetainingCapacity();
+        stream.pending_offset = 0;
+        return;
+    }
+    std.mem.copyForwards(u8, stream.pending_input.items[0..remaining], stream.pending_input.items[stream.pending_offset..]);
+    stream.pending_input.shrinkRetainingCapacity(remaining);
+    stream.pending_offset = 0;
 }

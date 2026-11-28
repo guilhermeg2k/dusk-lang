@@ -21,8 +21,10 @@ extern func ~compressor_new(format: Format, level: int) -> CompressionError!int
 extern func ~decompressor_new(format: Format, max: int) -> CompressionError!int
 extern func ~compress_part(compression_id: int, data: buffer, mode: int) -> CompressionError!buffer
 extern func ~decompress_part(compression_id: int, data: buffer) -> CompressionError!buffer
+extern func ~decompress_chunk(compression_id: int, data: buffer, max_out: int) -> CompressionError!buffer
 extern func ~decompress_finish(compression_id: int) -> CompressionError!void
 extern func ~is_stream_at_end(compression_id: int) -> bool
+extern func ~has_buffered_input(compression_id: int) -> bool
 extern func ~close_stream(compression_id: int) -> void
 extern func ~own(kind: int, id: int) -> resource
 extern func ~release(owner: ?resource) -> void
@@ -153,11 +155,29 @@ struct Reader[R: io::Reader]
         if max < 1 then
             return io::IoError.Other
         end
+        let mut zero_output_bytes = 0
+        let mut empty_reads = 0
         for self.held_at == buffer::len(self.held) do
             if self.is_ended then
                 return null
             end
-            try self.refill()
+            let read_count = try self.refill()
+            if self.held_at == buffer::len(self.held) and !self.is_ended then
+                if read_count == 0 then
+                    empty_reads = empty_reads + 1
+                    if empty_reads >= 64 then
+                        self.close()
+                        return io::IoError.Other
+                    end
+                elif read_count > 0 then
+                    empty_reads = 0
+                    zero_output_bytes = zero_output_bytes + read_count
+                    if zero_output_bytes > 1048576 then
+                        self.close()
+                        return io::IoError.Other
+                    end
+                end
+            end
         end
         let remaining = buffer::len(self.held) - self.held_at
         let take = if max < remaining then max else remaining end
@@ -175,19 +195,27 @@ struct Reader[R: io::Reader]
         self.is_ended = true
     end
 
-    func ~refill(mut self: @) -> io::IoError!void
-        let next = try self.inner.read_bytes(65536)
-        if next: packed then
-            self.held = self.decompressor.write_bytes(packed) catch e then
+    func ~refill(mut self: @) -> io::IoError!int
+        if has_buffered_input(self.decompressor.compression_id) then
+            self.held = decompress_chunk(self.decompressor.compression_id, buffer::from_string(""), 65536) catch e then
                 return io_error_of(e)
             end
             self.held_at = 0
-            return
+            return -1
+        end
+        let next = try self.inner.read_bytes(65536)
+        if next: packed then
+            self.held = decompress_chunk(self.decompressor.compression_id, packed, 65536) catch e then
+                return io_error_of(e)
+            end
+            self.held_at = 0
+            return buffer::len(packed)
         end
         self.is_ended = true
         self.decompressor.finish() catch e then
             return io::IoError.UnexpectedEnd
         end
+        return 0
     end
 end
 
