@@ -227,7 +227,7 @@ pub const Databases = struct {
     }
 
     pub fn rollback(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64) !bool {
-        const connection = self.openConnection(handle) orelse {
+        const connection = self.connections.get(handle) orelse {
             return false;
         };
         if (connection.transaction_owner != task) {
@@ -296,9 +296,6 @@ pub const Databases = struct {
         const connection = self.connections.get(handle) orelse return RuntimeErrorReporter.sqliteTransactionClosed();
         if (connection.transaction_owner != task) {
             return RuntimeErrorReporter.sqliteTransactionClosed();
-        }
-        if (connection.is_closing) {
-            return null;
         }
         return connection;
     }
@@ -729,6 +726,10 @@ const Operation = struct {
                 self.recordFixedFailure(.InvalidSql, "the SQL text holds no statement", .{});
                 return null;
             },
+            .out_of_memory => {
+                self.recordFixedFailure(.Other, "out of memory", .{});
+                return null;
+            },
         };
     }
 
@@ -908,6 +909,7 @@ const Prepared = union(enum) {
     failure: c_int,
     several_statements,
     empty,
+    out_of_memory,
 };
 
 const StatementCache = struct {
@@ -939,7 +941,10 @@ const StatementCache = struct {
             _ = api.sqlite3_finalize(prepared);
             return .several_statements;
         }
-        const owned_sql = std.heap.c_allocator.dupe(u8, sql) catch return .{ .statement = prepared };
+        const owned_sql = std.heap.c_allocator.dupe(u8, sql) catch {
+            _ = api.sqlite3_finalize(prepared);
+            return .out_of_memory;
+        };
         const slot = self.freeSlot();
         slot.* = .{ .sql = owned_sql, .statement = prepared, .last_used = self.clock };
         return .{ .statement = prepared };

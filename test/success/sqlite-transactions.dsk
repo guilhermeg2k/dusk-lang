@@ -143,4 +143,38 @@ func main() -> !void
         has_failed = true
     end
     assert(has_failed)
+
+    let closing_commit_db = try sqlite::open(":memory:")
+    try closing_commit_db.execute("create table items (n integer)")
+    let mut commit_closer = spawn(func() -> void
+        task::sleep(time::milliseconds(10))
+        closing_commit_db.close()
+    end)
+    let commit_result = try closing_commit_db.transaction(func(tx)
+        try tx.execute("insert into items (n) values (1)")
+        task::sleep(time::milliseconds(30))
+        try tx.execute("insert into items (n) values (2)")
+        let count = try tx.query_one[int]("select count(*) from items")
+        return count orelse 0
+    end)
+    await(commit_closer)
+    assert(commit_result == 2)
+
+    let closing_rollback_db = try sqlite::open(":memory:")
+    try closing_rollback_db.execute("create table items (n integer)")
+    let mut rollback_closer = spawn(func() -> void
+        task::sleep(time::milliseconds(10))
+        closing_rollback_db.close()
+    end)
+    let mut rolled_back_on_close = false
+    closing_rollback_db.transaction(func(tx)
+        try tx.execute("insert into items (n) values (1)")
+        task::sleep(time::milliseconds(30))
+        return sqlite::SqliteError.Constraint
+    end) catch e then
+        assert(e == sqlite::SqliteError.Constraint)
+        rolled_back_on_close = true
+    end
+    await(rollback_closer)
+    assert(rolled_back_on_close)
 end
