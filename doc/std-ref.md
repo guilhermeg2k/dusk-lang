@@ -211,8 +211,8 @@ File formats and network protocols store numbers in a fixed number of bytes rath
 
 | Type | Bytes | Values | Read | Write |
 | :--- | :---- | :----- | :--- | :---- |
-| `u8` / `i8` | 1 | `0..255` / `-128..127` | `read_u8(data, at)`, `read_i8` | `write_u8(data, at, value)`, `write_i8` |
-| `u16` / `i16` | 2 | `0..65535` / `-32768..32767` | `read_u16(data, at, order)`, `read_i16` | `write_u16(data, at, value, order)`, `write_i16` |
+| `u8` / `i8` | 1 | `0..255` / `-128..127` | `read_u8(data: buffer, at: int)`, `read_i8` | `write_u8(mut data: buffer, at: int, value: int)`, `write_i8` |
+| `u16` / `i16` | 2 | `0..65535` / `-32768..32767` | `read_u16(data: buffer, at: int, order: Order)`, `read_i16` | `write_u16(mut data: buffer, at: int, value: int, order: Order)`, `write_i16` |
 | `u32` / `i32` | 4 | `0..4294967295` / `-2147483648..2147483647` | `read_u32`, `read_i32` | `write_u32`, `write_i32` |
 | `i64` | 8 | any `int` | `read_i64` | `write_i64` |
 | `f32` / `f64` | 4 / 8 | `float` | `read_f32`, `read_f64` (return `float`) | `write_f32`, `write_f64` (take `float`) |
@@ -336,8 +336,8 @@ Functions that can fail return an error union with the module's error set `Proce
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `run(args, cwd = null, env = null, timeout_ms = -1, max_output = 16777216)` | `ProcessError!Result` | Runs a program and waits for it, collecting its stdout and stderr. |
-| `start(args, cwd = null, env = null, stdin_mode = Stdio.Ignore, stdout_mode = Stdio.Inherit, stderr_mode = Stdio.Inherit, timeout_ms = -1)` | `ProcessError!Child` | Starts a program and returns right away. |
+| `run(args: []string, cwd: ?string = null, env: ?map[string, string] = null, timeout_ms: int = -1, max_output: int = 16777216)` | `ProcessError!Result` | Runs a program and waits for it, collecting its stdout and stderr. |
+| `start(args: []string, cwd: ?string = null, env: ?map[string, string] = null, stdin_mode: Stdio = Stdio.Ignore, stdout_mode: Stdio = Stdio.Inherit, stderr_mode: Stdio = Stdio.Inherit, timeout_ms: int = -1)` | `ProcessError!Child` | Starts a program and returns right away. |
 
 **Arguments.** `args[0]` is the program and the rest are passed exactly as written: spaces, quotes and empty strings stay as they are. Nothing goes through a shell, so `*`, `>` and `|` are plain characters. A program name with a `/` (or on Windows a `\` or `:`) is a path, relative to the child's folder; a bare name is looked up in the folders of `PATH`, from the program's own environment even when `env` gives the child a different one. Empty or relative `PATH` entries (such as `.`) would point into the child's folder, so a name found through one fails with `RelativePath` instead of running: a file placed in that folder can't take the place of a system program. The search still goes on past such entries when they don't hold the name, and a path such as `./tool` runs a program from the child's folder on purpose. On Windows the lookup also tries the `.exe` and `.com` endings.
 
@@ -353,7 +353,7 @@ Functions that can fail return an error union with the module's error set `Proce
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `wait(timeout_ms = -1)` | `ProcessError!Termination` | Waits for the child to exit. Calling it again gives the same answer. Running out of time fails with `TimedOut` and leaves the child running; call `kill()` and `wait()` to stop it. |
+| `wait(timeout_ms: int = -1)` | `ProcessError!Termination` | Waits for the child to exit. Calling it again gives the same answer. Running out of time fails with `TimedOut` and leaves the child running; call `kill()` and `wait()` to stop it. |
 | `kill()` | `ProcessError!void` | Asks the system to stop the child, without waiting; `wait` tells when it's gone. Does nothing once it has exited. |
 | `stdin()` | `ProcessError!PipeWriter` | Writes to the child's stdin. |
 | `stdout()` / `stderr()` | `ProcessError!PipeReader` | Reads the child's output. |
@@ -365,7 +365,7 @@ Functions that can fail return an error union with the module's error set `Proce
 
 Only one task at a time can wait for a child. Copies of a `Child` (including `copy`) all refer to the same process, so closing one closes them all.
 
-`PipeReader` has `read_line(max = -1, timeout_ms = -1)`, `read_bytes(max, timeout_ms = -1)`, `read_exact(count, timeout_ms = -1)`, `read_all(timeout_ms = -1)`, `read_all_bytes(timeout_ms = -1)` and `close()`; `PipeWriter` has `write(text)`, `write_bytes(data)`, `flush()` and `close()`. They fail with `io::IoError`, read and write like the other streams (see [std/io](#stdio)), and fit the `io::Reader` and `io::Writer` traits, so `io::copy` works with them.
+`PipeReader` has `read_line(max: int = -1, timeout_ms: int = -1)`, `read_bytes(max: int)`, `read_exact(count: int, timeout_ms: int = -1)`, `read_all(max_bytes: int = -1, timeout_ms: int = -1)`, `read_all_bytes(max_bytes: int = -1, timeout_ms: int = -1)`, `set_read_timeout(timeout_ms: int)` and `close()`; `PipeWriter` has `write(text: string)`, `write_bytes(data: buffer)`, `flush()` and `close()`. They fail with `io::IoError`, read and write like the other streams (see [std/io](#stdio)), and fit the `io::Reader` and `io::Writer` traits, so `io::copy` works with them.
 
 Closing the stdin writer sends the end of input; closing a pipe doesn't stop the child, and output the child wrote before exiting can still be read. Read stdout and stderr in their own tasks while waiting (a child blocks once a pipe it writes to is full), or let `run` collect them.
 
@@ -384,11 +384,11 @@ Random numbers and bytes, plus seeded generators that repeat the same sequence. 
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `integer(min, max)` | `RandomError!int` | A random `int` from `min` to `max`, both included. Any range works, up to the whole `int` range. |
+| `integer(min: int, max: int)` | `RandomError!int` | A random `int` from `min` to `max`, both included. Any range works, up to the whole `int` range. |
 | `decimal()` | `RandomError!float` | A random `float` from `0.0` (included) to `1.0` (not included). |
-| `bytes(size)` | `RandomError!buffer` | A new buffer of `size` random bytes. |
-| `secure_bytes(size)` | `RandomError!buffer` | A new buffer of `size` bytes from the system's secure random source. Use it for keys, tokens and anything secret. |
-| `seeded(seed)` | `Generator` | A generator that gives the same sequence for the same seed. |
+| `bytes(size: int)` | `RandomError!buffer` | A new buffer of `size` random bytes. |
+| `secure_bytes(size: int)` | `RandomError!buffer` | A new buffer of `size` bytes from the system's secure random source. Use it for keys, tokens and anything secret. |
+| `seeded(seed: int)` | `Generator` | A generator that gives the same sequence for the same seed. |
 
 `integer`, `decimal` and `bytes` share one sequence per program, started from the system's random source on first use; tasks draw from it in the order they run. They're fast but not secure: for secrets, use `secure_bytes`, which reads the system source on every call, never falls back to anything weaker, and fails with `EntropyUnavailable` instead of returning a partial buffer. Equal bounds (`integer(5, 5)`) and zero sizes don't use the sequence at all, and neither do calls that fail.
 
@@ -396,9 +396,9 @@ A `Generator` holds its own state, so it needs `let mut`, and draws from it don'
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `integer(min, max)` | `RandomError!int` | Like `random::integer`. |
+| `integer(min: int, max: int)` | `RandomError!int` | Like `random::integer`. |
 | `decimal()` | `float` | Like `random::decimal`, but can't fail. |
-| `bytes(size)` | `RandomError!buffer` | Like `random::bytes`. |
+| `bytes(size: int)` | `RandomError!buffer` | Like `random::bytes`. |
 
 Any `int` is a valid seed. The same seed and the same calls (with the same arguments, in the same order) give the same results; a different Dusk version may give different ones. Two `bytes(4)` calls don't have to match one `bytes(8)`. Generators are structs: two variables holding the same generator share its state, and `copy(rng)` makes one that continues on its own from the same point.
 
@@ -416,15 +416,15 @@ Works with paths as text: joining, splitting and cleaning them up. Nothing here 
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `join(parts)` | `string` | Joins the parts with the system's separator, without doubling one where two parts meet. `join([])` is `""`. |
-| `normalize(text)` | `string` | Removes repeated separators, `.` parts, and `..` parts with a folder before them. An empty result is `"."`. |
-| `basename(text)` | `string` | The last part (`"logo.png"` for `"assets/logo.png"`), ignoring a separator at the end. `""` for an empty path or a root. |
-| `dirname(text)` | `?string` | Everything before the last part, or `null` for an empty path, a bare name or a root. |
-| `extension(text)` | `string` | The last part's extension with its dot (`".gz"` for `"a.tar.gz"`), or `""`. |
-| `stem(text)` | `string` | The last part without its extension (`"a.tar"`). |
-| `is_absolute(text)` | `bool` | Whether the path starts from a root. |
-| `resolve(base, text)` | `PathError!string` | `text` taken from the absolute folder `base`, normalized. An absolute `text` stays as it is (normalized). |
-| `relative(from, to)` | `PathError!string` | The path that leads from the absolute folder `from` to the absolute path `to`; `"."` when they're the same. |
+| `join(parts: []string)` | `string` | Joins the parts with the system's separator, without doubling one where two parts meet. `join([])` is `""`. |
+| `normalize(text: string)` | `string` | Removes repeated separators, `.` parts, and `..` parts with a folder before them. An empty result is `"."`. |
+| `basename(text: string)` | `string` | The last part (`"logo.png"` for `"assets/logo.png"`), ignoring a separator at the end. `""` for an empty path or a root. |
+| `dirname(text: string)` | `?string` | Everything before the last part, or `null` for an empty path, a bare name or a root. |
+| `extension(text: string)` | `string` | The last part's extension with its dot (`".gz"` for `"a.tar.gz"`), or `""`. |
+| `stem(text: string)` | `string` | The last part without its extension (`"a.tar"`). |
+| `is_absolute(text: string)` | `bool` | Whether the path starts from a root. |
+| `resolve(base: string, text: string)` | `PathError!string` | `text` taken from the absolute folder `base`, normalized. An absolute `text` stays as it is (normalized). |
+| `relative(from: string, to: string)` | `PathError!string` | The path that leads from the absolute folder `from` to the absolute path `to`; `"."` when they're the same. |
 
 `resolve` and `relative` fail with `PathError.NotAbsolute` when a path that must be absolute isn't; there's no implicit current folder, so pass `os::cwd()` when that's what you mean.
 
@@ -464,10 +464,10 @@ The program's surroundings: its arguments, environment, current folder and exit 
 | :------- | :------ | :---------- |
 | `platform()` | `Platform` | The system the program runs on: `Linux`, `MacOS`, `Windows` or `Other`. |
 | `args()` | `OsError![]string` | The program's arguments. |
-| `env(name)` | `OsError!?string` | An environment variable's value, or `null` when it isn't set (a variable set to nothing is `""`). |
+| `env(name: string)` | `OsError!?string` | An environment variable's value, or `null` when it isn't set (a variable set to nothing is `""`). |
 | `cwd()` | `OsError!string` | The current folder, as an absolute path. |
-| `set_exit_code(code)` | `OsError!void` | The code the program exits with when it ends normally. The program keeps running. |
-| `watch_signal(signal)` | `OsError!SignalStream` | Starts listening for a signal. |
+| `set_exit_code(code: int)` | `OsError!void` | The code the program exits with when it ends normally. The program keeps running. |
+| `watch_signal(signal: Signal)` | `OsError!SignalStream` | Starts listening for a signal. |
 
 **Arguments and environment.** For `dusk app.dsk first --flag`, `args()` is `["first", "--flag"]`: everything after the script belongs to the program, `--version` included. The environment is the one the program started with; names follow the system's rules for case. This module doesn't change variables or the current folder. The current folder is the one the program was started from, not necessarily the script's folder.
 
@@ -517,17 +517,17 @@ Clocks, timestamps, durations and time zones. Functions that can fail return an 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
 | `now()` | `Timestamp` | The current date and time. |
-| `from_unix_ms(milliseconds)` | `Timestamp` | The timestamp `milliseconds` after 1970-01-01T00:00:00Z (negative for earlier). Any `int` works. |
-| `to_unix_ms(timestamp)` | `int` | The other way around. |
-| `from_iso_string(text)` | `TimeError!Timestamp` | Reads ISO text such as `2024-07-15T09:30:00Z` (below). |
-| `to_iso_string(timestamp, zone = utc_timezone())` | `TimeError!string` | Writes ISO text in a time zone, UTC by default. |
-| `to_utc_iso_string(timestamp)` | `string` | Writes ISO text in UTC. Never fails. |
-| `nanoseconds(value)` | `Duration` | A duration of `value` nanoseconds (negative is fine). |
-| `microseconds(value)`, `milliseconds(value)`, `seconds(value)`, `minutes(value)`, `hours(value)` | `Duration` | A duration of `value` of that unit. |
+| `from_unix_ms(milliseconds: int)` | `Timestamp` | The timestamp `milliseconds` after 1970-01-01T00:00:00Z (negative for earlier). Any `int` works. |
+| `to_unix_ms(timestamp: Timestamp)` | `int` | The other way around. |
+| `from_iso_string(text: string)` | `TimeError!Timestamp` | Reads ISO text such as `2024-07-15T09:30:00Z` (below). |
+| `to_iso_string(timestamp: Timestamp, zone: TimeZone = utc_timezone())` | `TimeError!string` | Writes ISO text in a time zone, UTC by default. |
+| `to_utc_iso_string(timestamp: Timestamp)` | `string` | Writes ISO text in UTC. Never fails. |
+| `nanoseconds(value: int)` | `Duration` | A duration of `value` nanoseconds (negative is fine). |
+| `microseconds(value: int)`, `milliseconds(value: int)`, `seconds(value: int)`, `minutes(value: int)`, `hours(value: int)` | `Duration` | A duration of `value` of that unit. |
 | `instant()` | `Instant` | A reading of the monotonic clock, for measuring how long something takes. |
 | `utc_timezone()` | `TimeZone` | UTC. |
-| `fixed_timezone(offset_seconds)` | `TimeError!TimeZone` | A zone always `offset_seconds` ahead of UTC (behind when negative), less than a day either way. |
-| `load_timezone(name)` | `TimeError!TimeZone` | A named zone such as `"America/Sao_Paulo"`. |
+| `fixed_timezone(offset_seconds: int)` | `TimeError!TimeZone` | A zone always `offset_seconds` ahead of UTC (behind when negative), less than a day either way. |
+| `load_timezone(name: string)` | `TimeError!TimeZone` | A named zone such as `"America/Sao_Paulo"`. |
 | `local_timezone()` | `TimeError!TimeZone` | The system's zone. |
 | `now_ms()` | `int` | The current time as Unix milliseconds, without making a `Timestamp`. |
 | `monotonic_ns()` | `int` | The monotonic clock as nanoseconds, without making an `Instant`. |
@@ -538,10 +538,10 @@ A `Timestamp` is a moment, stored as milliseconds since 1970-01-01T00:00:00Z. It
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `is_equal(other)` / `is_before(other)` / `is_after(other)` | `bool` | Compares two moments. |
-| `add(duration)` / `subtract(duration)` | `TimeError!Timestamp` | The moment `duration` later or earlier. The duration must be whole milliseconds (`PrecisionLoss` otherwise). |
-| `since(other)` | `TimeError!Duration` | How long after `other` this moment is (negative when before). `Overflow` when that's more than a `Duration` holds. |
-| `format(pattern, zone = utc_timezone())` | `TimeError!string` | Writes the date and time with a pattern (see [Custom formats](#custom-formats)). |
+| `is_equal(other: Timestamp)` / `is_before(other: Timestamp)` / `is_after(other: Timestamp)` | `bool` | Compares two moments. |
+| `add(duration: Duration)` / `subtract(duration: Duration)` | `TimeError!Timestamp` | The moment `duration` later or earlier. The duration must be whole milliseconds (`PrecisionLoss` otherwise). |
+| `since(other: Timestamp)` | `TimeError!Duration` | How long after `other` this moment is (negative when before). `Overflow` when that's more than a `Duration` holds. |
+| `format(pattern: string, zone: TimeZone = utc_timezone())` | `TimeError!string` | Writes the date and time with a pattern (see [Custom formats](#custom-formats)). |
 
 Durations measure elapsed time, so there's no adding "a month": months and years aren't a fixed length.
 
@@ -569,8 +569,8 @@ A `Duration` is a length of time in nanoseconds, positive or negative, up to abo
 | `nanoseconds()` | `int` | The exact length. |
 | `microseconds()` / `milliseconds()` | `int` | Whole units, dropping the rest (toward zero: `-1.5` ms is `-1`). |
 | `seconds()` | `float` | Seconds with a fraction (very long durations lose some precision). |
-| `add(other)` / `subtract(other)` | `TimeError!Duration` | The sum or difference. |
-| `is_equal(other)` / `is_less_than(other)` / `is_greater_than(other)` | `bool` | Compares two lengths. |
+| `add(other: Duration)` / `subtract(other: Duration)` | `TimeError!Duration` | The sum or difference. |
+| `is_equal(other: Duration)` / `is_less_than(other: Duration)` / `is_greater_than(other: Duration)` | `bool` | Compares two lengths. |
 
 `task::sleep` takes a `Duration`: `task::sleep(time::milliseconds(250))`.
 
@@ -581,7 +581,7 @@ A `Duration` is a length of time in nanoseconds, positive or negative, up to abo
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
 | `elapsed()` | `TimeError!Duration` | How long ago the instant was taken. |
-| `since(other)` | `TimeError!Duration` | How long after `other` this instant was taken (negative when before). |
+| `since(other: Instant)` | `TimeError!Duration` | How long after `other` this instant was taken (negative when before). |
 
 ```nim
 let started = time::instant()
@@ -598,7 +598,7 @@ A `TimeZone` turns a moment into the date and time on a clock somewhere. Dusk ca
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
 | `name()` | `string` | The zone's name: the name it was loaded with (an alias keeps its own name), `UTC`, `UTC+05:30` for a fixed offset, or `Local` for system rules without a name. |
-| `offset_seconds(timestamp)` | `int` | How far ahead of UTC the zone's clocks are at that moment, in seconds (negative when behind). |
+| `offset_seconds(timestamp: Timestamp)` | `int` | How far ahead of UTC the zone's clocks are at that moment, in seconds (negative when behind). |
 
 - `load_timezone` takes the exact, case-sensitive name (`America/New_York`, `Asia/Kathmandu`). It doesn't take file paths or offsets like `+03:00`; use `fixed_timezone` for an offset.
 - A named zone follows its full history of changes (summer time, governments moving the offset) and its current rules into the future. Rules can change after this release of the database. Two zones with the same offset today can differ on other dates.
@@ -627,7 +627,7 @@ Without `TZ`, Linux and macOS read `/etc/localtime`: when it links to a known zo
 
 ### Custom formats
 
-`timestamp.format(pattern, zone = utc_timezone())` writes the date and time in a zone, following a pattern:
+`timestamp.format(pattern: string, zone: TimeZone = utc_timezone())` writes the date and time in a zone, following a pattern:
 
 | Token | Writes | Example |
 | :---- | :----- | :------ |
@@ -720,7 +720,7 @@ Interpolation formats primitives, arrays and nullables as their values. It forma
 | `read_all_bytes(max_bytes: int = -1, timeout_ms: int = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes (fails with `TooLarge` past `max_bytes`). |
 | `set_read_timeout(timeout_ms: int)` | `void` | Sets the default timeout in milliseconds for `read_bytes` (`-1`, the default: wait forever). |
 | `is_terminal()` | `bool` | Whether the input is a terminal (a person typing) rather than a pipe or a file. |
-| `set_raw(is_raw)` | `IoError!void` | Turns the terminal's raw mode on or off (see [Terminal programs](#terminal-programs)). |
+| `set_raw(is_raw: bool)` | `IoError!void` | Turns the terminal's raw mode on or off (see [Terminal programs](#terminal-programs)). |
 | `close()` | `void` | Stops reading. Reading afterwards fails with `Closed`; closing twice does nothing. |
 
 ```nim
@@ -1613,9 +1613,9 @@ let user: User = try serialization::decode(reader)
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `encode[T, W, S: schema](value, mut writer)` | `SerializationError!void` | Writes `value` through `writer`. |
-| `decode[T, R, S: schema](mut reader)` | `SerializationError!T` | Reads a `T` from `reader`. |
-| `decode_document[T, R, S: schema](mut reader)` | `SerializationError!T` | Like `decode`, then calls `reader.end_document()` before any default runs, so a format can reject trailing input first. |
+| `encode[T, W, S: schema](value: T, mut writer: W)` | `SerializationError!void` | Writes `value` through `writer`. |
+| `decode[T, R, S: schema](mut reader: R)` | `SerializationError!T` | Reads a `T` from `reader`. |
+| `decode_document[T, R, S: schema](mut reader: R)` | `SerializationError!T` | Like `decode`, then calls `reader.end_document()` before any default runs, so a format can reject trailing input first. |
 | `plan_of[T, S: schema]()` | `int` | The id of `T`'s plan, the description formats read field and variant names from. Known when compiling. |
 | `has_proxies[T, S: schema]()` | `bool` | Whether `T`'s plan uses `via` anywhere. Known when compiling: an `if` on it only compiles the branch taken. |
 | `is_proxied[T, S: schema]()` | `bool` | Whether `T` itself (or the type inside a nullable `T`) is written through a whole-type `via`. Known when compiling, like `has_proxies`. |
@@ -1714,28 +1714,28 @@ A format is a struct whose methods match traits in `std/serialization`. A type o
 
 | Writer trait | Methods |
 | :----------- | :------ |
-| `ScalarWriter` | `write_int(int)`, `write_float(float)`, `write_bool(bool)`, `write_string(string)` |
+| `ScalarWriter` | `write_int(value: int)`, `write_float(value: float)`, `write_bool(value: bool)`, `write_string(value: string)` |
 | `NullWriter` | `write_null()` |
-| `StructWriter` | `begin_struct(fields, count)`, `field(fields, index)`, `end_struct()` |
-| `ArrayWriter` | `begin_array(length)`, `item(index)`, `end_array()` |
-| `MapWriter` | `begin_map(length)`, `key(name)`, `end_map()` |
-| `EnumWriter` | `write_variant(variants, index)` |
-| `UnionWriter` | `begin_union(variants, index)`, `end_union()` |
+| `StructWriter` | `begin_struct(fields: int, count: int)`, `field(fields: int, index: int)`, `end_struct()` |
+| `ArrayWriter` | `begin_array(length: int)`, `item(index: int)`, `end_array()` |
+| `MapWriter` | `begin_map(length: int)`, `key(name: string)`, `end_map()` |
+| `EnumWriter` | `write_variant(variants: int, index: int)` |
+| `UnionWriter` | `begin_union(variants: int, index: int)`, `end_union()` |
 
 | Reader trait | Methods |
 | :----------- | :------ |
 | `ScalarReader` | `read_int()`, `read_float()`, `read_bool()`, `read_string()` |
 | `NullReader` | `read_null() -> bool`: `true` when the next value is null, which it consumes |
-| `StructReader` | `begin_struct(fields)`, `next_field(fields) -> int`, `missing_field(fields, index)` |
+| `StructReader` | `begin_struct(fields: int)`, `next_field(fields: int) -> int`, `missing_field(fields: int, index: int)` |
 | `ArrayReader` | `begin_array()`, `has_item() -> bool` |
 | `MapReader` | `begin_map()`, `next_key() -> ?string` |
-| `EnumReader` | `read_variant(variants) -> int` |
-| `UnionReader` | `begin_union(variants) -> int`, `end_union()` |
+| `EnumReader` | `read_variant(variants: int) -> int` |
+| `UnionReader` | `begin_union(variants: int) -> int`, `end_union()` |
 | `DocumentReader` | `end_document()`, for `decode_document` |
 
 Every method takes `mut self: @` and returns `SerializationError!` its result. `byte` values go through `read_int` / `write_int` and are checked against `0..255` (`OutOfRange`).
 
-`fields` and `variants` are plan ids. Read names with `field_count(fields)`, `field_name(fields, index)`, `variant_count(variants)` and `variant_name(variants, index)`, and match input with `find_field(fields, name)` and `find_variant(variants, name)`, which accept every outside name, aliases included, and return an index or `-1`. `find_field_in(fields, text, start, stop)` and `find_variant_in` match a slice of the input without copying it. `next_field` returns the index of the next known field, or `-1` when the struct ends; unknown names are the format's choice to skip or reject. A format reading rows can match column names once per result and then answer `next_field` by position.
+`fields` and `variants` are plan ids. Read names with `field_count(fields: int) -> int`, `field_name(fields: int, index: int) -> string`, `variant_count(variants: int) -> int` and `variant_name(variants: int, index: int) -> string`, and match input with `find_field(fields: int, name: string) -> int` and `find_variant(variants: int, name: string) -> int`, which accept every outside name, aliases included, and return an index or `-1`. `find_field_in(fields: int, text: string, start: int, stop: int) -> int` and `find_variant_in` (same arguments) match a slice of the input without copying it. `next_field` returns the index of the next known field, or `-1` when the struct ends; unknown names are the format's choice to skip or reject. A format reading rows can match column names once per result and then answer `next_field` by position.
 
 ```nim
 import "std/serialization"
@@ -1790,7 +1790,7 @@ end
 
 ## std/json
 
-`json::encode[T, S: schema](value, options = @()) -> JsonError!string` writes compact JSON. `json::decode[T, S: schema](text, mut diagnostic = null, options = @()) -> JsonError!T` reads one complete JSON value; trailing whitespace is allowed. The target type can be explicit or come from the expected result type, and the schema is optional (see [Schemas](#schemas)):
+`json::encode[T, S: schema](value: T, options: EncodeOptions = @()) -> JsonError!string` writes compact JSON. `json::decode[T, S: schema](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T` reads one complete JSON value; trailing whitespace is allowed. The target type can be explicit or come from the expected result type, and the schema is optional (see [Schemas](#schemas)):
 
 ```dusk
 import "std/json"
@@ -1867,7 +1867,7 @@ Embedded SQL databases using a bundled SQLite. Import with `import "std/sqlite"`
 
 | Function / method | Returns | Description |
 | :---------------- | :------ | :---------- |
-| `open(path, journal = Journal.Wal, foreign_keys = true, busy_timeout_ms = 5000, read_only = false, create = true, mut diagnostic = null)` | `SqliteError!Database` | Opens a database file or `":memory:"`. |
+| `open(path: string, journal: Journal = Journal.Wal, foreign_keys: bool = true, busy_timeout_ms: int = 5000, read_only: bool = false, create: bool = true, mut diagnostic: ?Diagnostic = null)` | `SqliteError!Database` | Opens a database file or `":memory:"`. |
 | `db.close()` | `void` | Closes the connection after pending operations finish. Safe to call more than once. |
 | `version()` | `string` | The bundled SQLite version string. |
 
@@ -1879,9 +1879,9 @@ Close connections with `defer db.close()` when finished. A `Database` dropped wi
 
 | Method (`Database` and `Tx`) | Returns | Description |
 | :--------------------------- | :------ | :---------- |
-| `execute(sql, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one or more statements separated by `;` (no parameters). |
-| `execute_with[P, S: schema](sql, params, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one statement, binding `:name` parameters from a struct. |
-| `execute_many[P, S: schema](sql, rows, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one statement once for each struct in `rows`, in a single worker job. |
+| `execute(sql: string, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null)` | `SqliteError!Changes` | Runs one or more statements separated by `;` (no parameters). |
+| `execute_with[P, S: schema](sql: string, params: P, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null)` | `SqliteError!Changes` | Runs one statement, binding `:name` parameters from a struct. |
+| `execute_many[P, S: schema](sql: string, rows: []P, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null)` | `SqliteError!Changes` | Runs one statement once for each struct in `rows`, in a single worker job. |
 
 `Changes` has `rows: int` (total rows changed) and `last_id: int` (the last inserted rowid). `execute_with` and `execute_many` take exactly one statement and cache prepared statements per connection. Wrap `execute_many` in `db.transaction` when inserting many rows so all rows commit atomically.
 
@@ -1901,10 +1901,10 @@ Parameters are encoded through `std/serialization`, so schema renames (`S: schem
 
 | Method (`Database` and `Tx`) | Returns | Description |
 | :--------------------------- | :------ | :---------- |
-| `query[T, S: schema](sql, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError![]T` | Returns every row decoded into `T`. |
-| `query_with[T, S: schema, P](sql, params, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError![]T` | Same, with `:name` parameters from `params`. |
-| `query_one[T, S: schema](sql, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError!?T` | Returns the first row, or `null` when no rows match. |
-| `query_one_with[T, S: schema, P](sql, params, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError!?T` | Same, with `:name` parameters from `params`. |
+| `query[T, S: schema](sql: string, timeout_ms: int = -1, max_bytes: int = 67108864, mut diagnostic: ?Diagnostic = null)` | `SqliteError![]T` | Returns every row decoded into `T`. |
+| `query_with[T, S: schema, P](sql: string, params: P, timeout_ms: int = -1, max_bytes: int = 67108864, mut diagnostic: ?Diagnostic = null)` | `SqliteError![]T` | Same, with `:name` parameters from `params`. |
+| `query_one[T, S: schema](sql: string, timeout_ms: int = -1, max_bytes: int = 67108864, mut diagnostic: ?Diagnostic = null)` | `SqliteError!?T` | Returns the first row, or `null` when no rows match. |
+| `query_one_with[T, S: schema, P](sql: string, params: P, timeout_ms: int = -1, max_bytes: int = 67108864, mut diagnostic: ?Diagnostic = null)` | `SqliteError!?T` | Same, with `:name` parameters from `params`. |
 
 For `_with` queries, name the row type (and optional schema) in brackets and let the compiler infer the parameter struct's type:
 
