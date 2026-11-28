@@ -1187,7 +1187,7 @@ Reads and builds URLs.
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
 | `parse(text: string)` | `UrlError!Url` | Reads an absolute URL like `https://example.com:8443/docs?page=2#intro`. |
-| `resolve(base: Url, reference: string)` | `UrlError!Url` | The URL that `reference` points to when read from `base`: a full URL, `//host/path`, `/path`, `path`, `../path`, `?query` or `#fragment`. `.` and `..` segments are removed. |
+| `resolve(base: Url, reference: string)` | `UrlError!Url` | The URL that `reference` points to when read from `base`: a full URL, `//host/path`, `/path`, `path`, `../path`, `?query` or `#fragment`. `.` and `..` segments are removed, also when written with `%2e` (`%2e%2e`, `.%2E`). |
 | `encode(text: string)` | `string` | Percent-encodes every byte except letters, digits and `- . _ ~`, for one path segment or one query value: `url::encode("a b/c")` is `a%20b%2Fc`. |
 | `decode(text: string)` | `UrlError!string` | Reverses `encode`. `+` stays `+`. |
 | `query(params: map[string, string])` | `string` | Builds a query string from a `map[string, string]`, in the map's order, encoding keys and values: `url::query({"q": "dusk lang", "page": "2"})` is `q=dusk%20lang&page=2`. |
@@ -1221,6 +1221,7 @@ end
 
 - `parse` only takes absolute URLs with `scheme://`. The path, query and fragment are kept as written, already encoded: they may hold printable ASCII characters other than space, `"`, `<`, `>`, `\`, `^`, the backquote, `{`, `|` and `}`, and `%` must be followed by two hex digits. Text with spaces or non-ASCII characters has to be encoded first (`url::encode`).
 - A user name and password in the URL (`https://user:secret@host/`) aren't supported: `parse` fails with `Invalid`.
+- A host written as an IP address is rewritten to its usual form, the address a connection to it reaches: `127.1`, `0177.0.0.1`, `0x7f.0.0.1` and `2130706433` all give `host == "127.0.0.1"`, and `[0:0:0:0:0:0:0:1]` gives `"::1"`. A host that ends in a number but isn't a valid address (`1.2.3.4.5`, `256.0.0.1`, `1.2.3.09`) fails with `Invalid`, and an IPv6 address can only hold an IPv4 part in the `::ffff:` form (`::ffff:127.0.0.1`, which is the IPv4 address `127.0.0.1`). Names stay as written: `host` doesn't tell which address a name (`localhost.`, `internal.example.com`) leads to, so a check on `host` can only block addresses written as addresses.
 - Ports go from `1` to `65535`.
 
 | `url::UrlError` | When |

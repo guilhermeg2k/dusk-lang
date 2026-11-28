@@ -36,6 +36,8 @@
 - A struct's field default values can now reference the struct's own static fields (`Config.DEFAULT`) and methods (`Bot.list_commands`, or method calls inside a default lambda) without triggering `CyclicDefault`, while genuine default-construction cycles (`x: A = A()` or mutual A/B defaults) still fail with `CyclicDefault`
 - A compressed response read through `http::open` could use far more memory than its own size: `read_line(max = 100)` unpacked everything that had arrived before checking the line's length (a 400 KB gzip body took 100 MB), and `read_all` / `read_all_bytes` had no limit at all. Line reads now unpack only past `max`, and `read_all` / `read_all_bytes` take `max_bytes` (fails with `TooLarge`) like a `TcpConn`'s
 - HTTP servers waited forever for a request body that stopped arriving, so a client could hold a connection and its handler open by sending part of a body. `http::listen` gains `body_timeout_ms = 30000`: `req.text()` and `req.bytes()` get that long for the whole body and each `req.read_bytes` for its piece, then fail with `TimedOut`; `req.set_read_timeout` changes it for one request
+- `url::parse` kept a host written as numbers the way it was written, so `http://2130706433/`, `http://127.1/` or `http://0x7f.0.0.1/` had a `host` that didn't look like `127.0.0.1` although connecting to it reaches `127.0.0.1`, and a check on `host` could miss it. Hosts that are IP addresses are rewritten to their usual form (`127.0.0.1`, `::1`), and a host that ends in a number but isn't a valid address (`1.2.3.4.5`) fails with `Invalid`
+- `url::resolve` didn't remove `.` and `..` segments written with `%2e` (`%2e%2e/admin`), so a path checked after resolving could still leave its folder once the server decoded it
 
 ## v0.16 - Shigeo
 

@@ -115,8 +115,55 @@ func check_resolve() -> !void
     try expect_resolved(base, "g/../h", "http://a/b/c/h")
     try expect_resolved(base, "g;x=1/./y", "http://a/b/c/g;x=1/y")
     try expect_resolved(base, "g;x=1/../y", "http://a/b/c/y")
+    try expect_resolved(base, "%2e%2e/g", "http://a/b/g")
+    try expect_resolved(base, "%2E%2e/%2e./.%2E/g", "http://a/g")
+    try expect_resolved(base, "%2e/g/%2E", "http://a/b/c/g/")
+    try expect_resolved(base, "/x/%2e%2e/y", "http://a/y")
+    try expect_resolved(base, "http://other/p/%2e%2e/q", "http://other/q")
+    try expect_resolved(base, "%2e%2eg", "http://a/b/c/%2e%2eg")
+    try expect_resolved(base, "%2f%2e%2e", "http://a/b/c/%2f%2e%2e")
     let ported = try url::parse("https://[::1]:8443/api/v1/items")
     try expect_resolved(ported, "../v2/list?page=2", "https://[::1]:8443/api/v2/list?page=2")
+end
+
+func expect_host(text: string, expected: string) -> !void
+    let parsed = try url::parse(text)
+    assert(parsed.host == expected)
+end
+
+func check_ip_hosts() -> !void
+    try expect_host("http://127.0.0.1/", "127.0.0.1")
+    try expect_host("http://2130706433/", "127.0.0.1")
+    try expect_host("http://0x7f.1/", "127.0.0.1")
+    try expect_host("http://0X7F.0.0.1/", "127.0.0.1")
+    try expect_host("http://127.1/", "127.0.0.1")
+    try expect_host("http://0177.0.0.1/", "127.0.0.1")
+    try expect_host("http://127.0.0.1./", "127.0.0.1")
+    try expect_host("http://1.16777215/", "1.255.255.255")
+    try expect_host("http://4294967295/", "255.255.255.255")
+    try expect_host("http://example.com/", "example.com")
+    try expect_host("http://localhost./", "localhost.")
+    try expect_host("http://x.0x1g/", "x.0x1g")
+    try expect_host("http://[0:0:0:0:0:0:0:1]/", "::1")
+    try expect_host("http://[::FFFF:127.0.0.1]/", "::ffff:127.0.0.1")
+    try expect_host("http://[2001:db8:0:0:1:0:0:1]/", "2001:db8::1:0:0:1")
+    let mixed = try url::parse("http://0x7f.1:8080/a")
+    assert(mixed.to_string() == "http://127.0.0.1:8080/a")
+    expect_parse_error("http://1.2.3.4.5/", url::UrlError.Invalid)
+    expect_parse_error("http://256.0.0.1/", url::UrlError.Invalid)
+    expect_parse_error("http://1.2.3.09/", url::UrlError.Invalid)
+    expect_parse_error("http://1..2/", url::UrlError.Invalid)
+    expect_parse_error("http://a.123/", url::UrlError.Invalid)
+    expect_parse_error("http://4294967296/", url::UrlError.Invalid)
+    expect_parse_error("http://1.16777216/", url::UrlError.Invalid)
+    expect_parse_error("http://0xffffffffffffffffffff/", url::UrlError.Invalid)
+    expect_parse_error("http://[:]/", url::UrlError.Invalid)
+    expect_parse_error("http://[1.2.3.4:]/", url::UrlError.Invalid)
+    expect_parse_error("http://[1:2:3:4:5:6:7:8:9]/", url::UrlError.Invalid)
+    expect_parse_error("http://[0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000]/", url::UrlError.Invalid)
+    let base = try url::parse("http://a/b/c")
+    let next = try url::resolve(base, "http://127.1/x")
+    assert(next.host == "127.0.0.1")
 end
 
 func check_encoding() -> !void
@@ -161,6 +208,7 @@ func main() -> !void
     try check_parse()
     check_parse_errors()
     try check_resolve()
+    try check_ip_hosts()
     try check_encoding()
     try check_parse_query()
 end
