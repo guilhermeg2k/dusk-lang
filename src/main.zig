@@ -11,7 +11,6 @@ pub fn main(init: std.process.Init) !void {
     openMissingStandardFiles();
     raiseOpenFileLimit();
     const allocator = init.arena.allocator();
-
     const args = try init.minimal.args.toSlice(allocator);
 
     var stdout_buffer: [65536]u8 = undefined;
@@ -25,7 +24,8 @@ pub fn main(init: std.process.Init) !void {
         .is_stdout_terminal = std.Io.File.stdout().isTty(init.io) catch false,
     };
 
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "--version")) {
+    const isVersionCmdFlag = args.len >= 2 and std.mem.eql(u8, args[1], "--version");
+    if (isVersionCmdFlag) {
         stdio.writeLine(.stdout, build_zon.version) catch |failure| {
             if (failure == error.BrokenPipe) {
                 exitAfterBrokenPipe();
