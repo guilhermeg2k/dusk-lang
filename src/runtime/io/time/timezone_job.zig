@@ -11,17 +11,83 @@ const Recurrence = @import("../../timezone_recurrence.zig").Recurrence;
 const TimeError = @import("../../time_error.zig").TimeError;
 const maximum_file_size = 4 * 1024 * 1024;
 
+pub const LocalLookup = struct {
+    is_loading: bool = false,
+    scheduler: ?*Scheduler = null,
+    registry: ?*timezone.Registry = null,
+    waiters: std.ArrayList(*TaskState) = .empty,
+
+    pub fn deinit(self: *LocalLookup, allocator: std.mem.Allocator) void {
+        self.waiters.deinit(allocator);
+        self.* = .{};
+    }
+
+    pub fn parkWaiter(self: *LocalLookup, event_loop: *EventLoop, scheduler: *Scheduler, registry: *timezone.Registry, task: *TaskState, environment: ?*const std.process.Environ.Map) !void {
+        self.scheduler = scheduler;
+        self.registry = registry;
+        try self.waiters.ensureUnusedCapacity(event_loop.allocator, 1);
+        if (!self.is_loading) {
+            try LocalJob.start(event_loop, environment);
+            self.is_loading = true;
+        }
+        self.waiters.appendAssumeCapacity(task);
+    }
+
+    fn finish(self: *LocalLookup, event_loop: *EventLoop, job: *LocalJob, status: c_int) void {
+        self.is_loading = false;
+        var waiters = self.waiters;
+        self.waiters = .empty;
+        defer waiters.deinit(event_loop.allocator);
+        if (event_loop.is_shutting_down) return;
+        if (status != 0) {
+            job.clearResult();
+        }
+        const wake_result = self.resolveWakeResult(event_loop, job) catch |failure| {
+            event_loop.callback_failure = failure;
+            return;
+        };
+        for (waiters.items) |waiter| {
+            self.scheduler.?.wake(waiter, wake_result) catch |failure| {
+                event_loop.callback_failure = failure;
+            };
+        }
+    }
+
+    fn resolveWakeResult(self: *LocalLookup, event_loop: *EventLoop, job: *LocalJob) !WakeResult {
+        if (job.result) |*result| {
+            switch (result.*) {
+                .zone => |*snapshot| {
+                    const identifier = try self.registry.?.installLocal(event_loop.allocator, snapshot);
+                    return .{ .value = .{ .int64 = identifier }, .kind = .int64 };
+                },
+                .out_of_memory => return error.OutOfMemory,
+            }
+        }
+        return .{ .value = .{ .int64 = @intFromEnum(TimeError.LocalTimeUnavailable) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
+    }
+};
+
+const JobResult = union(enum) {
+    zone: timezone.LocalZone,
+    out_of_memory,
+
+    fn free(self: JobResult, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .zone => |zone| zone.free(allocator),
+            .out_of_memory => {},
+        }
+    }
+};
+
 pub const LocalJob = struct {
     allocator: std.mem.Allocator,
     loop: ?*uv.Loop,
     event_loop: *EventLoop,
-    scheduler: ?*Scheduler = null,
-    task: ?*TaskState = null,
     work_memory: []align(16) u8,
     fs_memory: []align(16) u8,
     timezone_override: ?[]u8,
     system_path: [:0]u8,
-    result: ?timezone.LocalResult = null,
+    result: ?JobResult = null,
 
     fn create(event_loop: *EventLoop, timezone_override: ?[]const u8, system_path: []const u8) !*LocalJob {
         const allocator = event_loop.allocator;
@@ -42,9 +108,7 @@ pub const LocalJob = struct {
 
     fn destroy(self: *LocalJob) void {
         const allocator = self.allocator;
-        if (self.result) |result| {
-            result.free(allocator);
-        }
+        self.clearResult();
         if (self.timezone_override) |text| {
             allocator.free(text);
         }
@@ -54,14 +118,19 @@ pub const LocalJob = struct {
         allocator.destroy(self);
     }
 
-    pub fn start(event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, environment: ?*const std.process.Environ.Map) !void {
+    fn clearResult(self: *LocalJob) void {
+        if (self.result) |result| {
+            result.free(self.allocator);
+        }
+        self.result = null;
+    }
+
+    fn start(event_loop: *EventLoop, environment: ?*const std.process.Environ.Map) !void {
         var buffer: [4096]u8 = undefined;
         const timezone_override = if (environment) |env| env.get("TZ") else try readEnvironment(&buffer);
         _ = try event_loop.ensureLoopStarted();
         const job = try create(event_loop, timezone_override, "/etc/localtime");
         errdefer job.destroy();
-        job.scheduler = scheduler;
-        job.task = task;
         const request = job.workRequest();
         uv.uv_req_set_data(request, job);
         if (uv.uv_queue_work(job.loop.?, request, onLocalWork, onLocalDone) != 0) {
@@ -110,7 +179,7 @@ pub const LocalJob = struct {
                 return error.LocalTimeUnavailable;
             }
             const end = std.mem.indexOfScalar(u8, &name, 0) orelse return error.LocalTimeUnavailable;
-            return .{ .named = try windowsZoneIndex(self.allocator, name[0..end]) };
+            return .{ .named = try windowsZoneIndex(name[0..end]) };
         }
         return self.discoverUnixSystem();
     }
@@ -125,6 +194,9 @@ pub const LocalJob = struct {
             return .{ .named = index };
         }
         if (std.fs.path.isAbsolute(zone)) {
+            if (!isAllowedOverridePath(zone, builtin.os.tag == .windows)) {
+                return error.LocalTimeUnavailable;
+            }
             return self.readSnapshot(zone);
         }
         if (has_colon) {
@@ -221,25 +293,36 @@ pub const LocalJob = struct {
         }
         return self.readSnapshot(self.system_path);
     }
-
-    fn takeWakeResult(self: *LocalJob) WakeResult {
-        const result = self.result orelse return .{ .value = .{ .int64 = @intFromEnum(TimeError.LocalTimeUnavailable) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
-        self.result = null;
-        return .{ .value = .{ .int64 = 0 }, .kind = .int64, .payload = .{ .local_timezone = result } };
-    }
 };
+
+pub fn isAllowedOverridePath(path: []const u8, is_windows: bool) bool {
+    if (std.mem.indexOfScalar(u8, path, 0) != null) {
+        return false;
+    }
+    if (is_windows) {
+        const has_drive_prefix = path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and (path[2] == '\\' or path[2] == '/');
+        return has_drive_prefix;
+    }
+    return path.len > 0 and path[0] == '/';
+}
 
 fn statusFailure(status: c_int) anyerror {
     const name = std.mem.span(uv.uv_err_name(status));
     return if (std.mem.eql(u8, name, "ENOMEM")) error.OutOfMemory else error.LocalTimeUnavailable;
 }
 
-pub fn windowsZoneIndex(allocator: std.mem.Allocator, name: []const u8) !usize {
-    const Manifest = struct { windows: std.json.ArrayHashMap([]const u8) };
-    const parsed = try std.json.parseFromSlice(Manifest, allocator, bundle.manifest, .{ .ignore_unknown_fields = true });
-    defer parsed.deinit();
-    const zone = parsed.value.windows.map.get(name) orelse return error.LocalTimeUnavailable;
-    return timezone.Registry.findZone(zone) orelse error.LocalTimeUnavailable;
+pub fn windowsZoneIndex(name: []const u8) !usize {
+    var left: usize = 0;
+    var right = bundle.windows_zones.len;
+    while (left < right) {
+        const middle = left + (right - left) / 2;
+        switch (std.mem.order(u8, name, bundle.windows_zones[middle].windows_name)) {
+            .lt => right = middle,
+            .gt => left = middle + 1,
+            .eq => return timezone.Registry.findZone(bundle.windows_zones[middle].iana_name) orelse error.LocalTimeUnavailable,
+        }
+    }
+    return error.LocalTimeUnavailable;
 }
 
 fn systemLinkZoneIndex(path: []const u8) ?usize {
@@ -266,18 +349,7 @@ fn onLocalDone(request: *uv.Request, status: c_int) callconv(.c) void {
     defer job.destroy();
     const event_loop = job.event_loop;
     event_loop.pending_operations -= 1;
-    if (event_loop.is_shutting_down) return;
-    if (status != 0) {
-        if (job.result) |result| {
-            result.free(event_loop.allocator);
-        }
-        job.result = null;
-    }
-    const wake_result = job.takeWakeResult();
-    job.scheduler.?.wake(job.task.?, wake_result) catch |failure| {
-        wake_result.payload.free(event_loop.allocator);
-        event_loop.callback_failure = failure;
-    };
+    event_loop.local_timezone.finish(event_loop, job, status);
 }
 
 test "local override forms are authoritative and Windows mappings are pinned" {
@@ -309,12 +381,32 @@ test "local override forms are authoritative and Windows mappings are pinned" {
         defer job.destroy();
         try std.testing.expectError(error.LocalTimeUnavailable, job.discover());
     }
-    try std.testing.expectEqual(timezone.Registry.findZone("America/Los_Angeles").?, try windowsZoneIndex(std.testing.allocator, "Pacific Standard Time"));
-    try std.testing.expectEqual(timezone.Registry.findZone("Etc/UTC").?, try windowsZoneIndex(std.testing.allocator, "UTC"));
-    try std.testing.expectError(error.LocalTimeUnavailable, windowsZoneIndex(std.testing.allocator, "Missing Windows Zone"));
+    try std.testing.expectEqual(timezone.Registry.findZone("America/Los_Angeles").?, try windowsZoneIndex("Pacific Standard Time"));
+    try std.testing.expectEqual(timezone.Registry.findZone("Etc/UTC").?, try windowsZoneIndex("UTC"));
+    try std.testing.expectError(error.LocalTimeUnavailable, windowsZoneIndex("Missing Windows Zone"));
     try std.testing.expectEqual(timezone.Registry.findZone("Europe/Paris"), systemLinkZoneIndex("/usr/share/zoneinfo/Europe/Paris"));
     try std.testing.expectEqual(@as(?usize, null), systemLinkZoneIndex("/tmp/zoneinfo/Europe/Paris"));
     try std.testing.expectEqual(@as(?usize, null), systemLinkZoneIndex("/usr/share/zoneinfo/right/UTC"));
+}
+
+test "override path validation rejects Windows UNC and device paths" {
+    try std.testing.expect(isAllowedOverridePath("/etc/localtime", false));
+    try std.testing.expect(!isAllowedOverridePath("relative/path", false));
+    try std.testing.expect(!isAllowedOverridePath("/tmp/bad\x00path", false));
+    try std.testing.expect(isAllowedOverridePath("C:\\Windows\\zone.tzif", true));
+    try std.testing.expect(isAllowedOverridePath("d:/zones/local.tzif", true));
+    for ([_][]const u8{
+        "\\\\server\\share\\tz",
+        "//server/share/tz",
+        "\\\\.\\pipe\\tz",
+        "\\\\.\\CON",
+        "\\\\?\\C:\\zone.tzif",
+        "C:relative.tzif",
+        "C:\\bad\x00.tzif",
+        "/etc/localtime",
+    }) |path| {
+        try std.testing.expect(!isAllowedOverridePath(path, true));
+    }
 }
 
 test "local discovery job allocation failures release native memory" {
@@ -391,30 +483,60 @@ fn readTestSnapshot(allocator: std.mem.Allocator, path: []const u8) !void {
     }
 }
 
-test "local completion releases owned snapshots during shutdown and failed wake" {
+test "local lookup coalesces waiters and releases owned snapshots during shutdown and failed wake" {
     const entry = bundle.zones[timezone.Registry.findZone("America/New_York").?];
     const source = bundle.bytes[entry.offset..][0..entry.length];
     var event_loop: EventLoop = .{ .allocator = std.testing.allocator };
     defer event_loop.deinit();
+    var registry: timezone.Registry = .{};
+    defer registry.deinit(std.testing.allocator);
+    var scheduler: Scheduler = .{ .allocator = std.testing.allocator };
+    defer scheduler.deinit();
+    var first_task: TaskState = undefined;
+    first_task.wake_result = null;
+    var second_task: TaskState = undefined;
+    second_task.wake_result = null;
+
+    const shared_job = try LocalJob.create(&event_loop, null, "/etc/localtime");
+    const shared_bytes = try std.testing.allocator.dupe(u8, source);
+    shared_job.result = .{ .zone = .{ .file = .{ .bytes = shared_bytes, .rules = try timezone.Rules.parse(shared_bytes) } } };
+    uv.uv_req_set_data(shared_job.workRequest(), shared_job);
+    event_loop.pending_operations = 1;
+    event_loop.local_timezone.is_loading = true;
+    event_loop.local_timezone.scheduler = &scheduler;
+    event_loop.local_timezone.registry = &registry;
+    try event_loop.local_timezone.waiters.append(std.testing.allocator, &first_task);
+    try event_loop.local_timezone.waiters.append(std.testing.allocator, &second_task);
+    onLocalDone(shared_job.workRequest(), 0);
+    try std.testing.expectEqual(@as(usize, 0), event_loop.pending_operations);
+    try std.testing.expect(!event_loop.local_timezone.is_loading);
+    try std.testing.expectEqual(registry.local_identifier.?, first_task.wake_result.?.value.int64);
+    try std.testing.expectEqual(registry.local_identifier.?, second_task.wake_result.?.value.int64);
+
     const job = try LocalJob.create(&event_loop, null, "/etc/localtime");
     const bytes = try std.testing.allocator.dupe(u8, source);
     job.result = .{ .zone = .{ .file = .{ .bytes = bytes, .rules = try timezone.Rules.parse(bytes) } } };
     uv.uv_req_set_data(job.workRequest(), job);
     event_loop.pending_operations = 1;
+    event_loop.local_timezone.is_loading = true;
     event_loop.is_shutting_down = true;
     onLocalDone(job.workRequest(), 0);
     try std.testing.expectEqual(@as(usize, 0), event_loop.pending_operations);
+    try std.testing.expect(!event_loop.local_timezone.is_loading);
     event_loop.is_shutting_down = false;
+
     const failed_job = try LocalJob.create(&event_loop, null, "/etc/localtime");
     const other = try std.testing.allocator.dupe(u8, source);
     failed_job.result = .{ .zone = .{ .file = .{ .bytes = other, .rules = try timezone.Rules.parse(other) } } };
     var failing_allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    var scheduler: Scheduler = .{ .allocator = failing_allocator.allocator() };
-    defer scheduler.deinit();
+    var failing_scheduler: Scheduler = .{ .allocator = failing_allocator.allocator() };
+    defer failing_scheduler.deinit();
     var task: TaskState = undefined;
     task.wake_result = null;
-    failed_job.task = &task;
-    failed_job.scheduler = &scheduler;
+    event_loop.local_timezone.is_loading = true;
+    event_loop.local_timezone.scheduler = &failing_scheduler;
+    event_loop.local_timezone.registry = &registry;
+    try event_loop.local_timezone.waiters.append(std.testing.allocator, &task);
     uv.uv_req_set_data(failed_job.workRequest(), failed_job);
     event_loop.pending_operations = 1;
     onLocalDone(failed_job.workRequest(), 0);

@@ -3,6 +3,7 @@
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0602
 #endif
+#include <limits.h>
 #include <windows.h>
 #include <wchar.h>
 
@@ -17,6 +18,9 @@ static int are_transition_dates_equal(const SYSTEMTIME *left, const SYSTEMTIME *
 }
 
 int dusk_local_windows_timezone(char *name, size_t capacity) {
+    if (name == NULL || capacity == 0 || capacity > INT_MAX) {
+        return 0;
+    }
     DYNAMIC_TIME_ZONE_INFORMATION current = {0};
     const DWORD timezone_status = GetDynamicTimeZoneInformation(&current);
     const int has_current_zone = timezone_status != TIME_ZONE_ID_INVALID && current.TimeZoneKeyName[0] != 0 && current.TimeZoneKeyName[127] == 0;

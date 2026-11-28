@@ -44,6 +44,7 @@ lines = [
     'pub const manifest = @embedFile("manifest.json");',
     '',
     'pub const Zone = struct { name: []const u8, offset: u32, length: u32 };',
+    'pub const WindowsZone = struct { windows_name: []const u8, iana_name: []const u8 };',
     '',
     'pub const zones = [_]Zone{',
 ]
@@ -51,6 +52,12 @@ for zone in manifest['zones']:
     lines.append('    .{ .name = ' + json.dumps(zone['name'])
                  + ', .offset = ' + str(zone['offset'])
                  + ', .length = ' + str(zone['length']) + ' },')
+lines.append('};')
+lines.append('')
+lines.append('pub const windows_zones = [_]WindowsZone{')
+for windows_name, iana_name in sorted(manifest['windows'].items()):
+    lines.append('    .{ .windows_name = ' + json.dumps(windows_name)
+                 + ', .iana_name = ' + json.dumps(iana_name) + ' },')
 lines.append('};')
 (package / 'root.zig').write_text('\n'.join(lines) + '\n')
 PY

@@ -27,6 +27,7 @@ const WorkerDispatch = @import("loop/worker_dispatch.zig").WorkerDispatch;
 const WorkerPool = @import("loop/worker_pool.zig").WorkerPool;
 const Databases = @import("../io/sqlite/sqlite.zig").Databases;
 const SqliteTimer = @import("../io/sqlite/sqlite.zig").OperationTimer;
+const LocalTimezoneLookup = @import("../io/time/timezone_job.zig").LocalLookup;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -55,6 +56,7 @@ pub const EventLoop = struct {
     has_used_raw_terminal: bool = false,
     worker_dispatches: std.ArrayList(*WorkerDispatch) = .empty,
     sqlite: Databases = .{},
+    local_timezone: LocalTimezoneLookup = .{},
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
@@ -98,6 +100,7 @@ pub const EventLoop = struct {
         defer self.freeCompressionStreams();
         defer self.host_slots.deinit(self.allocator);
         defer self.resources.deinit(self.allocator);
+        defer self.local_timezone.deinit(self.allocator);
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);

@@ -1,7 +1,6 @@
 const std = @import("std");
 const v = @import("../value.zig");
 const bc = @import("../bytecode.zig");
-const LocalResult = @import("../timezone.zig").LocalResult;
 
 pub const INITIAL_STACK_SLOTS = 1024;
 pub const INITIAL_FRAMES = 32;
@@ -182,12 +181,10 @@ pub const WakePayload = union(enum) {
     ints: []i64,
     bytes: []u8,
     names: [][]u8,
-    local_timezone: LocalResult,
 
     pub fn free(self: WakePayload, allocator: std.mem.Allocator) void {
         switch (self) {
             .none => {},
-            .local_timezone => |result| result.free(allocator),
             .ints => |ints| allocator.free(ints),
             .bytes => |bytes| allocator.free(bytes),
             .names => |names| {

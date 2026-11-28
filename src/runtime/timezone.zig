@@ -89,9 +89,13 @@ pub const Registry = struct {
             return "Local";
         }
         if (identifier >= named_zone_base) {
-            return bundle.zones[@intCast(identifier - named_zone_base)].name;
+            const index = identifier - named_zone_base;
+            if (index >= bundle.zones.len) {
+                return "UTC";
+            }
+            return bundle.zones[@intCast(index)].name;
         }
-        if (identifier == 0) {
+        if (identifier == 0 or identifier <= -86400) {
             return "UTC";
         }
         const magnitude = @abs(identifier);
@@ -107,18 +111,27 @@ pub const Registry = struct {
 
     pub fn offsetSeconds(self: *const Registry, identifier: i64, milliseconds: i64) i32 {
         if (identifier == local_zone_id) {
+            const local_zone = self.local_zone orelse return 0;
             const timestamp = @divFloor(milliseconds, 1000);
-            return switch (self.local_zone.?) {
+            return switch (local_zone) {
                 .file => |file| file.rules.offsetSeconds(timestamp),
                 .recurrence => |recurrence| recurrence.offsetSeconds(timestamp),
-                .utc, .named => unreachable,
+                .utc, .named => 0,
             };
         }
         if (identifier < named_zone_base) {
+            if (identifier <= -86400) {
+                return 0;
+            }
             return @intCast(identifier);
         }
-        const entry = bundle.zones[@intCast(identifier - named_zone_base)];
-        return self.rules.get(entry.offset).?.offsetSeconds(@divFloor(milliseconds, 1000));
+        const index = identifier - named_zone_base;
+        if (index >= bundle.zones.len) {
+            return 0;
+        }
+        const entry = bundle.zones[@intCast(index)];
+        const rules = self.rules.get(entry.offset) orelse return 0;
+        return rules.offsetSeconds(@divFloor(milliseconds, 1000));
     }
 };
 
@@ -132,18 +145,6 @@ pub const LocalZone = union(enum) {
         switch (self) {
             .file => |file| allocator.free(file.bytes),
             else => {},
-        }
-    }
-};
-
-pub const LocalResult = union(enum) {
-    zone: LocalZone,
-    out_of_memory,
-
-    pub fn free(self: LocalResult, allocator: std.mem.Allocator) void {
-        switch (self) {
-            .zone => |zone| zone.free(allocator),
-            .out_of_memory => {},
         }
     }
 };
@@ -198,14 +199,12 @@ pub const Rules = struct {
             .time_width = time_width,
             .recurrence = null,
         };
+        const last_nul_index = std.mem.lastIndexOfScalar(u8, designations, 0) orelse return error.InvalidTimeZoneData;
         for (0..header.type_count) |index| {
             const local_type = local_types[index * 6 ..][0..6];
             const offset = result.typeOffset(index);
-            const has_valid_type = offset >= -89999 and offset <= 93599 and local_type[4] <= 1 and local_type[5] < designations.len;
+            const has_valid_type = offset >= -89999 and offset <= 93599 and local_type[4] <= 1 and local_type[5] <= last_nul_index;
             if (!has_valid_type) {
-                return error.InvalidTimeZoneData;
-            }
-            if (std.mem.indexOfScalar(u8, designations[local_type[5]..], 0) == null) {
                 return error.InvalidTimeZoneData;
             }
             const is_standard = standard_flags.len != 0 and standard_flags[index] == 1;
@@ -367,6 +366,7 @@ test "timezone bundle metadata, checksums, aliases and bounded registry" {
         zone_count: usize,
         unique_rule_count: usize,
         zones: []const struct { name: []const u8, offset: u32, length: u32, sha256: []const u8 },
+        windows: std.json.ArrayHashMap([]const u8),
     };
     const manifest = try std.json.parseFromSlice(Manifest, std.testing.allocator, bundle.manifest, .{ .ignore_unknown_fields = true });
     defer manifest.deinit();
@@ -401,6 +401,14 @@ test "timezone bundle metadata, checksums, aliases and bounded registry" {
     }
     try std.testing.expectEqual(@as(usize, 344), manifest.value.unique_rule_count);
     try std.testing.expectEqual(manifest.value.unique_rule_count, registry.rules.count());
+    try std.testing.expectEqual(manifest.value.windows.map.count(), bundle.windows_zones.len);
+    for (bundle.windows_zones, 0..) |entry, index| {
+        const is_sorted = index == 0 or std.mem.order(u8, bundle.windows_zones[index - 1].windows_name, entry.windows_name) == .lt;
+        try std.testing.expect(is_sorted);
+        const expected = manifest.value.windows.map.get(entry.windows_name) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqualStrings(expected, entry.iana_name);
+        try std.testing.expect(Registry.findZone(entry.iana_name) != null);
+    }
     for ([_][]const u8{ "", "../UTC", "/UTC", "Etc//UTC", "Etc/UTC/", "Etc/../UTC", "UTC\x00", "utc", "right/UTC", "posix/UTC", "Not/AZone" }) |name| {
         try std.testing.expectEqual(@as(?i64, null), try registry.loadNamed(std.testing.allocator, name));
     }
@@ -501,4 +509,37 @@ test "local recurrence snapshots support full range and reject unrepresentable r
     }
     try std.testing.expect(!canRepresentLocalRecurrence(try Recurrence.parse("UTC24")));
     try std.testing.expect(!canRepresentLocalRecurrence(try Recurrence.parse("STD-23DST-24,M3.1.0,M10.1.0")));
+}
+
+test "registry bounds checks handle invalid or unloaded zone identifiers safely" {
+    var registry: Registry = .{};
+    defer registry.deinit(std.testing.allocator);
+    var buffer: [32]u8 = undefined;
+    for ([_]i64{ std.math.minInt(i64), -86400, named_zone_base, local_zone_id + 1, std.math.maxInt(i64) }) |identifier| {
+        try std.testing.expectEqual(@as(i32, 0), registry.offsetSeconds(identifier, 0));
+    }
+    try std.testing.expectEqual(@as(i32, 0), registry.offsetSeconds(local_zone_id, 0));
+    try std.testing.expectEqualStrings("UTC", registry.zoneName(std.math.minInt(i64), &buffer));
+    try std.testing.expectEqualStrings("UTC", registry.zoneName(-86400, &buffer));
+    try std.testing.expectEqualStrings("UTC", registry.zoneName(local_zone_id + 1, &buffer));
+    try std.testing.expectEqualStrings("UTC", registry.zoneName(std.math.maxInt(i64), &buffer));
+}
+
+test "timezone reader validates maximum types over large designations in linear time" {
+    const type_count: usize = 256;
+    const designation_count: usize = 65536;
+    const total = 44 + type_count * 6 + designation_count;
+    const payload = try std.testing.allocator.alloc(u8, total);
+    defer std.testing.allocator.free(payload);
+    @memset(payload, 'A');
+    @memcpy(payload[0..4], "TZif");
+    @memset(payload[4..36], 0);
+    std.mem.writeInt(u32, payload[36..40], type_count, .big);
+    std.mem.writeInt(u32, payload[40..44], designation_count, .big);
+    @memset(payload[44 .. 44 + type_count * 6], 0);
+    payload[total - 1] = 0;
+    const rules = try Rules.parse(payload);
+    try std.testing.expectEqual(@as(i32, 0), rules.offsetSeconds(0));
+    payload[total - 1] = 'A';
+    try std.testing.expectError(error.InvalidTimeZoneData, Rules.parse(payload));
 }

@@ -4,7 +4,6 @@ const VM = @import("../../vm.zig").VM;
 const Civil = @import("../../calendar.zig").Civil;
 const formatIsoMilliseconds = @import("../../time_format.zig").formatIsoMilliseconds;
 const PatternFormatter = @import("../../time_format.zig").PatternFormatter;
-const LocalJob = @import("../../io/time/timezone_job.zig").LocalJob;
 const RuntimeError = @import("../../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 const native = @import("../native.zig");
@@ -304,7 +303,7 @@ fn localTimezoneId(vm: *VM, _: []v.Value) anyerror!NativeResult {
         return native.ok(.{ .int64 = identifier });
     }
     const current = vm.running_task.?;
-    LocalJob.start(&vm.event_loop, &vm.scheduler, current, vm.environment) catch |failure| {
+    vm.event_loop.local_timezone.parkWaiter(&vm.event_loop, &vm.scheduler, &vm.timezones, current, vm.environment) catch |failure| {
         if (failure == error.OutOfMemory) {
             return failure;
         }

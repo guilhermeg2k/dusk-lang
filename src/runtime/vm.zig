@@ -156,10 +156,6 @@ pub const VM = struct {
             .ints => |ints| try self.allocIntArray(ints),
             .bytes => |bytes| try self.allocBytesValue(bytes, wake_result.kind),
             .names => |names| try self.allocStringArray(names),
-            .local_timezone => |*result| switch (result.*) {
-                .zone => |*snapshot| .{ .int64 = try self.timezones.installLocal(self.allocator, snapshot) },
-                .out_of_memory => error.OutOfMemory,
-            },
         };
     }
 
