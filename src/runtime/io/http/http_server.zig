@@ -3,28 +3,17 @@ const std = @import("std");
 pub const ServerState = struct {
     const Self = @This();
 
-    is_closing: bool = false,
-    idle_streams: std.AutoArrayHashMapUnmanaged(usize, void) = .empty,
+    idle_streams: std.AutoArrayHashMapUnmanaged(i64, void) = .empty,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         self.idle_streams.deinit(allocator);
     }
 
-    pub fn setIdle(self: *Self, allocator: std.mem.Allocator, stream_id: usize, is_idle: bool) !bool {
+    pub fn setIdle(self: *Self, allocator: std.mem.Allocator, stream_id: i64, is_idle: bool) !void {
         if (!is_idle) {
             _ = self.idle_streams.swapRemove(stream_id);
-            return true;
-        }
-        if (self.is_closing) {
-            return false;
+            return;
         }
         try self.idle_streams.put(allocator, stream_id, {});
-        return true;
-    }
-
-    pub fn takeIdleStreams(self: *Self) std.AutoArrayHashMapUnmanaged(usize, void) {
-        const streams = self.idle_streams;
-        self.idle_streams = .empty;
-        return streams;
     }
 };

@@ -319,29 +319,23 @@ fn markRequestBodyTooLarge(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn serverStateNew(vm: *VM, _: []v.Value) anyerror!NativeResult {
-    return ok(.{ .int64 = @intCast(try vm.event_loop.addHttpServer()) });
+    return ok(.{ .int64 = try vm.event_loop.addHttpServer() });
 }
 
 fn serverSetIdle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const server = vm.event_loop.httpServerAt(args[0].int64) orelse return ok(.{ .bool = false });
-    const is_kept = try server.setIdle(vm.event_loop.allocator, @intCast(args[1].int64), args[2].bool);
-    return ok(.{ .bool = is_kept });
+    try server.setIdle(vm.event_loop.allocator, args[1].int64, args[2].bool);
+    return ok(.{ .bool = true });
 }
 
 fn serverClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const server = vm.event_loop.httpServerAt(args[0].int64) orelse return ok(.{ .null = {} });
-    server.is_closing = true;
-    var idle = server.takeIdleStreams();
-    defer idle.deinit(vm.event_loop.allocator);
-    for (idle.keys()) |stream_id| {
-        vm.event_loop.closeStream(@intCast(stream_id));
-    }
+    vm.event_loop.closeHttpServer(args[0].int64);
     return ok(.{ .null = {} });
 }
 
 fn serverIsClosing(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const server = vm.event_loop.httpServerAt(args[0].int64) orelse return ok(.{ .bool = true });
-    return ok(.{ .bool = server.is_closing });
+    const is_closing = vm.event_loop.httpServerAt(args[0].int64) == null;
+    return ok(.{ .bool = is_closing });
 }
 
 fn httpDate(vm: *VM, _: []v.Value) anyerror!NativeResult {

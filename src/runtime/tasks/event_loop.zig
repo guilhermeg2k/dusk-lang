@@ -8,7 +8,7 @@ const Stream = @import("../io/stream/stream.zig").Stream;
 const Listener = @import("../io/net/tcp.zig").Listener;
 const OpenRequest = @import("../io/net/tcp.zig").OpenRequest;
 const ServerCertificate = @import("../io/net/tls_layer.zig").ServerCertificate;
-const CompressionStreams = @import("../io/compression/compression.zig").StreamTable;
+const CompressionStream = @import("../io/compression/compression.zig").CompressionStream;
 const CompressionJob = @import("../io/compression/compression_job.zig").CompressionJob;
 const HostSlots = @import("../io/http/host_slots.zig").HostSlots;
 const ResourceRegistry = @import("loop/resource_registry.zig").ResourceRegistry;
@@ -34,8 +34,8 @@ pub const EventLoop = struct {
     certificates: SlotTable(ServerCertificate) = .{},
     trust_store: TrustStore = .{},
     connection_pool: ConnectionPool = .{},
-    http_servers: std.ArrayList(ServerState) = .empty,
-    compression_streams: CompressionStreams = .{},
+    http_servers: SlotTable(ServerState) = .{},
+    compression_streams: SlotTable(CompressionStream) = .{},
     host_slots: HostSlots = .{},
     resources: ResourceRegistry = .{},
     stdin_stream_id: ?i64 = null,
@@ -55,7 +55,7 @@ pub const EventLoop = struct {
         defer self.freeCertificates();
         defer self.connection_pool.deinit(self.allocator);
         defer self.freeHttpServers();
-        defer self.compression_streams.deinit(self.allocator);
+        defer self.freeCompressionStreams();
         defer self.host_slots.deinit(self.allocator);
         defer self.resources.deinit(self.allocator);
         const loop = self.loop orelse return;
@@ -192,8 +192,9 @@ pub const EventLoop = struct {
                 self.closeStream(slot.table_id);
             },
             .listener => self.closeListener(slot.table_id),
-            .compression => self.compression_streams.remove(slot.table_id),
+            .compression => self.closeCompressionStream(slot.table_id),
             .certificate => self.closeCertificate(slot.table_id),
+            .http_server => self.closeHttpServer(slot.table_id),
         }
     }
 
@@ -277,22 +278,55 @@ pub const EventLoop = struct {
         stream.close();
     }
 
-    pub fn addHttpServer(self: *Self) !usize {
-        try self.http_servers.append(self.allocator, .{});
-        return self.http_servers.items.len - 1;
+    pub fn addCompressionStream(self: *Self, stream: *CompressionStream) !i64 {
+        try self.compression_streams.reserve(self.allocator);
+        return self.compression_streams.addAssumeCapacity(stream);
+    }
+
+    pub fn compressionStreamAt(self: *Self, compression_id: i64) ?*CompressionStream {
+        return self.compression_streams.get(compression_id);
+    }
+
+    pub fn closeCompressionStream(self: *Self, compression_id: i64) void {
+        const stream = self.compression_streams.remove(compression_id) orelse return;
+        stream.destroy(self.allocator);
+    }
+
+    fn freeCompressionStreams(self: *Self) void {
+        for (self.compression_streams.entries.items) |entry| {
+            const stream = entry orelse continue;
+            stream.destroy(self.allocator);
+        }
+        self.compression_streams.deinit(self.allocator);
+    }
+
+    pub fn addHttpServer(self: *Self) !i64 {
+        try self.http_servers.reserve(self.allocator);
+        const server = try self.allocator.create(ServerState);
+        server.* = .{};
+        return self.http_servers.addAssumeCapacity(server);
     }
 
     pub fn httpServerAt(self: *Self, server_id: i64) ?*ServerState {
-        const is_valid = server_id >= 0 and server_id < self.http_servers.items.len;
-        if (!is_valid) {
-            return null;
+        return self.http_servers.get(server_id);
+    }
+
+    pub fn closeHttpServer(self: *Self, server_id: i64) void {
+        const server = self.http_servers.remove(server_id) orelse return;
+        defer {
+            server.deinit(self.allocator);
+            self.allocator.destroy(server);
         }
-        return &self.http_servers.items[@intCast(server_id)];
+        for (server.idle_streams.keys()) |stream_id| {
+            self.closeStream(stream_id);
+        }
     }
 
     fn freeHttpServers(self: *Self) void {
-        for (self.http_servers.items) |*server| {
+        for (self.http_servers.entries.items) |entry| {
+            const server = entry orelse continue;
             server.deinit(self.allocator);
+            self.allocator.destroy(server);
         }
         self.http_servers.deinit(self.allocator);
     }

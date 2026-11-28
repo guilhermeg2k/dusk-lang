@@ -484,27 +484,56 @@ test "resources: a collection keeps moved owners and reports the ones nobody cop
     try testing.expectEqual(@as(u32, 7), heap.dead_resource_ids.items[0].registry_slot_version);
 }
 
-test "compression: the stream table reuses slots and rejects stale handles" {
+test "compression: the stream table reuses slots and rejects stale ids" {
     const compression = @import("runtime/io/compression/compression.zig");
-    const allocator = testing.allocator;
-    var table: compression.StreamTable = .{};
-    defer table.deinit(allocator);
-    const first = try table.add(allocator, compression.dusk_zip_compressor_new(.gzip, 6).?, .gzip, null);
-    const second = try table.add(allocator, compression.dusk_zip_decompressor_new(.zlib).?, .zlib, 10);
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop: EventLoop = .{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const first_stream = try testing.allocator.create(compression.CompressionStream);
+    first_stream.* = .{ .zip = compression.dusk_zip_compressor_new(.gzip, 6).?, .format = .gzip };
+    const first = try event_loop.addCompressionStream(first_stream);
+    const second_stream = try testing.allocator.create(compression.CompressionStream);
+    second_stream.* = .{ .zip = compression.dusk_zip_decompressor_new(.zlib).?, .format = .zlib, .max = 10 };
+    const second = try event_loop.addCompressionStream(second_stream);
     try testing.expect(first != second);
-    try testing.expect(table.find(first) != null);
-    try testing.expectEqual(@as(?usize, 10), table.find(second).?.max);
-    table.remove(first);
-    try testing.expect(table.find(first) == null);
-    table.remove(first);
-    const third = try table.add(allocator, compression.dusk_zip_compressor_new(.deflate, 1).?, .deflate, null);
+    try testing.expect(event_loop.compressionStreamAt(first) != null);
+    try testing.expectEqual(@as(?usize, 10), event_loop.compressionStreamAt(second).?.max);
+    event_loop.closeCompressionStream(first);
+    try testing.expect(event_loop.compressionStreamAt(first) == null);
+    event_loop.closeCompressionStream(first);
+    const third_stream = try testing.allocator.create(compression.CompressionStream);
+    third_stream.* = .{ .zip = compression.dusk_zip_compressor_new(.deflate, 1).?, .format = .deflate };
+    const third = try event_loop.addCompressionStream(third_stream);
     try testing.expectEqual(first & 0xffff_ffff, third & 0xffff_ffff);
     try testing.expect(third != first);
-    try testing.expect(table.find(first) == null);
-    try testing.expectEqual(compression.Format.deflate, table.find(third).?.format);
-    try testing.expect(table.find(-1) == null);
-    try testing.expect(table.find(12345) == null);
-    try testing.expectEqual(@as(usize, 2), table.slots.items.len);
+    try testing.expect(event_loop.compressionStreamAt(first) == null);
+    try testing.expectEqual(compression.Format.deflate, event_loop.compressionStreamAt(third).?.format);
+    try testing.expect(event_loop.compressionStreamAt(-1) == null);
+    try testing.expect(event_loop.compressionStreamAt(12345) == null);
+    try testing.expectEqual(@as(usize, 2), event_loop.compression_streams.entries.items.len);
+}
+
+test "http server: server table reuses slots, rejects stale ids and closes on resource sweep" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop: EventLoop = .{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const first = try event_loop.addHttpServer();
+    const second = try event_loop.addHttpServer();
+    try testing.expect(first != second);
+    try testing.expect(event_loop.httpServerAt(first) != null);
+    try event_loop.httpServerAt(first).?.setIdle(testing.allocator, 42, true);
+    event_loop.closeHttpServer(first);
+    try testing.expect(event_loop.httpServerAt(first) == null);
+    event_loop.closeHttpServer(first);
+    const third = try event_loop.addHttpServer();
+    try testing.expectEqual(first & 0xffff_ffff, third & 0xffff_ffff);
+    try testing.expect(third != first);
+    try testing.expect(event_loop.httpServerAt(first) == null);
+    try testing.expect(event_loop.httpServerAt(third) != null);
+    try testing.expectEqual(@as(usize, 2), event_loop.http_servers.entries.items.len);
+    const resource_id = try event_loop.resources.add(testing.allocator, .http_server, third);
+    event_loop.closeResource(resource_id);
+    try testing.expect(event_loop.httpServerAt(third) == null);
 }
 
 test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_query" {

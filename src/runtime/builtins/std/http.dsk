@@ -185,6 +185,7 @@ end
 struct Server
     ~listener: net::TcpListener
     ~server_id: int
+    ~owner: resource
     ~max_body: int
     ~head_timeout_ms: int
     ~idle_timeout_ms: int
@@ -199,6 +200,7 @@ struct Server
 
     func close(self: @) -> void
         server_close(self.server_id)
+        release(self.owner)
         self.listener.close()
     end
 
@@ -1340,7 +1342,8 @@ func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: i
     let listener = open_listener(host, port, cert, backlog) catch e then
         return from_net(e)
     end
-    return Server(listener = listener, server_id = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level)
+    let server_id = server_state_new()
+    return Server(listener = listener, server_id = server_id, owner = own(4, server_id), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level)
 end
 
 func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener

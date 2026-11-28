@@ -83,47 +83,59 @@ fn compressorNew(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
     const format: compression.Format = @enumFromInt(args[0].int64);
     const zip = compression.dusk_zip_compressor_new(format, @intCast(level)) orelse return error.OutOfMemory;
-    errdefer compression.dusk_zip_free(zip);
-    const compression_id = try vm.event_loop.compression_streams.add(vm.event_loop.allocator, zip, format, null);
-    return ok(.{ .int64 = compression_id });
+    return openStream(vm, zip, format, null);
 }
 
 fn decompressorNew(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const format: compression.Format = @enumFromInt(args[0].int64);
     const zip = compression.dusk_zip_decompressor_new(format) orelse return error.OutOfMemory;
-    errdefer compression.dusk_zip_free(zip);
-    const compression_id = try vm.event_loop.compression_streams.add(vm.event_loop.allocator, zip, format, maxArg(args[1]));
+    return openStream(vm, zip, format, maxArg(args[1]));
+}
+
+fn openStream(vm: *VM, zip: *compression.Zip, format: compression.Format, max: ?usize) anyerror!NativeResult {
+    const allocator = vm.event_loop.allocator;
+    const stream = allocator.create(compression.CompressionStream) catch |err| {
+        compression.dusk_zip_free(zip);
+        return err;
+    };
+    stream.* = .{ .zip = zip, .format = format, .max = max };
+    errdefer stream.destroy(allocator);
+    const compression_id = try vm.event_loop.addCompressionStream(stream);
     return ok(.{ .int64 = compression_id });
 }
 
 fn compressPart(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const streams = &vm.event_loop.compression_streams;
     const compression_id = args[0].int64;
-    const slot = streams.find(compression_id) orelse return fail(CompressionError.Finished);
+    const stream = vm.event_loop.compressionStreamAt(compression_id) orelse return fail(CompressionError.Finished);
     const mode: compression.FlushMode = @enumFromInt(args[2].int64);
     const allocator = std.heap.smp_allocator;
-    const output = compression.compressPart(allocator, slot.zip.?, bytesArg(args, 1), mode) catch |err| return streamFailure(err);
+    const output = compression.compressPart(allocator, stream.zip, bytesArg(args, 1), mode) catch |err| return streamFailure(err);
     defer allocator.free(output);
     if (mode == .finish) {
-        streams.remove(compression_id);
+        vm.event_loop.closeCompressionStream(compression_id);
     }
     return ok(try vm.allocBytesValue(output, .buffer));
 }
 
 fn decompressPart(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const slot = vm.event_loop.compression_streams.find(args[0].int64) orelse return fail(CompressionError.Finished);
+    const compression_id = args[0].int64;
+    const stream = vm.event_loop.compressionStreamAt(compression_id) orelse return fail(CompressionError.Finished);
     const allocator = std.heap.smp_allocator;
-    const output = compression.decompressPart(allocator, slot, bytesArg(args, 1)) catch |err| return streamFailure(err);
+    const output = compression.decompressPart(allocator, stream, bytesArg(args, 1)) catch |err| {
+        if (err == error.TooLarge) {
+            vm.event_loop.closeCompressionStream(compression_id);
+        }
+        return streamFailure(err);
+    };
     defer allocator.free(output);
     return ok(try vm.allocBytesValue(output, .buffer));
 }
 
 fn decompressFinish(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const streams = &vm.event_loop.compression_streams;
     const compression_id = args[0].int64;
-    const slot = streams.find(compression_id) orelse return fail(CompressionError.Finished);
-    const is_complete = slot.is_at_end;
-    streams.remove(compression_id);
+    const stream = vm.event_loop.compressionStreamAt(compression_id) orelse return fail(CompressionError.Finished);
+    const is_complete = stream.is_at_end;
+    vm.event_loop.closeCompressionStream(compression_id);
     if (!is_complete) {
         return fail(CompressionError.InvalidData);
     }
@@ -131,12 +143,12 @@ fn decompressFinish(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn isStreamAtEnd(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const slot = vm.event_loop.compression_streams.find(args[0].int64) orelse return ok(.{ .bool = false });
-    return ok(.{ .bool = slot.is_at_end });
+    const stream = vm.event_loop.compressionStreamAt(args[0].int64) orelse return ok(.{ .bool = false });
+    return ok(.{ .bool = stream.is_at_end });
 }
 
 fn closeStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    vm.event_loop.compression_streams.remove(args[0].int64);
+    vm.event_loop.closeCompressionStream(args[0].int64);
     return ok(.{ .null = {} });
 }
 
