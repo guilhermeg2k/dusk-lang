@@ -226,7 +226,7 @@ for lines: line do
     try out.write_bytes(try compressor.write_bytes(buffer::from_string(line)))
 end
 try out.write_bytes(try compressor.finish())
-out.close()
+try out.close()
 ```
 
 A level outside `0..9` fails with `InvalidLevel` on the first call. Once `finish()` or `close()` ran, every call fails with `Finished`. `flush()` costs a few bytes of output each time, so call it when the other side needs what was sent (a message, an event), not after every write. A `Decompressor` follows the same rules as `decompress`: a gzip stream may hold several members, other bytes after the end fail with `InvalidData`, and `max` counts all its output across calls. After a failure, `close()` the stream. A stream that's neither finished nor closed keeps its memory (about 300 KB for a compressor) until the garbage collector finds it unreachable, or the program ends.
@@ -238,14 +238,14 @@ let mut file = try fs::open("data.json.gz", fs::Mode.Write)
 let mut gz = try compression::writer(file, compression::Format.Gzip)
 try gz.write(json_text)
 try gz.finish()
-file.close()
+try file.close()
 
 let mut source = try fs::open("data.json.gz")
 let mut plain = try compression::reader(source, compression::Format.Gzip, max = 100000000)
 let copied = try io::copy(plain, io::stdout())
 ```
 
-A `Writer` has `write(text: string)`, `write_bytes(data: buffer)`, `flush()` (also flushes `inner`) and `finish()`, which ends the compressed stream and must be called last; it doesn't close `inner`. A `Reader` has `read_bytes(max: int, timeout_ms: int = -1)`, returning `null` after the end of the compressed stream, and `close()`. Errors are `io::IoError`: input that ends before the compressed stream does is `UnexpectedEnd`, bad data or going past `max` is `Other`, and writing after `finish` is `Closed`. `timeout_ms` applies to each read from `inner`.
+A `Writer` has `write(text: string)`, `write_bytes(data: buffer)`, `flush()` (also flushes `inner`) and `finish()`, which ends the compressed stream and must be called last; it doesn't close `inner`. A `Reader` has `read_bytes(max: int)`, returning `null` after the end of the compressed stream, and `close()`. Errors are `io::IoError`: input that ends before the compressed stream does is `UnexpectedEnd`, bad data or going past `max` is `Other`, and writing after `finish` is `Closed`.
 
 The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`, `InvalidLevel`, `Finished`, `Other`). It uses a bundled zlib-ng.
 
@@ -366,10 +366,11 @@ Interpolation formats primitives, arrays and nullables as their values. It forma
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
 | `read_line(max: int = -1, timeout_ms: int = -1)` | `IoError!?string` | The next line, without its `\n` or `\r\n`; the last line is returned even without a newline. `null` at the end of the input. |
-| `read_bytes(max: int, timeout_ms: int = -1)` | `IoError!?buffer` | Up to `max` bytes (at least 1), as soon as some are there: it doesn't wait for `max` of them. `null` at the end of the input. |
+| `read_bytes(max: int)` | `IoError!?buffer` | Up to `max` bytes (at least 1), as soon as some are there: it doesn't wait for `max` of them. `null` at the end of the input. Uses the timeout from `set_read_timeout`. |
 | `read_exact(count: int, timeout_ms: int = -1)` | `IoError!?buffer` | Exactly `count` bytes (at least 1), waiting until they're all there. `null` at the end of the input; `UnexpectedEnd` when the input ends partway, and the bytes that did arrive stay for the next read. |
-| `read_all(timeout_ms: int = -1)` | `IoError!string` | Everything until the end of the input, as text. |
-| `read_all_bytes(timeout_ms: int = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes. |
+| `read_all(max_bytes: int = -1, timeout_ms: int = -1)` | `IoError!string` | Everything until the end of the input, as text (fails with `TooLarge` past `max_bytes`). |
+| `read_all_bytes(max_bytes: int = -1, timeout_ms: int = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes (fails with `TooLarge` past `max_bytes`). |
+| `set_read_timeout(timeout_ms: int)` | `void` | Sets the default timeout in milliseconds for `read_bytes` (`-1`, the default: wait forever). |
 | `is_terminal()` | `bool` | Whether the input is a terminal (a person typing) rather than a pipe or a file. |
 | `close()` | `void` | Stops reading. Reading afterwards fails with `Closed`; closing twice does nothing. |
 
@@ -584,7 +585,7 @@ end
 - **Writes are buffered.** They collect in memory and go to the file when 64 KiB have built up, on `flush()`, on `close()` and when the program ends, so writing many small pieces is cheap. Until then another reader (`fs::read`, another process) doesn't see them. A failed write shows up at the next `write`, `flush`, `seek` or `close`.
 - **Reads** read ahead in pieces, without blocking other tasks. A second task reading the same file while one is waiting fails with `Busy`.
 - **Seeking** sends buffered writes first and forgets what was read ahead. It fails with `Busy` while another task is reading, with `Other` for a negative position, and with `Other` on a file opened with `Append` (its writes always go to the end). Seeking past the end of a file opened for writing and writing there leaves a gap of zero bytes.
-- Reading a file opened for writing, or writing one opened for reading, fails with `Other`. A `File` the program no longer reaches is closed after a garbage collection finds it, after its buffered writes are sent; one still reachable at the end is closed when the program ends the same way. Close files explicitly (`defer file.close()`) when the moment matters: a collection only runs when the program allocates enough. Several tasks writing to one `File` each get their writes in whole, in call order.
+- Reading a file opened for writing, or writing one opened for reading, fails with `Other`. A `File` the program no longer reaches is closed after a garbage collection finds it, after its buffered writes are sent; one still reachable at the end is closed when the program ends the same way. Close files explicitly (`try file.close()`, or `defer file.close() catch ...` when ignoring close errors) when the moment matters: a collection only runs when the program allocates enough. Several tasks writing to one `File` each get their writes in whole, in call order.
 - `File` fits `io::Reader` and `io::Writer`, so `io::copy(file, conn)` sends a file to a connection and `io::copy(conn, file)` saves one.
 
 ```nim
@@ -596,7 +597,7 @@ func main() -> !void
     for 1..3: i do
         try log.write("step ${i}\n")
     end
-    log.close()
+    try log.close()
 
     let file = try fs::open("app.log")
     for true do
@@ -609,7 +610,7 @@ func main() -> !void
     end
     try file.seek(-7, fs::SeekFrom.End)
     io::print(try file.read_all())      # step 3
-    file.close()
+    try file.close()
 end
 ```
 
@@ -640,10 +641,11 @@ A name is looked up first, and each of its addresses is tried in order until one
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
 | `read_line(max: int = -1, timeout_ms: int = -1)` | `io::IoError!?string` | The next line, without its `\n` or `\r\n`. `null` when the other side closed the connection. |
-| `read_bytes(max: int, timeout_ms: int = -1)` | `io::IoError!?buffer` | Up to `max` bytes, as soon as some are there. |
+| `read_bytes(max: int)` | `io::IoError!?buffer` | Up to `max` bytes, as soon as some are there. Uses the timeout from `set_read_timeout`. |
 | `read_exact(count: int, timeout_ms: int = -1)` | `io::IoError!?buffer` | Exactly `count` bytes. |
-| `read_all(timeout_ms: int = -1)` | `io::IoError!string` | Everything until the other side closes the connection, as text. |
-| `read_all_bytes(timeout_ms: int = -1)` | `io::IoError!buffer` | Same, as bytes. |
+| `read_all(max_bytes: int = -1, timeout_ms: int = -1)` | `io::IoError!string` | Everything until the other side closes the connection, as text (fails with `TooLarge` past `max_bytes`). |
+| `read_all_bytes(max_bytes: int = -1, timeout_ms: int = -1)` | `io::IoError!buffer` | Same, as bytes. |
+| `set_read_timeout(timeout_ms: int)` | `void` | Sets the default timeout in milliseconds for `read_bytes` (`-1`, the default: wait forever). |
 | `write(text: string)` | `io::IoError!void` | Sends `text`. |
 | `write_bytes(data: buffer)` | `io::IoError!void` | Sends the bytes of a `buffer`. |
 | `flush()` | `io::IoError!void` | Writes on a connection are never buffered, so there's nothing to send: it only fails with `Closed` after `close()`, like `write`. It's there so a connection fits `io::Writer`. |
@@ -906,10 +908,11 @@ A status code is never an error: a `404` or a `500` is a normal `Response`. Call
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `read_bytes(max: int, timeout_ms: int = -1)` | `io::IoError!?buffer` | Up to `max` bytes of the body; `null` once the body is over. |
+| `read_bytes(max: int)` | `io::IoError!?buffer` | Up to `max` bytes of the body; `null` once the body is over. Uses the timeout from `set_read_timeout`. |
 | `read_line(max: int = -1, timeout_ms: int = -1)` | `io::IoError!?string` | The next line of the body, without its `\n` or `\r\n`; `null` once the body is over. |
 | `read_all(timeout_ms: int = -1)` | `io::IoError!string` | The rest of the body, as text. |
 | `read_all_bytes(timeout_ms: int = -1)` | `io::IoError!buffer` | The rest of the body, as bytes. |
+| `set_read_timeout(timeout_ms: int)` | `void` | Sets the default timeout in milliseconds for `read_bytes` (`-1`, the default: wait forever). |
 | `close()` | `void` | Done with the response. Reads after it fail with `Closed`. |
 
 ```nim
@@ -930,7 +933,7 @@ func main() -> !void
 end
 ```
 
-A body that ends before its announced length, or that breaks the chunked format, fails with `UnexpectedEnd` or `Other`. `http::open` doesn't ask for compression, so the body comes as the server sent it.
+A body that ends before its announced length, or that breaks the chunked format, fails with `UnexpectedEnd` or `Other`.
 
 **Redirects.** A `301`, `302`, `303`, `307` or `308` response with a `Location` header is followed, up to `max_redirects` times; one more fails with `TooManyRedirects`. With `max_redirects = 0`, the redirect itself is returned. A `Location` relative to the current URL works, and a redirect to a URL that isn't `http` or `https` fails with `UnsupportedScheme`.
 
@@ -950,7 +953,7 @@ let resp = try http::request("https://example.com/backups", method = "PUT",
     body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
         let sent = try io::copy(file, out)
     end, length = try file.size())))
-file.close()
+try file.close()
 ```
 
 A request with a `stream` body, or a body of 1 MiB or more, asks the server first with `Expect: 100-continue` and waits up to a second for its go-ahead (servers that never answer it get the body after that second). A server that answers right away with a final status (`401`, `413`...) gets no body: the function isn't called, the response is returned as usual and the connection isn't reused. Setting `Expect` in `headers` turns this off. A streamed body can't be sent twice, so a `307` or `308` redirect is returned instead of followed, and a stale kept connection isn't retried.
@@ -1035,7 +1038,8 @@ end
 | `query_param(name: string)` | `?string` | The first value of a query parameter, decoded, with `+` read as a space. |
 | `text(timeout_ms: int = -1)` | `HttpError!string` | The body as text (`InvalidUtf8` when it isn't valid UTF-8). |
 | `bytes(timeout_ms: int = -1)` | `HttpError!buffer` | The body as bytes. |
-| `read_bytes(max: int, timeout_ms: int = -1)` | `io::IoError!?buffer` | The next piece of the body, up to `max` bytes; `null` at its end. For bodies too big to hold at once: it isn't limited by `max_body`. |
+| `read_bytes(max: int)` | `io::IoError!?buffer` | The next piece of the body, up to `max` bytes; `null` at its end. For bodies too big to hold at once: it isn't limited by `max_body`. Uses the timeout from `set_read_timeout`. |
+| `set_read_timeout(timeout_ms: int)` | `void` | Sets the default timeout in milliseconds for `read_bytes` (`-1`, the default: wait forever). |
 
 The body is read only when the handler asks for it. `text` and `bytes` fail with `BodyTooLarge` past `max_body` bytes, and with `InvalidRequest` when the client sends a broken body.
 
