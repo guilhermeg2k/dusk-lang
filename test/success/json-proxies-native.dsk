@@ -169,4 +169,11 @@ func main() -> !void
     let mut looped = Node(label = "loop", seen = at(0))
     array::append(looped.children, looped)
     assert(cycle_error(looped) == json::JsonError.CycleDetected)
+
+    let mut proxy_depth_failed = false
+    json::encode[Everything, Api](everything, options = @(max_depth = 1)) catch e then
+        assert(e == json::JsonError.DepthExceeded)
+        proxy_depth_failed = true
+    end
+    assert(proxy_depth_failed)
 end

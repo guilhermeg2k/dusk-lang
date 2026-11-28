@@ -181,7 +181,7 @@ const Encoder = struct {
                     }
                     is_first = false;
                     if (field.proxy) |site| {
-                        try self.visitSite(mode, site, item, self.planKind(field.plan), depth);
+                        try self.visitSite(mode, site, item, self.planKind(field.plan), depth + 1);
                         continue;
                     }
                     try self.visit(mode, field.plan, item, depth + 1);
@@ -200,7 +200,7 @@ const Encoder = struct {
                         try writeByte(',');
                     }
                     if (items.proxy) |site| {
-                        try self.visitSite(mode, site, item, self.planKind(items.item), depth);
+                        try self.visitSite(mode, site, item, self.planKind(items.item), depth + 1);
                         continue;
                     }
                     try self.visit(mode, items.item, item, depth + 1);
@@ -227,7 +227,7 @@ const Encoder = struct {
                         }
                         is_first = false;
                         if (items.proxy) |site| {
-                            try self.visitSite(mode, site, entry.value, self.planKind(items.item), depth);
+                            try self.visitSite(mode, site, entry.value, self.planKind(items.item), depth + 1);
                             continue;
                         }
                         try self.visit(mode, items.item, entry.value, depth + 1);
@@ -249,7 +249,7 @@ const Encoder = struct {
                     try writeKey(variant.name, true);
                 }
                 if (variant.proxy) |site| {
-                    try self.visitSite(mode, site, object.get(variant.tag), self.planKind(variant.plan), depth);
+                    try self.visitSite(mode, site, object.get(variant.tag), self.planKind(variant.plan), depth + 1);
                 } else {
                     try self.visit(mode, variant.plan, object.get(variant.tag), depth + 1);
                 }
@@ -454,7 +454,7 @@ fn allocRootedArray(vm: *VM, kind: v.ValueType, capacity: usize) !usize {
 }
 
 fn appendRootedItem(vm: *VM, array_root: usize, item_root: usize) !void {
-    var array = v.HeapValue.getParentPtr(v.Array, vm.heap.protectedValue(array_root).heap_obj);
+    var array = arrayOf(vm.heap.protectedValue(array_root));
     if (array.len == array.capacity) {
         array = try vm.growArray(&vm.heap.temporary_roots.items[array_root].value);
     }
