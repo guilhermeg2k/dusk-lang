@@ -306,7 +306,7 @@ pub const Parser = struct {
                 self.walk();
                 const next = self.peekCurrent();
                 const can_defer = switch (next.tag) {
-                    .defer_kw, .errdefer_kw, .return_kw, .break_kw, .continue_kw, .let_kw, .func_kw, .extern_kw, .struct_kw, .enum_kw, .union_kw, .error_kw, .trait_kw, .import_kw, .end_kw, .eof => false,
+                    .defer_kw, .errdefer_kw, .return_kw, .break_kw, .continue_kw, .let_kw, .func_kw, .extern_kw, .struct_kw, .enum_kw, .union_kw, .error_kw, .schema_kw, .trait_kw, .import_kw, .end_kw, .eof => false,
                     else => true,
                 };
                 if (!can_defer) {

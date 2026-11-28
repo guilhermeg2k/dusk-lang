@@ -1,0 +1,7 @@
+func main() -> void
+    for 1..3: i do
+        defer if i == 2 then
+            continue
+        end
+    end
+end

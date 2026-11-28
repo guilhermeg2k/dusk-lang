@@ -1,5 +1,7 @@
 import "std/array": append, len
 import "std/string"
+import "std/task"
+import "std/time"
 
 error Oops
     Bad
@@ -180,6 +182,85 @@ func lambda_errdefer(mut log: Log) -> !int
     return fine + failed
 end
 
+func with_rollback[E: error, T](mut log: Log, work: func() -> E!T) -> E!T
+    defer log.add("generic defer")
+    errdefer log.add("generic errdefer")
+    let value = try work()
+    return value
+end
+
+func nested_errdefer(mut log: Log, fail_inside: bool, fail_after: bool) -> Oops!void
+    errdefer log.add("outer errdefer")
+    if true then
+        errdefer log.add("inner errdefer")
+        if fail_inside then
+            return Oops.Bad
+        end
+        log.add("inner ok")
+    end
+    if fail_after then
+        return Oops.Worse
+    end
+end
+
+func nested_defer_and_lambda(mut log: Log) -> void
+    defer if true then
+        defer log.add("inner defer")
+        let inner = func() -> Oops!void
+            errdefer log.add("lambda inside defer errdefer")
+            return Oops.Bad
+        end
+        inner() catch e then end
+        log.add("outer defer body")
+    end
+    log.add("main body")
+end
+
+func if_capture_and_map_defer(mut log: Log, opt: ?string) -> void
+    if opt: value then
+        defer log.add("if_capture $value")
+        log.add("saw $value")
+    end
+    let entries = { "a": 1, "b": 2 }
+    for entries: v, k do
+        defer log.add("map $k=$v")
+    end
+end
+
+func catch_in_loop_defer(mut log: Log) -> void
+    for 1..3: i do
+        defer log.add("iter $i")
+        let _ = maybe(i == 2) catch e then
+            defer log.add("catch $i")
+            if i == 2 then
+                continue
+            end
+            return
+        end
+        log.add("ok $i")
+    end
+end
+
+func gc_during_return_defer(mut log: Log) -> string
+    let kept = string::concat("hello ", "world")
+    defer if true then
+        let mut garbage = ""
+        for 1..250: i do
+            garbage = string::concat(garbage, "x")
+        end
+        log.add("gc ${string::len(garbage)}")
+    end
+    return kept
+end
+
+func parked_defer(mut log: Log, should_fail: bool) -> Oops!int
+    defer task::sleep(time::milliseconds(1))
+    defer log.add("after sleep")
+    errdefer log.add("err after sleep")
+    let value = try maybe(should_fail)
+    return value
+end
+
 func main() -> !void
     let mut log = Log()
     order(log)
@@ -253,4 +334,53 @@ func main() -> !void
     end)
     await(job)
     assert(log.text() == "task body,task cleanup")
+
+    log = Log()
+    let plain_res = with_rollback(log, func() -> int
+        return 42
+    end)
+    assert(plain_res == 42)
+    assert(log.text() == "generic defer")
+
+    log = Log()
+    let fail_res = with_rollback(log, func() -> Oops!int
+        return Oops.Bad
+    end) catch -1
+    assert(fail_res == -1)
+    assert(log.text() == "generic errdefer,generic defer")
+
+    log = Log()
+    nested_errdefer(log, true, false) catch e then
+        assert(e == Oops.Bad)
+    end
+    assert(log.text() == "inner errdefer,outer errdefer")
+
+    log = Log()
+    nested_errdefer(log, false, true) catch e then
+        assert(e == Oops.Worse)
+    end
+    assert(log.text() == "inner ok,outer errdefer")
+
+    log = Log()
+    nested_defer_and_lambda(log)
+    assert(log.text() == "main body,lambda inside defer errdefer,outer defer body,inner defer")
+
+    log = Log()
+    if_capture_and_map_defer(log, "hi")
+    assert(log.text() == "saw hi,if_capture hi,map a=1,map b=2")
+
+    log = Log()
+    catch_in_loop_defer(log)
+    assert(log.text() == "ok 1,iter 1,catch 2,iter 2,ok 3,iter 3")
+
+    log = Log()
+    assert(gc_during_return_defer(log) == "hello world")
+    assert(log.text() == "gc 250")
+
+    log = Log()
+    assert(try parked_defer(log, false) == 5)
+    assert(log.text() == "after sleep")
+    log = Log()
+    assert((parked_defer(log, true) catch -1) == -1)
+    assert(log.text() == "err after sleep,after sleep")
 end

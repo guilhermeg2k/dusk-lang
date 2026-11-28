@@ -4058,16 +4058,19 @@ test "defer and errdefer: order, block scope, values read at exit, returns, fail
     try runCase("defer.dsk");
 }
 
-test "sema error: try, return or break leaving deferred code, errdefer in a function that can't fail" {
+test "sema error: try, return, break, continue or errdefer in deferred code, errdefer in a function that can't fail" {
     try runCaseError("sema/defer-try.dsk", error.TryInsideDefer);
     try runCaseError("sema/defer-return.dsk", error.ExitInsideDefer);
     try runCaseError("sema/defer-break.dsk", error.ExitInsideDefer);
+    try runCaseError("sema/defer-continue.dsk", error.ExitInsideDefer);
+    try runCaseError("sema/errdefer-inside-defer.dsk", error.ErrdeferInsideDefer);
     try runCaseError("sema/errdefer-non-failing.dsk", error.ErrdeferOutsideFailingFunction);
 }
 
 test "parser error: defer of a declaration or another defer" {
     try runCaseError("parser/defer-let.dsk", error.ParserError);
     try runCaseError("parser/defer-defer.dsk", error.ParserError);
+    try runCaseError("parser/defer-schema.dsk", error.ParserError);
 }
 
 test "optional chaining: method calls through ?. (values, void and mut self methods, arguments, chains, enums, unions) and fields of a struct's own nullable type" {

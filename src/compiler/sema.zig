@@ -1606,7 +1606,10 @@ pub const SemaAnalyzer = struct {
         if (self.fn_depth == 0) {
             return self.err_reporter.statementOutsideMain(stmt.loc);
         }
-        const can_fail = self.activeReturnInference() != null or self.type_table.isErrorUnion(self.scope.return_type_id);
+        if (defer_stmt.is_error_only and self.deferred_depth > 0) {
+            return self.err_reporter.errdeferInsideDefer(stmt.loc);
+        }
+        const can_fail = self.activeReturnInference() != null or self.type_table.isErrorUnion(self.scope.return_type_id) or self.has_none_error_slot;
         if (defer_stmt.is_error_only and !can_fail) {
             return self.err_reporter.errdeferOutsideFailingFunction(stmt.loc);
         }

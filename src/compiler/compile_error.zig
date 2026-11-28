@@ -549,6 +549,11 @@ pub const CompileErrorReporter = struct {
         return error.ErrdeferOutsideFailingFunction;
     }
 
+    pub fn errdeferInsideDefer(self: *Self, loc: Loc) CompileError {
+        self.log("errdefer can't be used in deferred code: deferred code can't return an error, so it would never run", loc);
+        return error.ErrdeferInsideDefer;
+    }
+
     pub fn tryOutsideFailingFunction(self: *Self, loc: Loc) CompileError {
         self.log("try can only be used at the top level or in a function that can fail (-> E!T or -> !T)", loc);
         return error.TryOutsideFailingFunction;
@@ -1227,6 +1232,7 @@ pub const CompileError = error{
     TryInsideDefault,
     ExitInsideDefer,
     ErrdeferOutsideFailingFunction,
+    ErrdeferInsideDefer,
     NotAFailingCall,
     ErrorNotInSet,
     PayloadSharesErrors,
