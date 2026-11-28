@@ -94,7 +94,7 @@ pub fn streamReadAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 pub fn readStream(vm: *VM, stream_id: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(stream_id) orelse return fail(IoError.Closed);
-    if (stream.waiter != null) {
+    if (stream.isBusy()) {
         return fail(IoError.Busy);
     }
     stream.ensureHandshakeStarted();

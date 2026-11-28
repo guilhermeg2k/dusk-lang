@@ -346,6 +346,10 @@ pub const Stream = struct {
         };
     }
 
+    pub fn isBusy(self: *const Self) bool {
+        return self.waiter != null or self.is_starting_tls;
+    }
+
     pub fn applyBackpressure(self: *Self) void {
         const is_full = self.waiter == null and self.bufferedBytes().len >= high_water_mark;
         if (is_full or self.has_ended or self.failure != null) {
@@ -364,6 +368,9 @@ pub const Stream = struct {
         const is_unusable_handle = self.kind == .closed_input or self.handle_memory.len == 0 or ((self.kind == .pipe or self.kind == .tty) and !self.has_uv_file_ownership);
         if (is_unusable_handle) {
             return .{ .failure = .Other };
+        }
+        if (self.is_starting_tls) {
+            return .{ .failure = .Busy };
         }
         const layer = self.tls_layer orelse return self.sendBytes(task, data);
         return stream_tls.write(self, layer, task, data);

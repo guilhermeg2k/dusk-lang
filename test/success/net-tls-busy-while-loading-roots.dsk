@@ -1,0 +1,49 @@
+import "std/io"
+import "std/net"
+import "std/fs"
+
+func write_error(conn: net::TcpConn, text: string) -> ?io::IoError
+    conn.write(text) catch e then
+        return e
+    end
+    return null
+end
+
+func read_error(conn: net::TcpConn) -> ?io::IoError
+    conn.read_line(timeout_ms = 50) catch e then
+        return e
+    end
+    return null
+end
+
+func handshake_error(conn: net::TcpConn) -> ?net::NetError
+    conn.handshake() catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let cert = try net::certificate(try fs::read("test/fixtures/tls/server.pem"), try fs::read("test/fixtures/tls/server.key"))
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    let server = spawn(func() -> !string
+        let conn = try listener.accept()
+        try conn.accept_tls(cert)
+        let line = try conn.read_line() orelse ""
+        conn.close()
+        return line
+    end)
+    let client = try net::tcp_connect("127.0.0.1", listener.port())
+    let other_task = spawn(func() -> void
+        assert(write_error(client, "plain\n") == io::IoError.Busy)
+        assert(read_error(client) == io::IoError.Busy)
+        assert(handshake_error(client) == net::NetError.HandshakeFailed)
+    end)
+    try client.start_tls("localhost")
+    await(other_task)
+    assert(client.is_tls())
+    try client.write("secret\n")
+    assert(try await(server) == "secret")
+    client.close()
+    listener.close()
+end

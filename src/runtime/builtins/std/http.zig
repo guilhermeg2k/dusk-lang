@@ -74,7 +74,7 @@ pub const bindings = native.BindingMap.initComptime(.{
 
 fn streamReadHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(HttpError.Closed);
-    if (stream.waiter != null) {
+    if (stream.isBusy()) {
         return fail(HttpError.Other);
     }
     stream.startHttpMessage(if (args[1].bool) .head_response else .response) catch return fail(HttpError.Other);
@@ -92,7 +92,7 @@ fn streamWaitData(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn streamReadRequestHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(HttpError.Closed);
-    if (stream.waiter != null) {
+    if (stream.isBusy()) {
         return fail(HttpError.Other);
     }
     stream.startHttpMessage(.request) catch return fail(HttpError.Other);
@@ -166,7 +166,7 @@ fn streamBodyAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn readHttp(vm: *VM, stream_id: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(stream_id) orelse return fail(HttpError.Closed);
-    if (stream.waiter != null) {
+    if (stream.isBusy()) {
         return fail(HttpError.Other);
     }
     stream.ensureHandshakeStarted();

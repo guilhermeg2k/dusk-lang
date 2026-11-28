@@ -36,7 +36,7 @@ extern func ~stream_close(stream_id: int) -> void
 extern func ~remote_host(stream_id: int) -> string
 extern func ~remote_port(stream_id: int) -> int
 extern func ~load_certificate(cert_pem: string, key_pem: string) -> NetError!int
-extern func ~listener_use_tls(listener_id: int, certificate_id: int) -> void
+extern func ~listener_use_tls(listener_id: int, certificate_id: int) -> NetError!void
 extern func ~stream_start_tls(stream_id: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> NetError!void
 extern func ~stream_accept_tls(stream_id: int, certificate_id: int, timeout_ms: int) -> NetError!void
 extern func ~stream_is_tls(stream_id: int) -> bool
@@ -175,7 +175,10 @@ end
 
 func tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128) -> NetError!TcpListener
     let listener = try tcp_listen(host, port, backlog)
-    listener_use_tls(listener.listener_id, cert.certificate_id)
+    listener_use_tls(listener.listener_id, cert.certificate_id) catch e then
+        listener.close()
+        return e
+    end
     return listener
 end
 

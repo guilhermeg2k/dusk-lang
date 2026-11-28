@@ -133,8 +133,9 @@ fn loadCertificate(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn listenerUseTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const listener = vm.event_loop.listenerAt(args[0].int64) orelse return ok(.{ .null = {} });
-    listener.setTlsCertificate(vm.event_loop.certificateAt(args[1].int64));
+    const listener = vm.event_loop.listenerAt(args[0].int64) orelse return fail(NetError.Other);
+    const certificate = vm.event_loop.certificateAt(args[1].int64) orelse return fail(NetError.InvalidCertificate);
+    listener.setTlsCertificate(certificate);
     return ok(.{ .null = {} });
 }
 
@@ -208,6 +209,9 @@ fn streamAcceptTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn streamHandshake(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
+    if (stream.is_starting_tls) {
+        return fail(NetError.HandshakeFailed);
+    }
     const current = vm.running_task.?;
     const wait = stream.awaitHandshake(current, timeoutArg(args[1].int64)) catch return fail(NetError.Other);
     return handshakeResult(current, wait);
