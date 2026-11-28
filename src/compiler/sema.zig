@@ -6335,11 +6335,14 @@ pub const SemaAnalyzer = struct {
             try text.appendSlice(self.allocator, "end\n");
         }
         try text.appendSlice(self.allocator, "end\n");
-        const captures = try self.allocator.alloc(tt.TypeId, 4);
+        const int = self.type_table.getPrimitive(.int);
+        const captures = try self.allocator.alloc(tt.TypeId, 6);
         captures[0] = value_type;
         captures[1] = out_type;
         captures[2] = children_type;
-        captures[3] = self.type_table.getPrimitive(.int);
+        captures[3] = int;
+        captures[4] = int;
+        captures[5] = int;
         const function = ir.SiteFunction{
             .uid = try self.registerSiteFunction(text.items, loc),
             .captures = captures,

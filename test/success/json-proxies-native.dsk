@@ -170,6 +170,60 @@ schema MutatingSchema
     end
 end
 
+struct ProxyLoop
+    next: ?ProxyLoop = null
+end
+
+struct ProxyLoopWire
+    next: ?ProxyLoop = null
+end
+
+func proxy_loop_to_wire(node: ProxyLoop) -> ProxyLoopWire
+    return ProxyLoopWire(next = node.next)
+end
+
+func wire_to_proxy_loop(wire: ProxyLoopWire) -> ProxyLoop
+    return ProxyLoop(next = wire.next)
+end
+
+struct FanA
+    children: []FanB = []
+end
+
+struct FanB
+    children: []FanA = []
+end
+
+struct FanAWire
+    children: []FanB = []
+end
+
+struct FanBWire
+    children: []FanA = []
+end
+
+func fan_a_to_wire(a: FanA) -> FanAWire
+    return FanAWire(children = a.children)
+end
+
+func wire_to_fan_a(w: FanAWire) -> FanA
+    return FanA(children = w.children)
+end
+
+func fan_b_to_wire(b: FanB) -> FanBWire
+    return FanBWire(children = b.children)
+end
+
+func wire_to_fan_b(w: FanBWire) -> FanB
+    return FanB(children = w.children)
+end
+
+schema ProxyCycleSchema
+    ProxyLoop: via(proxy_loop_to_wire, wire_to_proxy_loop)
+    FanA: via(fan_a_to_wire, wire_to_fan_a)
+    FanB: via(fan_b_to_wire, wire_to_fan_b)
+end
+
 func main() -> !void
     assert(serialization::is_proxied[Stamp, Api]())
     assert(serialization::is_proxied[?time::Timestamp, Api]())
@@ -273,4 +327,32 @@ func main() -> !void
     end
     let cross_json = try json::encode[[]CrossKindFields, MutatingSchema](cross_rows)
     assert(cross_json != "")
+
+    let mut proxy_loop = ProxyLoop()
+    proxy_loop.next = proxy_loop
+    let mut proxy_loop_failed = false
+    json::encode[ProxyLoop, ProxyCycleSchema](proxy_loop) catch e then
+        assert(e == json::JsonError.CycleDetected)
+        proxy_loop_failed = true
+    end
+    assert(proxy_loop_failed)
+
+    let mut fan_a = FanA()
+    let mut fan_b = FanB()
+    fan_a.children = [fan_b, fan_b]
+    fan_b.children = [fan_a, fan_a]
+    let mut fan_failed = false
+    json::encode[FanA, ProxyCycleSchema](fan_a) catch e then
+        assert(e == json::JsonError.CycleDetected)
+        fan_failed = true
+    end
+    assert(fan_failed)
+
+    let chain = ProxyLoop(next = ProxyLoop(next = ProxyLoop(next = ProxyLoop(next = ProxyLoop()))))
+    let mut chain_depth_failed = false
+    json::encode[ProxyLoop, ProxyCycleSchema](chain, options = @(max_depth = 3)) catch e then
+        assert(e == json::JsonError.DepthExceeded)
+        chain_depth_failed = true
+    end
+    assert(chain_depth_failed)
 end

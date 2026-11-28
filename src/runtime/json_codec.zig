@@ -64,7 +64,9 @@ pub fn collectSites(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     encoder.visit(.collect, @intCast(args[2].int64), args[0], 0) catch |failure| {
         return encodeFailure(failure);
     };
-    try encoder.createSiteClosures(roots, queue);
+    encoder.createSiteClosures(roots, queue, -1) catch |failure| {
+        return encodeFailure(failure);
+    };
     return native.ok(.{ .null = {} });
 }
 
@@ -82,11 +84,14 @@ pub fn collectNested(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
         const out = arrayOf(closure.captures()[1]);
         if (out.len == 0) continue;
         const children = try vm.heap.protectValue(closure.captures()[2], .array);
+        const site_depth: usize = @intCast(closure.captures()[4].int64);
         encoder.found.clearRetainingCapacity();
-        encoder.visit(.collect, @intCast(closure.captures()[3].int64), out.getDataPtr()[0], 0) catch |failure| {
+        encoder.visit(.collect, @intCast(closure.captures()[3].int64), out.getDataPtr()[0], site_depth) catch |failure| {
             return encodeFailure(failure);
         };
-        try encoder.createSiteClosures(children, queue);
+        encoder.createSiteClosures(children, queue, @intCast(i)) catch |failure| {
+            return encodeFailure(failure);
+        };
     }
     return native.ok(.{ .null = {} });
 }
@@ -122,6 +127,7 @@ const Level = struct {
 const FoundSite = struct {
     value: usize,
     site: serialization_plan.ProxySite,
+    depth: usize,
 };
 
 const Encoder = struct {
@@ -284,7 +290,7 @@ const Encoder = struct {
         const kind = self.siteValueKind(site);
         if (mode == .collect) {
             const root = try self.vm.heap.protectValue(value, kind);
-            try self.found.append(self.allocator, .{ .value = root, .site = site });
+            try self.found.append(self.allocator, .{ .value = root, .site = site, .depth = depth });
             return;
         }
         if (self.levels.items.len == 0) {
@@ -326,15 +332,38 @@ const Encoder = struct {
         return @as(u64, @bitCast(captured)) == @as(u64, @bitCast(value));
     }
 
-    fn createSiteClosures(self: *Encoder, level: usize, queue: usize) !void {
+    fn createSiteClosures(self: *Encoder, level: usize, queue: usize, parent: i64) !void {
         for (self.found.items) |entry| {
+            if (parent >= 0 and self.isAncestorInQueue(queue, parent, entry)) {
+                return error.CycleDetected;
+            }
             const out = try allocRootedArray(self.vm, self.planKind(entry.site.plan), 1);
             const children = try allocRootedArray(self.vm, .function, 2);
             const plan = try self.vm.heap.protectValue(.{ .int64 = entry.site.plan }, .int64);
-            const closure = try allocRootedClosure(self.vm, entry.site.encode_function, &.{ entry.value, out, children, plan });
+            const depth_root = try self.vm.heap.protectValue(.{ .int64 = @intCast(entry.depth) }, .int64);
+            const parent_root = try self.vm.heap.protectValue(.{ .int64 = parent }, .int64);
+            const closure = try allocRootedClosure(self.vm, entry.site.encode_function, &.{ entry.value, out, children, plan, depth_root, parent_root });
             try appendRootedItem(self.vm, level, closure);
             try appendRootedItem(self.vm, queue, closure);
         }
+    }
+
+    fn isAncestorInQueue(self: *Encoder, queue: usize, parent: i64, entry: FoundSite) bool {
+        if (!self.siteValueKind(entry.site).isHeapType()) {
+            return false;
+        }
+        const target = self.vm.heap.protectedValue(entry.value).heap_obj.followRelocated();
+        const items = arrayOf(self.vm.heap.protectedValue(queue)).getDataPtr();
+        var cursor = parent;
+        while (cursor >= 0) {
+            const ancestor = closureOf(items[@intCast(cursor)]);
+            const ancestor_kind = ancestor.function.kind.dusk.capture_kinds[0];
+            if (ancestor_kind.isHeapType() and ancestor.captures()[0].heap_obj.followRelocated() == target) {
+                return true;
+            }
+            cursor = ancestor.captures()[5].int64;
+        }
+        return false;
     }
 };
 
