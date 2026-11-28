@@ -1825,7 +1825,7 @@ Unknown fields are ignored by default, but their values must still be valid JSON
 
 Encoding includes null fields (unless the schema says `omit_null`) and fields equal to their defaults. Struct fields appear in declaration order, and map entries in insertion order. Shared objects are written independently wherever they occur; cycles fail with `CycleDetected`. Decoding does not restore sharing between separate JSON objects.
 
-**Schemas and proxies.** `json::encode[User, Api](user)` and `json::decode[User, Api](text)` use a schema's names. A fast built-in engine handles every type, proxies included: it reads or writes the other type, and only the `to` and `from` functions themselves run as Dusk code. A `from` that fails makes decoding fail with `InvalidValue`, and a `json::Diagnostic` then points at that value (its path and position).
+**Schemas and proxies.** `json::encode[User, Api](user)` and `json::decode[User, Api](text)` use a schema's names. A fast built-in engine handles every type, proxies included: it reads or writes the other type, and only the `to` and `from` functions themselves run as Dusk code. A `from` that fails makes decoding fail with `InvalidValue`, and a `json::Diagnostic` then points at that value (its path and position). Encoding fails with `InvalidValue` if a `to` function mutates the value being encoded.
 
 **Options.** `DecodeOptions` has `should_reject_unknown_fields: bool = false` and `max_depth: int = 128`. `EncodeOptions` has `max_depth: int = 128`. A depth limit must be between 1 and 512, otherwise the operation fails with `InvalidOptions`. Each array or object adds one level; nullable wrappers and scalar values do not. Ignored values use the same limit.
 

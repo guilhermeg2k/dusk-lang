@@ -42,6 +42,9 @@ pub fn encode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     encoder.visit(.write, @intCast(args[2].int64), args[0], 0) catch |failure| {
         return encodeFailure(failure);
     };
+    if (encoder.levels.items.len > 0 and encoder.levels.items[0].next != encoder.levels.items[0].list.len) {
+        return native.fail(JsonError.InvalidValue);
+    }
     return native.ok(try vm.allocBytesValue(encoded.items, .string));
 }
 
@@ -181,7 +184,7 @@ const Encoder = struct {
                     }
                     is_first = false;
                     if (field.proxy) |site| {
-                        try self.visitSite(mode, site, item, self.planKind(field.plan), depth + 1);
+                        try self.visitSite(mode, site, item, depth + 1);
                         continue;
                     }
                     try self.visit(mode, field.plan, item, depth + 1);
@@ -200,7 +203,7 @@ const Encoder = struct {
                         try writeByte(',');
                     }
                     if (items.proxy) |site| {
-                        try self.visitSite(mode, site, item, self.planKind(items.item), depth + 1);
+                        try self.visitSite(mode, site, item, depth + 1);
                         continue;
                     }
                     try self.visit(mode, items.item, item, depth + 1);
@@ -227,7 +230,7 @@ const Encoder = struct {
                         }
                         is_first = false;
                         if (items.proxy) |site| {
-                            try self.visitSite(mode, site, entry.value, self.planKind(items.item), depth + 1);
+                            try self.visitSite(mode, site, entry.value, depth + 1);
                             continue;
                         }
                         try self.visit(mode, items.item, entry.value, depth + 1);
@@ -249,7 +252,7 @@ const Encoder = struct {
                     try writeKey(variant.name, true);
                 }
                 if (variant.proxy) |site| {
-                    try self.visitSite(mode, site, object.get(variant.tag), self.planKind(variant.plan), depth + 1);
+                    try self.visitSite(mode, site, object.get(variant.tag), depth + 1);
                 } else {
                     try self.visit(mode, variant.plan, object.get(variant.tag), depth + 1);
                 }
@@ -257,7 +260,7 @@ const Encoder = struct {
                     try writeByte('}');
                 }
             },
-            .proxy => |site| try self.visitSite(mode, site, value, plan.kind, depth),
+            .proxy => |site| try self.visitSite(mode, site, value, depth),
             .nullable => unreachable,
         }
     }
@@ -266,7 +269,11 @@ const Encoder = struct {
         return self.vm.program.serialization_plans[plan_index].kind;
     }
 
-    fn visitSite(self: *Encoder, comptime mode: Mode, site: serialization_plan.ProxySite, value: v.Value, kind: v.ValueType, depth: usize) !void {
+    fn siteValueKind(self: *Encoder, site: serialization_plan.ProxySite) v.ValueType {
+        return self.vm.program.functions[site.encode_function].kind.dusk.capture_kinds[0];
+    }
+
+    fn visitSite(self: *Encoder, comptime mode: Mode, site: serialization_plan.ProxySite, value: v.Value, depth: usize) !void {
         const is_null = site.is_nullable_target and @as(u64, @bitCast(value)) == 0;
         if (is_null) {
             if (mode == .write) {
@@ -274,27 +281,49 @@ const Encoder = struct {
             }
             return;
         }
+        const kind = self.siteValueKind(site);
         if (mode == .collect) {
             const root = try self.vm.heap.protectValue(value, kind);
             try self.found.append(self.allocator, .{ .value = root, .site = site });
             return;
         }
         if (self.levels.items.len == 0) {
-            return error.InvalidJson;
+            return error.InvalidValue;
         }
         const level = &self.levels.items[self.levels.items.len - 1];
         if (level.next >= level.list.len) {
-            return error.InvalidJson;
+            return error.InvalidValue;
         }
         const closure = closureOf(level.list.getDataPtr()[level.next]);
         level.next += 1;
+        if (!self.isSameSite(closure, site, value, kind)) {
+            return error.InvalidValue;
+        }
         const out = arrayOf(closure.captures()[1]);
         if (out.len == 0) {
-            return error.InvalidJson;
+            return error.InvalidValue;
         }
         try self.levels.append(self.allocator, .{ .list = arrayOf(closure.captures()[2]) });
         defer _ = self.levels.pop();
         try self.visit(.write, site.plan, out.getDataPtr()[0], depth);
+        const child_level = self.levels.items[self.levels.items.len - 1];
+        if (child_level.next != child_level.list.len) {
+            return error.InvalidValue;
+        }
+    }
+
+    fn isSameSite(self: *Encoder, closure: *v.Closure, site: serialization_plan.ProxySite, value: v.Value, kind: v.ValueType) bool {
+        if (closure.function != &self.vm.program.functions[site.encode_function]) {
+            return false;
+        }
+        if (closure.captures()[3].int64 != site.plan) {
+            return false;
+        }
+        const captured = closure.captures()[0];
+        if (kind.isHeapType()) {
+            return captured.heap_obj.followRelocated() == value.heap_obj.followRelocated();
+        }
+        return @as(u64, @bitCast(captured)) == @as(u64, @bitCast(value));
     }
 
     fn createSiteClosures(self: *Encoder, level: usize, queue: usize) !void {

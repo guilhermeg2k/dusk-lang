@@ -96,6 +96,80 @@ func cycle_error(node: Node) -> ?json::JsonError
     return null
 end
 
+struct MutatingItem
+    id: int
+end
+
+struct MutatingOther
+    label: string
+end
+
+let mut shared_items: []MutatingItem = []
+
+func mutating_item_to_int(item: MutatingItem) -> int
+    if array::len(shared_items) > 1 then
+        let popped = array::pop(shared_items) catch e then
+            return item.id
+        end
+    end
+    return item.id
+end
+
+func int_to_mutating_item(id: int) -> MutatingItem
+    return MutatingItem(id = id)
+end
+
+func mutating_other_to_string(other: MutatingOther) -> string
+    return other.label
+end
+
+func string_to_mutating_other(label: string) -> MutatingOther
+    return MutatingOther(label = label)
+end
+
+struct MutatingPair
+    items: []MutatingItem
+    other: MutatingOther
+end
+
+struct MutatingTail
+    items: []MutatingItem
+end
+
+struct BoxedNumber
+    n: int
+end
+
+func int_to_tag(n: int) -> string
+    return "n${n}"
+end
+
+func tag_to_int(tag: string) -> int
+    return 0
+end
+
+func box_to_int(box: BoxedNumber) -> int
+    return box.n
+end
+
+func int_to_box(n: int) -> BoxedNumber
+    return BoxedNumber(n = n)
+end
+
+struct CrossKindFields
+    as_string: int
+    as_int: BoxedNumber
+end
+
+schema MutatingSchema
+    MutatingItem: via(mutating_item_to_int, int_to_mutating_item)
+    MutatingOther: via(mutating_other_to_string, string_to_mutating_other)
+    struct CrossKindFields
+        as_string: via(int_to_tag, tag_to_int)
+        as_int: via(box_to_int, int_to_box)
+    end
+end
+
 func main() -> !void
     assert(serialization::is_proxied[Stamp, Api]())
     assert(serialization::is_proxied[?time::Timestamp, Api]())
@@ -176,4 +250,27 @@ func main() -> !void
         proxy_depth_failed = true
     end
     assert(proxy_depth_failed)
+
+    shared_items = [MutatingItem(id = 1094795585), MutatingItem(id = 2)]
+    let mut pair_failed = false
+    json::encode[MutatingPair, MutatingSchema](MutatingPair(items = shared_items, other = MutatingOther(label = "ok"))) catch e then
+        assert(e == json::JsonError.InvalidValue)
+        pair_failed = true
+    end
+    assert(pair_failed)
+
+    shared_items = [MutatingItem(id = 1), MutatingItem(id = 2)]
+    let mut tail_failed = false
+    json::encode[MutatingTail, MutatingSchema](MutatingTail(items = shared_items)) catch e then
+        assert(e == json::JsonError.InvalidValue)
+        tail_failed = true
+    end
+    assert(tail_failed)
+
+    let mut cross_rows: []CrossKindFields = []
+    for 0..500: i do
+        array::append(cross_rows, CrossKindFields(as_string = i + 1000, as_int = BoxedNumber(n = i)))
+    end
+    let cross_json = try json::encode[[]CrossKindFields, MutatingSchema](cross_rows)
+    assert(cross_json != "")
 end
