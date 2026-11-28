@@ -5,6 +5,7 @@ import "std/fs"
 import "std/io"
 import "std/map"
 import "std/net"
+import "std/os"
 import "std/string"
 import "std/task"
 import "std/time"
@@ -159,12 +160,12 @@ struct ResponseStream
         return try stream_body_line(self.stream_id, max, timeout_ms)
     end
 
-    func read_all(mut self: @, timeout_ms: int = -1) -> io::IoError!string
-        return try stream_body_all(self.stream_id, timeout_ms)
+    func read_all(mut self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!string
+        return try stream_body_all(self.stream_id, max_bytes, timeout_ms)
     end
 
-    func read_all_bytes(mut self: @, timeout_ms: int = -1) -> io::IoError!buffer
-        return try stream_body_all_bytes(self.stream_id, timeout_ms)
+    func read_all_bytes(mut self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!buffer
+        return try stream_body_all_bytes(self.stream_id, max_bytes, timeout_ms)
     end
 
     func set_read_timeout(self: @, timeout_ms: int) -> void
@@ -188,11 +189,14 @@ struct Server
     ~owner: resource
     ~max_body: int
     ~head_timeout_ms: int
+    ~body_timeout_ms: int
     ~idle_timeout_ms: int
     ~write_timeout_ms: int
     ~max_connections: int
     ~compress: bool
     ~compression_level: int
+    ~stop_on_signal: bool
+    ~shutdown_timeout_ms: int
 
     func port(self: @) -> int
         return self.listener.port()
@@ -208,6 +212,8 @@ struct Server
         let report = on_error orelse func(request: Request, failure: Failure[E]) -> void
             print_failure(request, failure)
         end
+        let stop_signals = if self.stop_on_signal then watch_stop_signals(self) else [] end
+        let mut open_connections: map[int, bool] = {}
         let mut active = 0
         for true do
             let is_full = self.max_connections > 0 and active >= self.max_connections
@@ -215,25 +221,68 @@ struct Server
                 if server_is_closing(self.server_id) then
                     break
                 end
-                task::sleep(1)
+                task::sleep(time::milliseconds(1))
                 continue
             end
             let conn = self.listener.accept() catch e then
                 if e == io::IoError.Closed then
                     break
                 end
-                task::sleep(10)
+                task::sleep(time::milliseconds(10))
                 continue
             end
+            let handle = conn_stream_id(conn)
+            open_connections[handle] = true
             active = active + 1
             spawn(func() -> void
                 serve_connection(self, conn, handler, report)
+                map::remove(open_connections, handle)
                 active = active - 1
             end)
         end
+        let closed_ns = time::monotonic_ns()
         for active > 0 do
-            task::sleep(10)
+            let waited_ms = (time::monotonic_ns() - closed_ns) // 1000000
+            let has_waited_enough = self.shutdown_timeout_ms >= 0 and waited_ms >= self.shutdown_timeout_ms
+            if has_waited_enough then
+                for open_connections: _, handle do
+                    stream_close(handle)
+                end
+                break
+            end
+            task::sleep(time::milliseconds(10))
         end
+        close_all(stop_signals)
+    end
+end
+
+func ~watch_stop_signals(server: Server) -> []os::SignalStream
+    let mut streams: []os::SignalStream = []
+    for [os::Signal.Interrupt, os::Signal.Terminate]: signal do
+        let mut stream = os::watch_signal(signal) catch e then
+            continue
+        end
+        append(streams, stream)
+    end
+    for streams: stream do
+        close_on_signal(server, stream, streams)
+    end
+    return streams
+end
+
+func ~close_on_signal(server: Server, stream: os::SignalStream, streams: []os::SignalStream) -> void
+    spawn(func() -> void
+        stream.wait() catch e then
+            return
+        end
+        close_all(streams)
+        server.close()
+    end)
+end
+
+func ~close_all(streams: []os::SignalStream) -> void
+    for streams: stream do
+        stream.close()
     end
 end
 
@@ -441,12 +490,15 @@ extern func ~stream_write_bytes(stream_id: int, data: buffer) -> io::IoError!voi
 extern func ~stream_set_read_timeout(stream_id: int, timeout_ms: int) -> void
 extern func ~stream_set_write_timeout(stream_id: int, timeout_ms: int) -> void
 extern func ~stream_close(stream_id: int) -> void
+extern func ~open_descriptor(path: string, mode: fs::Mode, permissions: int, follow_symlinks: bool) -> fs::FsError![]int
+extern func ~file_stream(descriptor: int, size: int, mode: fs::Mode) -> int
+extern func ~stream_read_bytes(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?buffer
 extern func ~stream_read_head(stream_id: int, is_head_request: bool, timeout_ms: int) -> HttpError!?buffer
 extern func ~stream_read_whole_body(stream_id: int, cap: int, timeout_ms: int) -> HttpError!buffer
 extern func ~stream_body_bytes(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?buffer
 extern func ~stream_body_line(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?string
-extern func ~stream_body_all(stream_id: int, timeout_ms: int) -> io::IoError!string
-extern func ~stream_body_all_bytes(stream_id: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~stream_body_all(stream_id: int, max_bytes: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_body_all_bytes(stream_id: int, max_bytes: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
 extern func ~stream_decode_body(stream_id: int, format: compression::Format) -> void
 extern func ~pool_take(key: string) -> int
@@ -1265,17 +1317,16 @@ func stream(write: func(mut BodyWriter) -> io::IoError!void, content_type: strin
 end
 
 func file(path: string, content_type: string, status: int = 200) -> fs::FsError!Response
-    let opened = try fs::open(path)
-    let size = opened.size() catch e then
-        opened.close() catch ce then end
-        return fs::FsError.Other
-    end
+    let opened = try open_descriptor(path, fs::Mode.Read, 438, true)
+    let size = opened[1]
+    let stream_id = file_stream(opened[0], size, fs::Mode.Read)
+    let owner = own(0, stream_id)
     return stream(func(mut writer: BodyWriter) -> io::IoError!void
-        send_file(opened, writer) catch e then
-            opened.close() catch ce then end
+        send_file(stream_id, size, writer) catch e then
+            close_file(stream_id, owner)
             return e
         end
-        try opened.close()
+        close_file(stream_id, owner)
     end, content_type = content_type, status = status, length = size)
 end
 
@@ -1320,37 +1371,45 @@ func content_type_of(path: string) -> string
     end
 end
 
-func ~send_file(opened: fs::File, mut writer: BodyWriter) -> io::IoError!void
-    for true do
-        let piece = try opened.read_bytes(FILE_PIECE_SIZE)
+func ~send_file(handle: int, size: int, mut writer: BodyWriter) -> io::IoError!void
+    let mut remaining = size
+    for remaining > 0 do
+        let wanted = if remaining < FILE_PIECE_SIZE then remaining else FILE_PIECE_SIZE end
+        let piece = try stream_read_bytes(handle, wanted, -1)
         if piece: data then
             try writer.write_bytes(data)
+            remaining = remaining - buffer::len(data)
         else
             return
         end
     end
 end
 
+func ~close_file(handle: int, owner: resource) -> void
+    stream_close(handle)
+    release(owner)
+end
+
 func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
 
-func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6) -> HttpError!Server
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, body_timeout_ms: int = 30000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000, reuse_port: bool = false) -> HttpError!Server
     if compression_level < 0 or compression_level > 9 then
         invalid_compression_level(compression_level)
     end
-    let listener = open_listener(host, port, cert, backlog) catch e then
+    let listener = open_listener(host, port, cert, backlog, reuse_port) catch e then
         return from_net(e)
     end
     let server_id = server_state_new()
-    return Server(listener = listener, server_id = server_id, owner = own(4, server_id), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level)
+    return Server(listener = listener, server_id = server_id, owner = own(7, server_id), max_body = max_body, head_timeout_ms = head_timeout_ms, body_timeout_ms = body_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level, stop_on_signal = stop_on_signal, shutdown_timeout_ms = shutdown_timeout_ms)
 end
 
-func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener
+func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int, reuse_port: bool) -> net::NetError!net::TcpListener
     if cert: certificate then
-        return try net::tls_listen(host, port, certificate, backlog)
+        return try net::tls_listen(host, port, certificate, backlog, reuse_port)
     end
-    return try net::tcp_listen(host, port, backlog)
+    return try net::tcp_listen(host, port, backlog, reuse_port)
 end
 
 func ~print_failure[E: error](request: Request, failure: Failure[E]) -> void
@@ -1381,6 +1440,7 @@ func ~serve_request[E: error](server: Server, conn: net::TcpConn, stream_id: int
             reject(stream_id, HttpError.InvalidRequest)
             return false
         end
+        stream_set_read_timeout(stream_id, server.body_timeout_ms)
         let response = handler(request) catch e then
             let body_failure = request_body_failure(stream_id)
             if body_failure == BODY_TOO_LARGE then
@@ -1401,6 +1461,7 @@ func ~next_head(server: Server, stream_id: int, is_first: bool) -> HttpError!?bu
     if !server_set_idle(server.server_id, stream_id, true) then
         return null
     end
+    stream_set_read_timeout(stream_id, -1)
     let wait_ms = if is_first then server.head_timeout_ms else server.idle_timeout_ms end
     let ready = stream_wait_data(stream_id, wait_ms) catch e then
         server_set_idle(server.server_id, stream_id, false)

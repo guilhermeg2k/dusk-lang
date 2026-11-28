@@ -7,7 +7,7 @@ const vm = @import("runtime/vm.zig");
 
 const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
-const Map = @import("runtime/value.zig").Map;
+const hash_seed = @import("runtime/hash_seed.zig");
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 pub const Stdio = @import("runtime/io/stdio.zig").Stdio;
 
@@ -38,8 +38,12 @@ pub const Dusk = struct {
     stdio: Stdio = .{},
     stdin_fd: c_int = 0,
     io: std.Io,
+    program_args: []const []const u8 = &.{},
+    environment: ?*const std.process.Environ.Map = null,
+    exit_code: u8 = 0,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
+        self.exit_code = 1;
         const cwd = std.Io.Dir.cwd();
         const input_file_content = cwd.readFileAlloc(self.io, file_path, self.allocator, .unlimited) catch |failure| {
             return CliErrorReporter.cantReadFile(file_path, failure);
@@ -72,15 +76,20 @@ pub const Dusk = struct {
     }
 
     pub fn compileAndRun(self: *Self, src: []const u8) !void {
+        self.exit_code = 1;
         const program = try self.compile(src);
         try self.runProgram(&program);
     }
 
     pub fn runProgram(self: *Self, program: *const bc.Program) !void {
-        Map.randomizeSeeds(self.io);
+        self.exit_code = 1;
+        hash_seed.randomize(self.io);
         var v = VM.init(program, self.stdio, self.io);
         v.stdin_fd = self.stdin_fd;
+        v.program_args = self.program_args;
+        v.environment = self.environment;
         defer v.deinit();
         try v.run();
+        self.exit_code = v.exit_code;
     }
 };

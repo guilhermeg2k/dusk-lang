@@ -3,6 +3,7 @@ import "std/net"
 import "std/string"
 import "std/buffer"
 import "std/task"
+import "std/time"
 
 func echo_lines(conn: net::TcpConn) -> io::IoError!void
     for true do
@@ -45,7 +46,7 @@ func main() -> !void
     let big = try string::repeat("0123456789abcdef", 1048576)
     let receiver = spawn(func() -> io::IoError!string
         let conn = try listener.accept()
-        task::sleep(20)
+        task::sleep(time::milliseconds(20))
         let text = try conn.read_all()
         conn.close()
         return text
@@ -59,7 +60,7 @@ func main() -> !void
     let block_b = try string::repeat("b", 4194304)
     let collector = spawn(func() -> io::IoError!string
         let conn = try listener.accept()
-        task::sleep(20)
+        task::sleep(time::milliseconds(20))
         let text = try conn.read_all()
         conn.close()
         return text
@@ -90,7 +91,7 @@ func main() -> !void
         lonely.write("ping\n") catch e then
             write_error = io_error_name(e)
         end
-        task::sleep(1)
+        task::sleep(time::milliseconds(1))
         attempts = attempts + 1
     end
     assert(write_error == "broken" or write_error == "reset")

@@ -1,0 +1,18 @@
+error A
+    Foo
+end
+
+error B
+    Bar
+end
+
+error Combined = A | B
+
+func check(e: Combined) -> int
+    when e
+        A.Foo then return 1 end
+    end
+end
+
+func main() -> void
+end

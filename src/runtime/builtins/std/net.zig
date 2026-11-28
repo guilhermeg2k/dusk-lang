@@ -55,7 +55,7 @@ pub fn openTcpStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn openTcpListener(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const backlog: c_int = @intCast(std.math.clamp(args[2].int64, 1, std.math.maxInt(u16)));
-    return openTcp(vm, args, .{ .listen = backlog }, null);
+    return openTcp(vm, args, .{ .listen = .{ .backlog = backlog, .reuse_port = args[3].bool } }, null);
 }
 
 fn openTcp(vm: *VM, args: []v.Value, purpose: tcp.Purpose, timeout_ms: ?u64) anyerror!NativeResult {

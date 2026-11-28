@@ -50,7 +50,21 @@ func increment(n: int) -> int
     return n + 1
 end
 
+func second_of[T, U](first: T, second: U) -> U
+    return second
+end
+
+func convert[T, U](value: T, fallback: U) -> []U
+    return [fallback]
+end
+
 func main() -> !void
+    assert(second_of[int](1, "a") == "a")
+    assert(second_of[float](1, 2) == 2)
+    let converted = convert[string]("x", @(name = "Ana"))
+    assert(converted[0].name == "Ana")
+    let listed: []int = convert[float](1.5, 7)
+    assert(listed[0] == 7)
     let user = keep[User](User(name = "Ada"))
     assert(user.name == "Ada")
     assert(keep[int](3) == 3)

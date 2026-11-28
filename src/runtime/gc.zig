@@ -5,6 +5,7 @@ const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const TaskState = @import("tasks/scheduler.zig").TaskState;
 
 const MIN_GC_THRESHOLD = 1000000; //1MB
+const kept_temporary_roots_capacity = 4096;
 
 pub const Heap = struct {
     const Self = @This();
@@ -16,6 +17,7 @@ pub const Heap = struct {
     object_count: usize = 0,
     allocated: usize = 0,
     threshold: usize = MIN_GC_THRESHOLD,
+    temporary_roots: std.ArrayList(NativeRoot) = .empty,
     resources: std.ArrayList(*v.HeapValue) = .empty,
     dead_resource_ids: std.ArrayList(v.ResourceId) = .empty,
 
@@ -31,6 +33,7 @@ pub const Heap = struct {
 
     pub fn deinit(self: *Self) void {
         self.gc_queue.deinit(self.queue_allocator);
+        self.temporary_roots.deinit(self.queue_allocator);
         self.resources.deinit(self.queue_allocator);
         self.dead_resource_ids.deinit(self.queue_allocator);
         for (&self.arenas) |*arena| arena.deinit();
@@ -46,6 +49,11 @@ pub const Heap = struct {
 
         var collector = Collector{ .heap = self, .program = program, .to_space = self.arenas[inactive].allocator() };
 
+        for (self.temporary_roots.items) |*root| {
+            if (root.kind.isHeapType()) {
+                try collector.copyHeapValue(&root.value);
+            }
+        }
         scheduler.clearReachable();
         for (scheduler.tasks.items) |task| {
             try collector.copyTaskRoots(task);
@@ -79,6 +87,24 @@ pub const Heap = struct {
         try self.resources.append(self.queue_allocator, owner);
     }
 
+    pub fn protectValue(self: *Self, value: v.Value, kind: v.ValueType) !usize {
+        const index = self.temporary_roots.items.len;
+        try self.temporary_roots.append(self.queue_allocator, .{ .value = value, .kind = kind });
+        return index;
+    }
+
+    pub fn protectedValue(self: *Self, index: usize) v.Value {
+        return self.temporary_roots.items[index].value;
+    }
+
+    pub fn restoreRootCount(self: *Self, count: usize) void {
+        if (count == 0 and self.temporary_roots.capacity > kept_temporary_roots_capacity) {
+            self.temporary_roots.clearAndFree(self.queue_allocator);
+            return;
+        }
+        self.temporary_roots.shrinkRetainingCapacity(count);
+    }
+
     fn shrinkOldArena(self: *Self) !void {
         const old_idx: u1 = self.active ^ 1;
         if (self.arenas[old_idx].queryCapacity() <= self.threshold) return;
@@ -99,6 +125,11 @@ pub const Heap = struct {
         self.allocated += bytes;
         self.object_count += 1;
     }
+};
+
+pub const NativeRoot = struct {
+    value: v.Value,
+    kind: v.ValueType,
 };
 
 const Collector = struct {

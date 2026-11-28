@@ -1,0 +1,27 @@
+import "std/json"
+
+struct First
+    value: int
+end
+
+struct Second
+    value: int
+end
+
+func first_to_second(a: First) -> Second
+    return Second(value = a.value)
+end
+
+func second_to_first(b: Second) -> First
+    return First(value = b.value)
+end
+
+schema LoopSchema
+    First: via(first_to_second, second_to_first)
+    Second: via(second_to_first, first_to_second)
+end
+
+func main() -> !void
+    let text = try json::encode[First, LoopSchema](First(value = 1))
+    assert(text != "")
+end

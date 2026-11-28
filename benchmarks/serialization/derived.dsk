@@ -1,0 +1,18 @@
+import @/format
+import std/serialization
+import std/array
+import std/io
+
+func main() -> !void
+    let text = format::sample_text()
+    let mut checksum = 0
+    for 0..19999: i do
+        let mut reader = format::reader_for(text)
+        let user = try serialization::decode[format::User, format::JsonReader](reader)
+        checksum = checksum + user.id + array::len(user.friends) + user.created
+        let mut writer = format::JsonWriter()
+        try serialization::encode(user, writer)
+        checksum = checksum + array::len(writer.parts)
+    end
+    io::println("${checksum}")
+end

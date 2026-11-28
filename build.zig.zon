@@ -1,9 +1,10 @@
 .{
     .name = .dusk,
-    .version = "0.16.0",
+    .version = "0.17.0-devel",
     .fingerprint = 0x194887165dc2592d,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
+        .timezone_data = .{ .path = "vendor/timezone-data" },
         .libuv = .{
             .url = "https://github.com/duskilang/libuv/archive/refs/tags/v1.53.0-dusk.tar.gz",
             .hash = "libuv-1.53.0-QDiZxwLiGwA6a2ix6PbZDYBFPIkzrogxPaagys6M1KV9",
@@ -20,11 +21,16 @@
             .url = "https://github.com/duskilang/zlib-ng/archive/refs/tags/v2.3.3-dusk.tar.gz",
             .hash = "zlib_ng-2.3.3-hIW1UEDOcACH4VXxmhLLqXhJLZeHBu1NEhTsT2icMaqg",
         },
+        .sqlite = .{
+            .url = "https://github.com/duskilang/sqlite/archive/refs/tags/v3.54.1-dusk.tar.gz",
+            .hash = "sqlite-3.54.1-9go_m6acnQBOTbOcTPMO8aNTC0aI4qBbVEIuAtcHb47C",
+        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "vendor/timezone-data",
         "LICENSE.md",
         "README.md",
     },

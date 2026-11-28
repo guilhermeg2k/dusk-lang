@@ -2,13 +2,14 @@ import "std/task"
 import "std/array": len, append
 import "std/string"
 import "std/io"
+import "std/time"
 
 error FetchError
     NotFound
 end
 
 func fetch(id: int) -> FetchError!string
-    task::sleep(0)
+    task::sleep(time::milliseconds(0))
     if id < 0 then
         return FetchError.NotFound
     end
@@ -31,12 +32,12 @@ func main() -> void
     let mut log: []string = []
     let a = spawn(func()
         append(log, "a1")
-        task::sleep(0)
+        task::sleep(time::milliseconds(0))
         append(log, "a2")
     end)
     let b = spawn(func()
         append(log, "b1")
-        task::sleep(0)
+        task::sleep(time::milliseconds(0))
         append(log, "b2")
     end)
     append(log, "main")
@@ -50,7 +51,7 @@ func main() -> void
     assert(await(answer) == 42)
 
     let shared = spawn(func()
-        task::sleep(0)
+        task::sleep(time::milliseconds(0))
         return 7
     end)
     let mut seen: []int = []
@@ -94,7 +95,7 @@ func main() -> void
     io::println("$done")
 
     spawn(func()
-        task::sleep(0)
+        task::sleep(time::milliseconds(0))
         io::println("after main")
     end)
     io::println("main ends")

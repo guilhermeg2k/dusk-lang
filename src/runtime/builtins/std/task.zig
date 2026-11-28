@@ -5,10 +5,10 @@ const Binding = native.Binding;
 const NativeResult = native.NativeResult;
 
 pub const bindings = native.BindingMap.initComptime(.{
-    .{ "sleep", Binding{ .native = &sleep } },
+    .{ "sleep_ms", Binding{ .native = &sleepMilliseconds } },
 });
 
-fn sleep(vm: *VM, args: []v.Value) anyerror!NativeResult {
+fn sleepMilliseconds(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const ms = @max(args[0].int64, 0);
     const current = vm.running_task.?;
     if (ms == 0) {

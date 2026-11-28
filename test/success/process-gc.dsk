@@ -1,0 +1,27 @@
+import "std/process"
+import "std/os"
+import "std/array"
+
+func main() -> !void
+    let helper = (try os::args())[0]
+    let mut kept: []process::Result = []
+    for 0..24: i do
+        let result = try process::run([helper, "dual", "70000"])
+        assert(result.stdout[0] == 'o' and result.stderr[69999] == 'e')
+        if i % 8 == 0 then
+            array::append(kept, copy(result))
+        end
+    end
+    assert(array::len(kept) == 4)
+    assert(kept[0].stdout[69999] == 'o' and kept[3].stderr[0] == 'e')
+    let child = try process::start([helper, "dual", "200000"], stdout_mode = process::Stdio.Pipe, stderr_mode = process::Stdio.Pipe)
+    let mut output = try child.stdout()
+    let errors = try child.stderr()
+    let stdout_job = spawn(func() -> return try output.read_all_bytes())
+    let stderr_job = spawn(func() -> return try errors.read_all_bytes())
+    let term = try child.wait()
+    let out = try await(stdout_job)
+    let err = try await(stderr_job)
+    assert(out[199999] == 'o' and err[199999] == 'e')
+    try child.close()
+end

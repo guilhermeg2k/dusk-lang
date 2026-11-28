@@ -1,0 +1,10 @@
+struct Box
+    value: int
+end
+
+schema Api
+    Box: "box"
+end
+
+func main() -> void
+end

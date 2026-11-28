@@ -1,0 +1,10 @@
+error Oops
+    Bad
+end
+
+func main() -> Oops!void
+    defer if true then
+        errdefer assert(false)
+    end
+    return Oops.Bad
+end

@@ -1,0 +1,6 @@
+import "@/lib"
+
+error Bad = lib::HiddenError
+
+func main() -> void
+end

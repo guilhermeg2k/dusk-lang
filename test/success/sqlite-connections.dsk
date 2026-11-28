@@ -1,0 +1,121 @@
+import "std/array": append, len
+import "std/sqlite"
+import "std/string"
+
+func insert_named(db: sqlite::Database, name: string) -> sqlite::SqliteError!int
+    let changes = try db.execute("insert into items (name) values ('$name')")
+    return changes.last_id
+end
+
+func can_open(path: string, read_only: bool, create: bool) -> bool
+    let db = sqlite::open(path, read_only = read_only, create = create) catch e then
+        assert(e == sqlite::SqliteError.CantOpen)
+        return false
+    end
+    db.close()
+    return true
+end
+
+func open_and_drop(path: string) -> !void
+    let db = try sqlite::open(path)
+    let changes = try db.execute("select 1")
+    assert(changes.rows == 0)
+end
+
+func main() -> !void
+    let path = "DIR/app.db"
+    let db = try sqlite::open(path)
+    let created = try db.execute("create table items (id integer primary key, name text not null unique); create index items_name on items (name)")
+    assert(created.rows == 0)
+    let inserted = try db.execute("insert into items (name) values ('a'); insert into items (name) values ('b')")
+    assert(inserted.rows == 2 and inserted.last_id == 2)
+
+    let mut diagnostic = sqlite::Diagnostic()
+    let mut has_failed = false
+    db.execute("select * from nope", diagnostic = diagnostic) catch e then
+        assert(e == sqlite::SqliteError.InvalidSql)
+        has_failed = true
+    end
+    assert(has_failed)
+    assert(string::contains(diagnostic.message, "no such table"))
+    assert(diagnostic.offset == null)
+
+    db.execute("select * frm items", diagnostic = diagnostic) catch e then
+        assert(e == sqlite::SqliteError.InvalidSql)
+    end
+    assert(string::contains(diagnostic.message, "syntax error"))
+    assert(diagnostic.offset == 9)
+    db.execute("select 1; selec 2", diagnostic = diagnostic) catch e then
+        assert(e == sqlite::SqliteError.InvalidSql)
+    end
+    assert(diagnostic.offset == 10)
+
+    has_failed = false
+    db.execute("insert into items (name) values ('a')", diagnostic = diagnostic) catch e then
+        assert(e == sqlite::SqliteError.Constraint)
+        has_failed = true
+    end
+    assert(has_failed)
+    assert(string::contains(diagnostic.message, "UNIQUE"))
+    assert(diagnostic.offset == null)
+
+    has_failed = false
+    db.execute("select * from nope") catch e then
+        has_failed = true
+    end
+    assert(has_failed)
+
+    let mut tasks: []Task[int, sqlite::SqliteError] = []
+    for 1..20: i do
+        let name = "task$i"
+        let mut started = spawn(func() -> !int
+            return try insert_named(db, name)
+        end)
+        append(tasks, started)
+    end
+    for tasks: started, index do
+        assert((try await(started)) == index + 3)
+    end
+
+    let reader = try sqlite::open(path, read_only = true)
+    has_failed = false
+    reader.execute("insert into items (name) values ('nope')") catch e then
+        assert(e == sqlite::SqliteError.ReadOnly)
+        has_failed = true
+    end
+    assert(has_failed)
+    reader.close()
+
+    assert(!can_open("DIR/missing-folder/app.db", false, true))
+    assert(!can_open("DIR/never-created.db", false, false))
+    assert(!can_open("DIR/never-created.db", true, true))
+    assert(can_open(path, true, false))
+
+    db.close()
+    db.close()
+    has_failed = false
+    db.execute("select 1") catch e then
+        assert(e == sqlite::SqliteError.Closed)
+        has_failed = true
+    end
+    assert(has_failed)
+
+    let again = try sqlite::open(path)
+    let after = try again.execute("insert into items (name) values ('after')")
+    assert(after.last_id == 23)
+    again.close()
+
+    let memory = try sqlite::open(":memory:")
+    let table = try memory.execute("create table t (x int); insert into t values (1), (2), (3)")
+    assert(table.rows == 3)
+    memory.close()
+
+    for 1..200: i do
+        try open_and_drop(path)
+        let mut garbage: []string = []
+        for 1..200: j do
+            append(garbage, "item $i $j")
+        end
+        assert(len(garbage) == 200)
+    end
+end

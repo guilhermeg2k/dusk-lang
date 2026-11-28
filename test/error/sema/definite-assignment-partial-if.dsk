@@ -1,0 +1,7 @@
+func main() -> void
+    let x: int
+    if true then
+        x = 1
+    end
+    let y = x
+end

@@ -19,6 +19,7 @@ pub const Statement = union(enum) {
     @"union": UnionStmt,
     error_set: ErrorSetStmt,
     trait: TraitStmt,
+    schema: SchemaStmt,
     @"for": ForStmt,
     for_capture: ForCaptureStmt,
     assign: AssignStmt,
@@ -61,6 +62,7 @@ pub const Slot = struct {
     identifier: []const u8,
     constraint: []const []const *TypeAnnotation = &.{},
     is_error_set: bool = false,
+    is_schema: bool = false,
     loc: err.Loc,
 };
 
@@ -86,8 +88,64 @@ pub const UnionStmt = struct {
 
 pub const ErrorSetStmt = struct {
     identifier: []const u8,
-    variants: []const ErrorVariant,
+    variants: []const ErrorVariant = &.{},
+    members: []const *TypeAnnotation = &.{},
     is_file_only: bool = false,
+};
+
+pub const SchemaStmt = struct {
+    identifier: []const u8,
+    options: []const SchemaOption,
+    type_rules: []const SchemaTypeRule,
+    blocks: []const SchemaBlock,
+};
+
+pub const SchemaOption = struct {
+    name: []const u8,
+    value: *ExpNode,
+    loc: err.Loc,
+};
+
+pub const SchemaTypeRule = struct {
+    type_name: []const u8,
+    rules: []const SchemaRule,
+    loc: err.Loc,
+};
+
+pub const SchemaBlock = struct {
+    kind: SchemaBlockKind,
+    type_name: []const u8,
+    members: []const SchemaMember,
+    loc: err.Loc,
+};
+
+pub const SchemaBlockKind = enum { @"struct", @"enum", @"union" };
+
+pub const SchemaSection = struct {
+    schema_name: []const u8,
+    members: []const SchemaMember,
+    loc: err.Loc,
+};
+
+pub const SchemaMember = struct {
+    name: []const u8,
+    rules: []const SchemaRule,
+    loc: err.Loc,
+};
+
+pub const SchemaRule = struct {
+    kind: union(enum) {
+        name: []const u8,
+        skip,
+        omit_null,
+        via: SchemaVia,
+    },
+    loc: err.Loc,
+};
+
+pub const SchemaVia = struct {
+    to: *ExpNode,
+    from: *ExpNode,
 };
 
 pub const TraitStmt = struct {
@@ -108,7 +166,7 @@ pub const LetStmt = struct {
     is_mut: bool,
     is_file_only: bool = false,
     type_annotation: ?*TypeAnnotation,
-    value: *ExpNode,
+    value: ?*ExpNode,
 };
 
 pub const IfStmt = struct {
@@ -406,6 +464,7 @@ pub const Struct = struct {
     fields: []const Field,
     static_fields: []const Field,
     funcs: []const StatementNode,
+    schema_sections: []const SchemaSection = &.{},
 };
 
 pub const Field = struct {
@@ -420,6 +479,7 @@ pub const EnumDef = struct {
     variants: []const EnumVariant,
     static_fields: []const Field,
     funcs: []const StatementNode,
+    schema_sections: []const SchemaSection = &.{},
 };
 
 pub const EnumVariant = struct {
@@ -431,6 +491,7 @@ pub const UnionDef = struct {
     variants: []const UnionVariant,
     static_fields: []const Field,
     funcs: []const StatementNode,
+    schema_sections: []const SchemaSection = &.{},
 };
 
 pub const UnionVariant = struct {

@@ -1,0 +1,71 @@
+import "std/process"
+import "std/os"
+import "std/path"
+import "std/buffer"
+import "std/string"
+
+func main() -> !void
+    let parameters = try os::args()
+    let helper = parameters[0]
+    let bare = parameters[1]
+    let helper_dir = parameters[2]
+    let args = try process::run([helper, "args", "one two", "", "世界", "a;echo nope", "a\"b"])
+    assert(args.is_success())
+    assert(try args.stdout_text() == "7:one two\n0:\n6:世界\n11:a;echo nope\n3:a\"b\n")
+    assert(buffer::len(args.stderr) == 0)
+    let dual = try process::run([helper, "dual", "200000"], max_output = 400000)
+    assert(dual.is_success())
+    assert(buffer::len(dual.stdout) == 200000 and buffer::len(dual.stderr) == 200000)
+    assert(dual.stdout[0] == 'o' and dual.stdout[199999] == 'o')
+    assert(dual.stderr[0] == 'e' and dual.stderr[199999] == 'e')
+    let nonzero = try process::run([helper, "exit", "23"])
+    assert(!nonzero.is_success())
+    when nonzero.termination
+        Exited: code then assert(code == 23) end
+        else then assert(false) end
+    end
+    let binary = try process::run([helper, "invalid"])
+    assert(buffer::len(binary.stdout) == 3)
+    assert(binary.stdout[0] == 255 and binary.stdout[1] == 0 and binary.stdout[2] == 254)
+    let mut has_utf8_error = false
+    binary.stdout_text() catch e then
+        assert(e == process::ProcessError.InvalidUtf8)
+        has_utf8_error = true
+    end
+    assert(has_utf8_error)
+    assert(try binary.stderr_text() == "ok")
+    let parent_env = try process::run([helper, "env", "DUSK_PROCESS_PARENT"])
+    assert(try parent_env.stdout_text() == "parent")
+    let mut is_missing = false
+    process::run(["dusk-no-such-program"]) catch e then
+        assert(e == process::ProcessError.NotFound)
+        is_missing = true
+    end
+    assert(is_missing)
+    let started = try process::start([bare, "exit", "3"])
+    when try started.wait()
+        Exited: code then assert(code == 3) end
+        else then assert(false) end
+    end
+    try started.close()
+    let replacement = try process::run([bare, "env", "MODE"], env = {"MODE": "child", "PATH": "/does-not-exist"})
+    assert(try replacement.stdout_text() == "child")
+    let empty_env = try process::run([helper, "env", "DUSK_PROCESS_PARENT"], env = {})
+    assert(!empty_env.is_success())
+    let cwd = try os::cwd()
+    let changed_cwd = try process::run([helper, "cwd"], cwd = helper_dir)
+    assert(path::normalize(try changed_cwd.stdout_text()) == path::normalize(helper_dir))
+    assert(try os::cwd() == cwd)
+    let eof = try process::run([helper, "copy"])
+    assert(try eof.stdout_text() == "" and try eof.stderr_text() == "eof")
+    let empty = try process::run([helper, "exit", "0"], max_output = 0)
+    assert(empty.is_success())
+    if os::platform() != os::Platform.Windows then
+        let signaled = try process::run([helper, "signal"])
+        assert(!signaled.is_success())
+        when signaled.termination
+            Signaled: number then assert(number == 15) end
+            else then assert(false) end
+        end
+    end
+end

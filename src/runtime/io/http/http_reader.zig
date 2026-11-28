@@ -129,7 +129,8 @@ pub const HttpReader = struct {
             }
             try self.plain.ensureUnusedCapacity(self.allocator, decode_chunk_size);
             const raw = self.body.items[self.body_offset..];
-            const room = self.plain.unusedCapacitySlice();
+            const raw_room = self.plain.unusedCapacitySlice();
+            const room = raw_room[0..@min(raw_room.len, limit -| plain_pending)];
             var consumed: usize = 0;
             var produced: usize = 0;
             const status = compression.dusk_zip_decompress(self.decoder.?, raw.ptr, raw.len, room.ptr, room.len, &consumed, &produced);
@@ -252,6 +253,6 @@ pub fn httpErrorFromIo(failure: IoError) HttpError {
         .TimedOut => .TimedOut,
         .UnexpectedEnd => .InvalidResponse,
         .HandshakeFailed => .HandshakeFailed,
-        .Busy, .LineTooLong, .InvalidUtf8, .TooLarge, .Other => .Other,
+        .Busy, .LineTooLong, .InvalidUtf8, .TooLarge, .NotTerminal, .Other => .Other,
     };
 }

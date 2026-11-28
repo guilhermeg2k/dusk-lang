@@ -1,0 +1,83 @@
+import "std/process"
+import "std/os"
+
+func main() -> !void
+    let helper = (try os::args())[0]
+    let mut failures = 0
+    process::run([]) catch e then
+        assert(e == process::ProcessError.InvalidArgument)
+        failures = failures + 1
+    end
+    process::run([""]) catch e then
+        assert(e == process::ProcessError.InvalidArgument)
+        failures = failures + 1
+    end
+    process::run([helper, "exit", "0"], timeout_ms = -2) catch e then
+        assert(e == process::ProcessError.InvalidArgument)
+        failures = failures + 1
+    end
+    process::run([helper, "exit", "0"], max_output = -1) catch e then
+        assert(e == process::ProcessError.InvalidArgument)
+        failures = failures + 1
+    end
+    process::run([helper, "exit", "0"], timeout_ms = 0) catch e then
+        assert(e == process::ProcessError.TimedOut)
+        failures = failures + 1
+    end
+    process::run([helper, "closed_sleep"], timeout_ms = 25) catch e then
+        assert(e == process::ProcessError.TimedOut)
+        failures = failures + 1
+    end
+    process::run([helper, "ignore_term"], timeout_ms = 25) catch e then
+        assert(e == process::ProcessError.TimedOut)
+        failures = failures + 1
+    end
+    process::run([helper, "dual", "3000000"], max_output = 17) catch e then
+        assert(e == process::ProcessError.OutputTooLarge)
+        failures = failures + 1
+    end
+    process::run([helper, "args", "x"], max_output = 0) catch e then
+        assert(e == process::ProcessError.OutputTooLarge)
+        failures = failures + 1
+    end
+    process::run(["/dusk/missing/executable"]) catch e then
+        assert(e == process::ProcessError.NotFound)
+        failures = failures + 1
+    end
+    process::run([helper, "exit", "0"], cwd = "/dusk/missing/directory") catch e then
+        assert(e == process::ProcessError.NotFound)
+        failures = failures + 1
+    end
+    process::run([helper, "exit", "0"], env = {"bad=name": "x"}) catch e then
+        assert(e == process::ProcessError.InvalidArgument)
+        failures = failures + 1
+    end
+    process::run([helper, "args", "bad\u{0}arg"]) catch e then
+        assert(e == process::ProcessError.InvalidArgument)
+        failures = failures + 1
+    end
+    process::run([helper, "env", "MODE"], env = {"MODE": "bad\u{0}value"}) catch e then
+        assert(e == process::ProcessError.InvalidArgument)
+        failures = failures + 1
+    end
+    process::start([helper, "exit", "0"], timeout_ms = -2) catch e then
+        assert(e == process::ProcessError.InvalidArgument)
+        failures = failures + 1
+    end
+    process::start([helper, "exit", "0"], timeout_ms = 0) catch e then
+        assert(e == process::ProcessError.TimedOut)
+        failures = failures + 1
+    end
+    assert(failures == 16)
+    if os::platform() != os::Platform.Windows then
+        process::run([helper, "descendant"], timeout_ms = 20) catch e then
+            assert(e == process::ProcessError.TimedOut)
+            failures = failures + 1
+        end
+        assert(failures == 17)
+    end
+    for 0..20: i do
+        let result = try process::run([helper, "exit", "0"])
+        assert(result.is_success())
+    end
+end

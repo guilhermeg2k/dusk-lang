@@ -1,0 +1,115 @@
+import "std/compression"
+import "std/buffer"
+import "std/io"
+import "std/task"
+
+struct Flag
+    is_set: bool = false
+end
+
+struct SingleChunkReader
+    chunk: buffer
+    is_sent: bool = false
+
+    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
+        if self.is_sent then
+            return null
+        end
+        self.is_sent = true
+        return self.chunk
+    end
+end
+
+struct RepeatingReader
+    chunk: buffer
+    reads: int = 0
+
+    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
+        self.reads = self.reads + 1
+        return self.chunk
+    end
+end
+
+func decompressor_write_error(mut decompressor: compression::Decompressor, data: buffer) -> ?compression::CompressionError
+    let part = decompressor.write_bytes(data) catch e then
+        return e
+    end
+    return null
+end
+
+func decompressor_finish_error(mut decompressor: compression::Decompressor) -> ?compression::CompressionError
+    decompressor.finish() catch e then
+        return e
+    end
+    return null
+end
+
+func reader_error[R: io::Reader](mut r: compression::Reader[R], max: int) -> ?io::IoError
+    let part = r.read_bytes(max) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let zeros = try buffer::new(524288)
+    let mut packed_zeros = try compression::compress(zeros, compression::Format.Gzip, 9)
+    assert(buffer::len(packed_zeros) < 2048)
+
+    let mut bomb_flag = Flag()
+    let watcher = spawn(func() -> void
+        bomb_flag.is_set = true
+    end)
+    let inflated = try compression::decompress(packed_zeros, compression::Format.Gzip)
+    assert(bomb_flag.is_set)
+    assert(buffer::len(inflated) == 524288)
+    await(watcher)
+
+    let mut bounded = try compression::reader(SingleChunkReader(chunk = packed_zeros), compression::Format.Gzip)
+    let mut total = 0
+    for true do
+        let part = try bounded.read_bytes(10000)
+        if part: bytes then
+            assert(buffer::len(bytes) <= 10000)
+            total = total + buffer::len(bytes)
+        else
+            break
+        end
+    end
+    assert(total == 524288)
+
+    let mut partial_reader = try compression::reader(SingleChunkReader(chunk = packed_zeros), compression::Format.Gzip)
+    let head = try partial_reader.read_bytes(100)
+    assert(head != null)
+    partial_reader.close()
+    assert((try partial_reader.read_bytes(100)) == null)
+
+    let empty_gzip = try compression::compress(try buffer::new(0), compression::Format.Gzip)
+    let mut many_empty = try buffer::new(buffer::len(empty_gzip) * 200)
+    let mut at = 0
+    for 0..199: i do
+        at = try buffer::put_bytes(many_empty, at, empty_gzip)
+    end
+    let mut zero_out_source = RepeatingReader(chunk = many_empty)
+    let mut zero_out_reader = try compression::reader(zero_out_source, compression::Format.Gzip, max = 1024)
+    assert(reader_error(zero_out_reader, 1024) == io::IoError.Other)
+    assert(zero_out_source.reads < 400)
+
+    let mut empty_chunk = try buffer::new(0)
+    let mut empty_read_source = RepeatingReader(chunk = empty_chunk)
+    let mut empty_read_reader = try compression::reader(empty_read_source, compression::Format.Gzip)
+    assert(reader_error(empty_read_reader, 1024) == io::IoError.Other)
+    assert(empty_read_source.reads == 64)
+
+    let mut bad = compression::Decompressor(compression::Format.Gzip)
+    assert(decompressor_write_error(bad, buffer::from_string("not gzip")) == compression::CompressionError.InvalidData)
+    assert(decompressor_write_error(bad, packed_zeros) == compression::CompressionError.Finished)
+    assert(decompressor_finish_error(bad) == compression::CompressionError.Finished)
+
+    let big_garbage = try buffer::new(1048576)
+    let garbage_err = compression::decompress(big_garbage, compression::Format.Gzip) catch e then
+        assert(e == compression::CompressionError.InvalidData)
+        return
+    end
+    assert(buffer::len(garbage_err) < 0)
+end

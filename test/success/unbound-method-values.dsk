@@ -1,0 +1,146 @@
+import "std/io"
+import "std/array": append, len
+
+error ParseError
+    Empty
+    Negative
+end
+
+struct Counter
+    value: int = 0
+
+    func get(self: @) -> int
+        return self.value
+    end
+
+    func add(mut self: @, delta: int) -> void
+        self.value = self.value + delta
+    end
+
+    func from_value(n: int) -> ParseError!@
+        if n < 0 then
+            return ParseError.Negative
+        end
+        return @(value = n)
+    end
+
+    func checked_div(self: @, divisor: int) -> ParseError!int
+        if divisor == 0 then
+            return ParseError.Empty
+        end
+        return self.value // divisor
+    end
+end
+
+enum Direction
+    North
+    South
+
+    func label(self: @) -> string
+        when self
+            Direction.North then return "north" end
+            Direction.South then return "south" end
+        end
+    end
+
+    func default_dir() -> @
+        return Direction.North
+    end
+end
+
+union Value
+    number: int
+    text: string
+
+    func describe(self: @) -> string
+        when self
+            number: n then return "num:${n}" end
+            text: s then return "str:${s}" end
+        end
+    end
+
+    func make_number(n: int) -> @
+        return @(number = n)
+    end
+end
+
+struct Stack[T]
+    items: []T = []
+
+    func push(mut self: @, item: T) -> void
+        append(self.items, item)
+    end
+
+    func count(self: @) -> int
+        return len(self.items)
+    end
+
+    func map_first[U](self: @, f: func(T) -> U) -> U
+        return f(self.items[0])
+    end
+end
+
+struct Dispatcher
+    on_add: func(mut Counter, int) -> void
+    on_get: func(Counter) -> int
+end
+
+func main() -> !void
+    let get_fn = Counter.get
+    let add_fn = Counter.add
+    let init_fn = Counter.from_value
+    let div_fn = Counter.checked_div
+
+    let mut counter = try init_fn(10)
+    assert(get_fn(counter) == 10)
+    add_fn(counter, 5)
+    assert(get_fn(counter) == 15)
+    assert(try div_fn(counter, 3) == 5)
+    let fallback = div_fn(counter, 0) catch -1
+    assert(fallback == -1)
+
+    let failed_init = init_fn(-1) catch @(value = 99)
+    assert(failed_init.value == 99)
+
+    let dir_label = Direction.label
+    let dir_default = Direction.default_dir
+    assert(dir_label(dir_default()) == "north")
+    assert(dir_label(Direction.South) == "south")
+
+    let val_desc = Value.describe
+    let val_make = Value.make_number
+    assert(val_desc(val_make(42)) == "num:42")
+    assert(val_desc(Value(text = "hi")) == "str:hi")
+
+    let commands: map[string, func(mut Counter, int) -> void] = {
+        "add": Counter.add,
+    }
+    if commands["add"]: run_add then
+        run_add(counter, 7)
+    end
+    assert(counter.value == 22)
+
+    let getters = [Counter.get]
+    assert(getters[0](counter) == 22)
+
+    let dispatcher = Dispatcher(on_add = Counter.add, on_get = Counter.get)
+    dispatcher.on_add(counter, 8)
+    assert(dispatcher.on_get(counter) == 30)
+
+    let push_int: func(mut Stack[int], int) -> void = Stack.push
+    let count_int = Stack[int].count
+    let mut stack = Stack[int]()
+    push_int(stack, 11)
+    push_int(stack, 22)
+    assert(count_int(stack) == 2)
+
+    let map_first_str: func(Stack[int], func(int) -> string) -> string = Stack[int].map_first
+    let map_first_explicit = Stack[int].map_first[string]
+    assert(map_first_str(stack, func(n: int) -> return "v=${n}") == "v=11")
+    assert(map_first_explicit(stack, func(n: int) -> return "#${n}") == "#11")
+
+    io::println("${get_fn}")
+    io::println("${dir_label}")
+    io::println("${val_desc}")
+    io::println("${push_int}")
+end

@@ -1,0 +1,24 @@
+import "std/os"
+import "std/array"
+import "std/string"
+
+func main() -> !void
+    let platform = os::platform()
+    assert(platform == os::Platform.Linux or platform == os::Platform.MacOS or platform == os::Platform.Windows or platform == os::Platform.Other)
+    let arguments = try os::args()
+    assert(array::len(arguments) == 0)
+    assert(try os::env("DUSK_MISSING_VARIABLE") == null)
+    os::env("") catch e then
+        assert(e == os::OsError.InvalidArgument)
+    end
+    let path = try os::cwd()
+    assert(string::len(path) > 0)
+    try os::set_exit_code(255)
+    os::set_exit_code(-1) catch e then
+        assert(e == os::OsError.InvalidArgument)
+    end
+    os::set_exit_code(256) catch e then
+        assert(e == os::OsError.InvalidArgument)
+    end
+    try os::set_exit_code(0)
+end

@@ -1,0 +1,5 @@
+error A = B
+error B = A
+
+func main() -> void
+end

@@ -1,0 +1,6 @@
+import "std/time"
+
+func main() -> !void
+    let mut value = time::nanoseconds(0)
+    value.nanosecond_count = 1
+end

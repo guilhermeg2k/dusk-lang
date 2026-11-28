@@ -1,0 +1,21 @@
+import "std/json" as codec
+import "std/json": encode as write_json, decode as read_json
+
+struct Item
+    number: int
+end
+
+func relay[T](text: string) -> codec::JsonError!T
+    return try codec::decode(text)
+end
+
+func main() -> !void
+    let item: Item = try read_json("{\"number\":7}")
+    assert((try write_json(item)) == "{\"number\":7}")
+    let explicit = try codec::decode[Item]("{\"number\":8}")
+    assert(explicit.number == 8)
+    let callback = func(text: string) -> codec::JsonError!Item
+        return try relay(text)
+    end
+    assert((try callback("{\"number\":9}")).number == 9)
+end

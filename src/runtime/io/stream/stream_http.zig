@@ -110,8 +110,8 @@ pub fn bodyOutcome(stream: *Stream, read: BodyRead) ?ReadOutcome {
     const found = switch (read) {
         .bytes => |max| source.bytesOutcome(max),
         .line => |max| source.lineOutcome(max),
-        .all_text => source.allOutcome(true, null),
-        .all_bytes => source.allOutcome(false, null),
+        .all_text => |max| source.allOutcome(true, max),
+        .all_bytes => |max| source.allOutcome(false, max),
     };
     var outcome = found orelse return null;
     reader.taken = outcome.consumed;

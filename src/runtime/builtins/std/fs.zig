@@ -46,7 +46,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_file_size", Binding{ .native = &streamFileSize } },
 });
 
-fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const path = bytesArg(args, 0);
     if (std.mem.indexOfScalar(u8, path, 0) != null) {
         return native.fail(FsError.InvalidPath);
@@ -63,7 +63,7 @@ fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return native.parked();
 }
 
-fn fileStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn fileStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream_id = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64), args[1].int64, @enumFromInt(args[2].int64));
     return native.ok(.{ .int64 = stream_id });
 }

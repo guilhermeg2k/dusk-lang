@@ -196,3 +196,16 @@ pub const WakePayload = union(enum) {
         }
     }
 };
+
+test "a wake that can't queue the task leaves the result with the caller" {
+    var failing_allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var scheduler: Scheduler = .{ .allocator = failing_allocator.allocator() };
+    defer scheduler.deinit();
+    var task: TaskState = undefined;
+    task.wake_result = null;
+    const values = try std.testing.allocator.dupe(i64, &.{ 1, 2 });
+    const result: WakeResult = .{ .value = .{ .int64 = 0 }, .kind = .array, .payload = .{ .ints = values } };
+    try std.testing.expectError(error.OutOfMemory, scheduler.wake(&task, result));
+    try std.testing.expect(task.wake_result == null);
+    result.payload.free(std.testing.allocator);
+}

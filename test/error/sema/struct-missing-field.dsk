@@ -1,0 +1,8 @@
+struct Point
+    x: int
+    y: int
+end
+
+func main() -> void
+    let p = Point()
+end

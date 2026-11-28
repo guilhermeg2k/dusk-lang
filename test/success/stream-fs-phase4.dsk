@@ -4,6 +4,7 @@ import "std/io"
 import "std/net"
 import "std/string"
 import "std/task"
+import "std/time"
 
 func main() -> !void
     let path = "/tmp/dusk-cr-phase4-file.txt"
@@ -55,7 +56,7 @@ func main() -> !void
         let mut conn = try listener.accept()
         defer conn.close()
         try conn.write("hello\r")
-        task::sleep(20)
+        task::sleep(time::milliseconds(20))
         try conn.write("\n")
     end)
     let mut client = try net::tcp_connect("127.0.0.1", port)

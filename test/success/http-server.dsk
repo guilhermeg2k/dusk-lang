@@ -7,6 +7,7 @@ import "std/net"
 import "std/string"
 import "std/task"
 import "std/url"
+import "std/time"
 
 error AppError
     Broken
@@ -39,7 +40,7 @@ func route(req: http::Request) -> AppError!http::Response
         end
         "/peer" then return http::text("${req.remote_address.port}") end
         "/slow" then
-            task::sleep(300)
+            task::sleep(time::milliseconds(300))
             return http::text("slow done")
         end
         "/space here" then return http::text("decoded") end
@@ -372,6 +373,60 @@ func check_timeouts() -> !void
     await(running)
 end
 
+func check_body_timeout() -> !void
+    let server = try http::listen("127.0.0.1", 0, head_timeout_ms = 200, body_timeout_ms = 200)
+    let running = spawn(func() -> void
+        server.serve(func(req: http::Request) -> http::HttpError!http::Response
+            if req.path == "/pieces" then
+                let mut received = 0
+                for true do
+                    let piece = req.read_bytes(100) catch e then
+                        let reason = if e == io::IoError.TimedOut then "timed out" else "failed" end
+                        return http::text("pieces $received $reason", status = 408)
+                    end
+                    if piece: data then
+                        received = received + buffer::len(data)
+                    else
+                        return http::text("pieces $received")
+                    end
+                end
+            end
+            let body = req.text() catch e then
+                if e == http::HttpError.TimedOut then
+                    return http::status(408)
+                end
+                return e
+            end
+            return http::text(body)
+        end)
+    end)
+    let port = server.port()
+
+    let started = time::monotonic_ns()
+    let stalled = try net::tcp_connect("127.0.0.1", port)
+    try stalled.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc")
+    let stalled_answer = try stalled.read_all(timeout_ms = 3000)
+    assert(string::starts_with(stalled_answer, "HTTP/1.1 408 Request Timeout\r\n"))
+    assert(string::contains(stalled_answer, "Connection: close"))
+    assert((time::monotonic_ns() - started) // 1000000 < 2000)
+    stalled.close()
+
+    let trickled = try net::tcp_connect("127.0.0.1", port)
+    try trickled.write("POST /pieces HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc")
+    let trickled_answer = try trickled.read_all(timeout_ms = 3000)
+    assert(string::starts_with(trickled_answer, "HTTP/1.1 408 Request Timeout\r\n"))
+    assert(string::ends_with(trickled_answer, "pieces 3 timed out"))
+    trickled.close()
+
+    let complete = try net::tcp_connect("127.0.0.1", port)
+    try complete.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nConnection: close\r\n\r\nxyz")
+    assert(string::ends_with(try complete.read_all(timeout_ms = 3000), "xyz"))
+    complete.close()
+
+    server.close()
+    await(running)
+end
+
 func check_shutdown() -> !void
     let server = try http::listen("127.0.0.1", 0)
     let running = start(server)
@@ -393,14 +448,14 @@ func check_connection_limit() -> !void
     let running = start(server)
     let port = server.port()
     let holder = try net::tcp_connect("127.0.0.1", port)
-    task::sleep(50)
+    task::sleep(time::milliseconds(50))
     let mut is_answered = false
     let waiting = spawn(func() -> !string
         let reply = try http::request("http://127.0.0.1:$port/", timeout_ms = 3000)
         is_answered = true
         return try reply.text()
     end)
-    task::sleep(100)
+    task::sleep(time::milliseconds(100))
     assert(!is_answered)
     holder.close()
     assert(try await(waiting) == "hello world")
@@ -456,7 +511,7 @@ func check_shutdown_in_flight() -> !void
     let warm = try http::request("$base/")
     assert(warm.status == 200)
     let closer = spawn(func() -> void
-        task::sleep(100)
+        task::sleep(time::milliseconds(100))
         server.close()
     end)
     let slow = try http::request("$base/slow", timeout_ms = 3000)
@@ -479,6 +534,7 @@ func main() -> !void
     await(running)
     try check_body_limits()
     try check_timeouts()
+    try check_body_timeout()
     try check_shutdown()
     try check_connection_limit()
     try check_shutdown_in_flight()

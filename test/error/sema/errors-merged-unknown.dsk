@@ -1,0 +1,8 @@
+error A
+    Foo
+end
+
+error Bad = Missing | A
+
+func main() -> void
+end

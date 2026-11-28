@@ -1,0 +1,16 @@
+schema Api
+    struct User
+        name: "full_name"
+    end
+end
+
+struct User
+    name: string
+
+    schema Api
+        name: "display_name"
+    end
+end
+
+func main() -> void
+end

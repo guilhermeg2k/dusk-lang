@@ -1,6 +1,13 @@
 error BufferError
     NegativeSize
     OutOfRange
+    ValueOutOfRange
+    InvalidNumber
+end
+
+enum Order
+    Little
+    Big
 end
 
 extern func len(data: buffer) -> int
@@ -9,6 +16,30 @@ extern func from_string(text: string) -> buffer
 extern func put(mut data: buffer, at: int, text: string) -> BufferError!int
 extern func put_bytes(mut data: buffer, at: int, source: buffer) -> BufferError!int
 extern func slice(data: buffer, start: int, stop: int) -> BufferError!buffer
+extern func read_u8(data: buffer, at: int) -> BufferError!int
+extern func read_i8(data: buffer, at: int) -> BufferError!int
+extern func read_u16(data: buffer, at: int, order: Order) -> BufferError!int
+extern func read_i16(data: buffer, at: int, order: Order) -> BufferError!int
+extern func read_u32(data: buffer, at: int, order: Order) -> BufferError!int
+extern func read_i32(data: buffer, at: int, order: Order) -> BufferError!int
+extern func read_i64(data: buffer, at: int, order: Order) -> BufferError!int
+extern func read_f32(data: buffer, at: int, order: Order) -> BufferError!float
+extern func read_f64(data: buffer, at: int, order: Order) -> BufferError!float
+extern func write_u8(mut data: buffer, at: int, value: int) -> BufferError!int
+extern func write_i8(mut data: buffer, at: int, value: int) -> BufferError!int
+extern func write_u16(mut data: buffer, at: int, value: int, order: Order) -> BufferError!int
+extern func write_i16(mut data: buffer, at: int, value: int, order: Order) -> BufferError!int
+extern func write_u32(mut data: buffer, at: int, value: int, order: Order) -> BufferError!int
+extern func write_i32(mut data: buffer, at: int, value: int, order: Order) -> BufferError!int
+extern func write_i64(mut data: buffer, at: int, value: int, order: Order) -> BufferError!int
+extern func write_f32(mut data: buffer, at: int, value: float, order: Order) -> BufferError!int
+extern func write_f64(mut data: buffer, at: int, value: float, order: Order) -> BufferError!int
+extern func equal(a: buffer, b: buffer) -> bool
+extern func starts_with(data: buffer, prefix: buffer) -> bool
+extern func index_of(data: buffer, needle: buffer, from: int = 0) -> ?int
+extern func fill(mut data: buffer, value: byte, start: int, stop: int) -> BufferError!void
+extern func copy_within(mut data: buffer, from: int, to: int, count: int) -> BufferError!void
+extern func parse_int(data: buffer, start: int, stop: int) -> BufferError!int
 
 func new(size: int) -> BufferError!buffer
     if size < 0 then

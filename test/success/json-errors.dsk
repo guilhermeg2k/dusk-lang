@@ -1,0 +1,153 @@
+import "std/json"
+import "std/math"
+import "std/array"
+
+struct User
+    name: string
+    age: int
+    email: ?string = null
+end
+
+struct RequiredEmail
+    name: string
+    email: ?string
+end
+
+enum Color
+    Red
+end
+
+union Choice
+    number: int
+    text: string
+end
+
+struct Node
+    value: int
+    next: ?Node = null
+end
+
+struct Wide
+    f1: int = 0
+    f2: int = 0
+    f3: int = 0
+    f4: int = 0
+    f5: int = 0
+    f6: int = 0
+    f7: int = 0
+    f8: int = 0
+    f9: int = 0
+    f10: int = 0
+end
+
+schema WideApi
+    struct Wide
+        f1: "alpha", "a_alias"
+        f10: "omega", "z_alias"
+    end
+end
+
+func expect_error[T](text: string, expected: json::JsonError) -> void
+    json::decode[T](text) catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func main() -> !void
+    expect_error[int]("", json::JsonError.InvalidJson)
+    expect_error[int]("01", json::JsonError.InvalidJson)
+    expect_error[int]("1 2", json::JsonError.InvalidJson)
+    expect_error[int]("1.0", json::JsonError.TypeMismatch)
+    expect_error[int]("1e0", json::JsonError.TypeMismatch)
+    expect_error[int]("\"1\"", json::JsonError.TypeMismatch)
+    expect_error[int]("null", json::JsonError.TypeMismatch)
+    expect_error[int]("9223372036854775808", json::JsonError.NumberOutOfRange)
+    expect_error[int]("-9223372036854775809", json::JsonError.NumberOutOfRange)
+    expect_error[byte]("256", json::JsonError.NumberOutOfRange)
+    expect_error[byte]("-1", json::JsonError.NumberOutOfRange)
+    expect_error[float]("1e999", json::JsonError.NumberOutOfRange)
+    expect_error[bool]("0", json::JsonError.TypeMismatch)
+    expect_error[string]("\"\\uD800\"", json::JsonError.InvalidJson)
+    expect_error[[]int]("[1,]", json::JsonError.InvalidJson)
+    expect_error[[]int]("[1", json::JsonError.InvalidJson)
+    expect_error[User]("{\"name\":\"Ada\"}", json::JsonError.MissingField)
+    expect_error[RequiredEmail]("{\"name\":\"Ada\"}", json::JsonError.MissingField)
+    expect_error[User]("{\"name\":null,\"age\":9}", json::JsonError.TypeMismatch)
+    expect_error[User]("{\"name\":\"Ada\",\"age\":9,\"age\":10}", json::JsonError.DuplicateKey)
+    expect_error[User]("{\"name\":\"Ada\",\"age\":9,\"junk\":{\"a\":1,\"\\u0061\":2}}", json::JsonError.DuplicateKey)
+    expect_error[map[string, int]]("{\"x\":1,\"x\":2}", json::JsonError.DuplicateKey)
+    expect_error[Color]("\"Blue\"", json::JsonError.UnknownVariant)
+    expect_error[Choice]("{}", json::JsonError.InvalidUnion)
+    expect_error[Choice]("{\"other\":1}", json::JsonError.UnknownVariant)
+    expect_error[Choice]("{\"number\":1,\"text\":\"x\"}", json::JsonError.InvalidUnion)
+    expect_error[Choice]("{\"number\":1,\"number\":2}", json::JsonError.DuplicateKey)
+    let mut diagnostic = json::Diagnostic()
+    json::decode[[]User]("[\n {\"name\":\"Ada\",\"age\":\"bad\"}]", diagnostic) catch e then
+        assert(e == json::JsonError.TypeMismatch)
+        assert(diagnostic.path == "[0].age")
+        assert(diagnostic.byte_offset != null)
+        assert(diagnostic.line == 2)
+        assert(diagnostic.column != null)
+    end
+    json::decode[[]int]("[1,\"x\"]", diagnostic) catch e then
+        assert(e == json::JsonError.TypeMismatch)
+        assert(diagnostic.path == "[1]")
+        assert(diagnostic.byte_offset == 3)
+        assert(diagnostic.line == 1)
+        assert(diagnostic.column == 4)
+    end
+    json::decode[map[string, []int]]("{\"a.b\":[\"bad\"]}", diagnostic) catch e then
+        assert(e == json::JsonError.TypeMismatch)
+        assert(diagnostic.path == "[\"a.b\"][0]")
+    end
+    let good = try json::decode[int]("4", diagnostic)
+    assert(good == 4)
+    assert(diagnostic.path == "")
+    assert(diagnostic.byte_offset == null)
+    assert(diagnostic.line == null)
+    json::decode[User]("{\"name\":\"Ada\",\"age\":9,\"other\":1}", diagnostic, json::DecodeOptions(should_reject_unknown_fields = true)) catch e then
+        assert(e == json::JsonError.UnknownField)
+        assert(diagnostic.path == "other")
+    end
+    let ignored = try json::decode[User]("{\"name\":\"Ada\",\"age\":9,\"other\":[true,null,{}]}")
+    assert(ignored.age == 9)
+    json::decode[[]int]("[]", options = json::DecodeOptions(max_depth = 0)) catch e then
+        assert(e == json::JsonError.InvalidOptions)
+    end
+    json::decode[[][]int]("[[]]", options = json::DecodeOptions(max_depth = 1)) catch e then
+        assert(e == json::JsonError.DepthExceeded)
+    end
+    json::encode(math::nan) catch e then
+        assert(e == json::JsonError.NonFiniteNumber)
+    end
+    json::encode([1], options = json::EncodeOptions(max_depth = 0)) catch e then
+        assert(e == json::JsonError.InvalidOptions)
+    end
+    let mut node = Node(value = 1)
+    node.next = node
+    json::encode(node) catch e then
+        assert(e == json::JsonError.CycleDetected)
+    end
+    let shared = Node(value = 2)
+    let repeated = [shared, shared]
+    assert((try json::encode(repeated)) == "[{\"value\":2,\"next\":null},{\"value\":2,\"next\":null}]")
+    let wide = try json::decode[Wide, WideApi]("{\"z_alias\":10,\"f5\":5,\"unknown_a\":\"\\u0041\\n\",\"a_alias\":1,\"f2\":2}")
+    assert(wide.f1 == 1)
+    assert(wide.f2 == 2)
+    assert(wide.f5 == 5)
+    assert(wide.f10 == 10)
+    expect_error[Wide]("{\"f1\":1,\"\\u0078\":\"\\n\",\"x\":2}", json::JsonError.DuplicateKey)
+    expect_error[Wide]("{\"f1\":1,\"skip\":{\"\\u0061\":\"\\t\",\"a\":2}}", json::JsonError.DuplicateKey)
+    expect_error[Wide]("{\"f1\":1,\"skip\":\"\\uD800\"}", json::JsonError.InvalidJson)
+    expect_error[Choice]("{\"\\u0074ext\":\"a\\nb\",\"text\":\"c\"}", json::JsonError.DuplicateKey)
+    json::decode[Choice]("{\"number\":1,\"number\":2}", diagnostic) catch e then
+        assert(e == json::JsonError.DuplicateKey)
+        assert(diagnostic.path == "number")
+    end
+    json::decode[map[string, []int]]("{\"a\\\"b\\nc\":[\"bad\"]}", diagnostic) catch e then
+        assert(e == json::JsonError.TypeMismatch)
+        assert(diagnostic.path == "[\"a\\\"b\\nc\"][0]")
+    end
+end

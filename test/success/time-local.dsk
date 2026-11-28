@@ -1,0 +1,50 @@
+import "std/time"
+import "std/task"
+import "std/array"
+
+func read_local() -> time::TimeError!time::TimeZone
+    return try time::local_timezone()
+end
+
+func main() -> !void
+    let mut is_done = false
+    let mut ticks = 0
+    let counter = spawn(func() -> void
+        for !is_done do
+            ticks = ticks + 1
+            task::sleep(time::milliseconds(0))
+        end
+    end)
+    let mut requests: []Task[time::TimeZone, time::TimeError] = []
+    for 0..15: i do
+        array::append(requests, spawn(func() -> time::TimeError!time::TimeZone
+            return try read_local()
+        end))
+    end
+    let winter = try time::from_iso_string("2024-01-15T00:00:00Z")
+    let summer = try time::from_iso_string("2024-07-15T00:00:00Z")
+    for requests: request do
+        let zone = try await(request)
+        assert(zone.name() == "America/New_York")
+        assert(zone.offset_seconds(winter) == -18000)
+        assert(zone.offset_seconds(summer) == -14400)
+        assert((try winter.format("YYYY-MM-DD HH:mm Z", zone)) == "2024-01-14 19:00 -05:00")
+        assert((try time::to_iso_string(winter, zone)) == "2024-01-14T19:00:00.000-05:00")
+    end
+    assert(ticks > 0)
+    let before = ticks
+    let mut kept: []time::TimeZone = []
+    for 0..19999: i do
+        let zone = try time::local_timezone()
+        assert(zone.name() == "America/New_York")
+        assert(zone.offset_seconds(summer) == -14400)
+        if i % 5000 == 0 then
+            array::append(kept, copy(zone))
+        end
+    end
+    assert(ticks == before)
+    assert(kept[3].name() == "America/New_York")
+    assert((try time::to_iso_string(winter)) == "2024-01-15T00:00:00.000Z")
+    is_done = true
+    await(counter)
+end

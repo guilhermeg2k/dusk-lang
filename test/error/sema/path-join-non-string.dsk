@@ -1,0 +1,4 @@
+import "std/path"
+func main() -> void
+    let result = path::join([1, 2])
+end

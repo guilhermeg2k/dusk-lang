@@ -1,0 +1,131 @@
+import "std/serialization"
+import "std/string"
+import "std/array"
+
+struct Rows
+    columns: []string
+    cells: [][]string
+    row: int = -1
+    column: int = 0
+    bound_fields: int = -1
+    positions: []int = []
+    bind_count: int = 0
+
+    func next_row(mut self: @) -> bool
+        self.row = self.row + 1
+        return self.row < array::len(self.cells)
+    end
+
+    func cell(self: @) -> string
+        return self.cells[self.row][self.column - 1]
+    end
+
+    func bind(mut self: @, fields: int) -> serialization::SerializationError!void
+        self.positions = []
+        let mut is_taken: []bool = []
+        for 0..serialization::field_count(fields) - 1: i do
+            array::append(is_taken, false)
+        end
+        for self.columns: name do
+            let index = serialization::find_field(fields, name)
+            if index >= 0 then
+                if is_taken[index] then
+                    return serialization::SerializationError.DuplicateField
+                end
+                is_taken[index] = true
+            end
+            array::append(self.positions, index)
+        end
+        self.bound_fields = fields
+        self.bind_count = self.bind_count + 1
+    end
+
+    func begin_struct(mut self: @, fields: int) -> serialization::SerializationError!void
+        if self.bound_fields != fields then
+            try self.bind(fields)
+        end
+        self.column = 0
+    end
+
+    func next_field(mut self: @, fields: int) -> serialization::SerializationError!int
+        for self.column < array::len(self.positions) do
+            let index = self.positions[self.column]
+            self.column = self.column + 1
+            if index >= 0 then
+                return index
+            end
+        end
+        return -1
+    end
+
+    func missing_field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        return serialization::SerializationError.MissingField
+    end
+
+    func read_null(mut self: @) -> serialization::SerializationError!bool
+        return self.cell() == "NULL"
+    end
+
+    func read_int(mut self: @) -> serialization::SerializationError!int
+        let number = string::to_int(self.cell()) catch e then
+            return serialization::SerializationError.TypeMismatch
+        end
+        return number
+    end
+
+    func read_float(mut self: @) -> serialization::SerializationError!float
+        let number = string::to_float(self.cell()) catch e then
+            return serialization::SerializationError.TypeMismatch
+        end
+        return number
+    end
+
+    func read_bool(mut self: @) -> serialization::SerializationError!bool
+        return self.cell() == "t"
+    end
+
+    func read_string(mut self: @) -> serialization::SerializationError!string
+        return self.cell()
+    end
+end
+
+struct Account
+    id: int
+    owner: string
+    balance: float
+    note: ?string
+    is_open: bool = true
+end
+
+func load(mut rows: Rows) -> serialization::SerializationError![]Account
+    let mut accounts: []Account = []
+    for rows.next_row() do
+        array::append(accounts, try serialization::decode[Account, Rows](rows))
+    end
+    return accounts
+end
+
+func main() -> !void
+    let mut rows = Rows(
+        columns = ["balance", "unused", "id", "note", "owner"],
+        cells = [["10.5", "x", "1", "NULL", "ana"], ["0", "y", "2", "vip", "bo"], ["7.25", "z", "3", "NULL", "cy"]])
+    let accounts = try load(rows)
+    assert(array::len(accounts) == 3)
+    assert(rows.bind_count == 1)
+    assert(accounts[0].balance == 10.5 and accounts[0].note == null and accounts[0].is_open)
+    assert(accounts[1].owner == "bo" and accounts[1].note == "vip")
+    assert(accounts[2].id == 3)
+
+    let mut missing = Rows(columns = ["id", "owner"], cells = [["1", "ana"]])
+    let failed = load(missing) catch e then
+        assert(e == serialization::SerializationError.MissingField)
+        let mut twice = Rows(columns = ["id", "id", "owner", "balance", "note"], cells = [["1", "2", "a", "1", "NULL"]])
+        let doubled = load(twice) catch duplicate then
+            assert(duplicate == serialization::SerializationError.DuplicateField)
+            return
+        end
+        assert(false)
+        return
+    end
+    assert(false)
+end

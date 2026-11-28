@@ -1,0 +1,37 @@
+import std/io
+import std/sqlite
+
+struct Account
+    id: int
+    holder: string
+    balance: int
+end
+
+func main() -> !void
+    io::println("SQLite ${sqlite::version()}")
+    let db = try sqlite::open(":memory:")
+    defer db.close()
+
+    try db.execute("""
+        create table accounts (
+            id integer primary key,
+            holder text not null unique,
+            balance integer not null check (balance >= 0)
+        )
+    """)
+
+    try db.execute_with("insert into accounts (holder, balance) values (:holder, :balance)", @(holder = "Ana", balance = 100))
+    try db.execute_with("insert into accounts (holder, balance) values (:holder, :balance)", @(holder = "Bo", balance = 50))
+
+    let total = try db.transaction(func(tx)
+        try tx.execute_with("update accounts set balance = balance - :amount where holder = :from", @(amount = 30, from = "Ana"))
+        try tx.execute_with("update accounts set balance = balance + :amount where holder = :to", @(amount = 30, to = "Bo"))
+        return (try tx.query_one[int]("select sum(balance) from accounts")) orelse 0
+    end)
+
+    let accounts = try db.query[Account]("select id, holder, balance from accounts order by id")
+    for accounts: account do
+        io::println("${account.id}: ${account.holder} = ${account.balance}")
+    end
+    io::println("total = $total")
+end

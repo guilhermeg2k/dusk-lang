@@ -9,8 +9,10 @@ const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 const Stdio = @import("io/stdio.zig").Stdio;
+const RandomEngine = @import("random.zig").Engine;
 const gc = @import("gc.zig");
 const Heap = gc.Heap;
+const TimeZones = @import("timezone.zig").Registry;
 
 pub const VM = struct {
     const Self = @This();
@@ -23,17 +25,22 @@ pub const VM = struct {
     allocator: std.mem.Allocator,
     scratch: std.Io.Writer.Allocating,
     stdio: Stdio,
-    io: std.Io,
     stdin_fd: c_int = 0,
+    io: ?std.Io = null,
+    program_args: []const []const u8 = &.{},
+    environment: ?*const std.process.Environ.Map = null,
+    exit_code: u8 = 0,
+    random_engine: ?RandomEngine = null,
     stack: []v.Value,
     heap: Heap,
     scheduler: Scheduler,
     event_loop: EventLoop,
+    timezones: TimeZones = .{},
     frames: []CallFrame,
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
 
-    pub fn init(program: *const bc.Program, stdio: Stdio, io: std.Io) VM {
+    pub fn init(program: *const bc.Program, stdio: Stdio, io: ?std.Io) VM {
         return .{
             .allocator = std.heap.c_allocator,
             .scheduler = .{ .allocator = std.heap.c_allocator },
@@ -53,6 +60,7 @@ pub const VM = struct {
         self.scratch.deinit();
         self.event_loop.deinit();
         self.scheduler.deinit();
+        self.timezones.deinit(self.allocator);
         self.heap.deinit();
     }
 
@@ -65,6 +73,7 @@ pub const VM = struct {
             self.saveCurrentTask();
             self.stdio.tryFlush(.stdout) catch {};
             if (failure == error.BrokenPipe) return failure;
+            self.event_loop.restoreTerminal();
             self.reportErrorLocation(failure);
             return failure;
         };
@@ -88,6 +97,9 @@ pub const VM = struct {
             }
 
             if (self.event_loop.hasPendingOperations()) {
+                if (!self.scheduler.hasUnfinishedTasks()) {
+                    self.event_loop.closeChildPipes();
+                }
                 try self.stdio.flushStdout();
                 try self.event_loop.waitForEvent();
                 continue;
@@ -137,8 +149,9 @@ pub const VM = struct {
     }
 
     fn buildWakeValue(self: *Self, wake_result: WakeResult) !v.Value {
-        defer wake_result.payload.free(self.scheduler.allocator);
-        return switch (wake_result.payload) {
+        var payload = wake_result.payload;
+        defer payload.free(self.scheduler.allocator);
+        return switch (payload) {
             .none => wake_result.value,
             .ints => |ints| try self.allocIntArray(ints),
             .bytes => |bytes| try self.allocBytesValue(bytes, wake_result.kind),
@@ -871,7 +884,7 @@ pub const VM = struct {
         return array;
     }
 
-    fn newMap(self: *Self, key_type: v.ValueType, value_type: v.ValueType) !v.Value {
+    pub fn newMap(self: *Self, key_type: v.ValueType, value_type: v.ValueType) !v.Value {
         const size = v.Map.calc_size();
         try self.maybeCollectGarbage(size);
         const map = try v.Map.init(self.getCurrentHeapAllocator(), key_type, value_type);
@@ -886,7 +899,7 @@ pub const VM = struct {
         return self.allocNullBox(value, map.value_type);
     }
 
-    fn setMapEntry(self: *Self, map_slot: *const v.Value, key_slot: *const v.Value, value_slot: *const v.Value) !void {
+    pub fn setMapEntry(self: *Self, map_slot: *const v.Value, key_slot: *const v.Value, value_slot: *const v.Value) !void {
         const hash = mapInSlot(map_slot).hashKey(key_slot.*);
         if (mapInSlot(map_slot).find(key_slot.*, hash)) |entry| {
             entry.value = value_slot.*;
@@ -1120,6 +1133,7 @@ pub const VM = struct {
         var failure: ?anyerror = null;
         for (self.scheduler.tasks.items) |task| {
             if (!task.hasUnhandledFailure()) continue;
+            self.event_loop.restoreTerminal();
             failure = RuntimeErrorReporter.unhandledTaskError(self.program.error_names[@intCast(task.result.int64)]);
         }
         if (failure) |found| return found;

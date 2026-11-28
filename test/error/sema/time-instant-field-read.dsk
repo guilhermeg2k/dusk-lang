@@ -1,0 +1,6 @@
+import "std/time"
+
+func main() -> !void
+    let value = time::instant()
+    let raw = value.reading_ns
+end

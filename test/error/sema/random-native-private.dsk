@@ -1,0 +1,4 @@
+import "std/random"
+func main() -> void
+    let words = random::seed_words(42)
+end

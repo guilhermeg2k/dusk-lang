@@ -34,6 +34,7 @@ pub const SemaAnalyzer = struct {
     fn_depth: usize = 0,
     pending_signatures: std.AutoHashMapUnmanaged(tt.TypeId, PendingSignature) = .empty,
     pending_structs: std.AutoHashMapUnmanaged(tt.TypeId, PendingStruct) = .empty,
+    pending_error_sets: std.AutoHashMapUnmanaged(tt.TypeId, PendingErrorSet) = .empty,
     defer_scopes: std.ArrayList(DeferScope) = .empty,
     defer_base: usize = 0,
     loop_starts: std.ArrayList(usize) = .empty,
@@ -73,6 +74,28 @@ pub const SemaAnalyzer = struct {
     lambda_contexts: std.ArrayList(LambdaContext) = .empty,
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     lambda_binding: ?[]const u8 = null,
+    serialization_module: ?*ModuleScope = null,
+    serialization_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.SerializationOperation) = .empty,
+    serialization_operation_by_generic: std.AutoHashMapUnmanaged(usize, native.SerializationOperation) = .empty,
+    serialization_plans: std.ArrayList(ir.Plan) = .empty,
+    plan_by_key: std.AutoHashMapUnmanaged(PlanKey, usize) = .empty,
+    derived_names: std.AutoHashMapUnmanaged(DerivedKey, []const u8) = .empty,
+    derived_functions: std.AutoHashMapUnmanaged(DerivedKey, usize) = .empty,
+    derived_type_names: std.AutoHashMapUnmanaged(tt.TypeId, []const u8) = .empty,
+    loaded_modules: []const *ModuleScope = &.{},
+    schemas: std.ArrayList(SchemaEntry) = .empty,
+    default_schema_type: ?tt.TypeId = null,
+    type_sections: std.AutoHashMapUnmanaged(tt.TypeId, TypeSections) = .empty,
+    can_resolve_schema: bool = false,
+    derive_schema: tt.TypeId = 0,
+    proxies: std.ArrayList(Proxy) = .empty,
+    proxy_by_rule: std.AutoHashMapUnmanaged(usize, usize) = .empty,
+    derived_function_aliases: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
+    proxy_converter_count: usize = 0,
+    proxy_encoders: std.AutoHashMapUnmanaged(ProxyEncoderKey, ir.SiteFunction) = .empty,
+    active_proxy_plans: std.ArrayList(usize) = .empty,
+    var_init_states: std.AutoHashMapUnmanaged(usize, InitState) = .empty,
+    var_decl_loop_depth: std.AutoHashMapUnmanaged(usize, usize) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -103,6 +126,7 @@ pub const SemaAnalyzer = struct {
         try self.loadPrelude(prelude);
 
         const module_scopes = try self.allocator.alloc(*ModuleScope, loaded_modules.len);
+        self.loaded_modules = module_scopes;
         for (loaded_modules, 0..) |*module, i| {
             const root_table = try SymbolTable.init(self.allocator, self.prelude_module.root, null);
             module_scopes[i] = try ModuleScope.create(self.allocator, module.path, module.src, root_table, false);
@@ -112,6 +136,9 @@ pub const SemaAnalyzer = struct {
                 module_scopes[i].qualifier = std.fs.path.basename(module.path);
             }
             root_table.module = module_scopes[i];
+            if (std.mem.eql(u8, module.path, "std/serialization")) {
+                self.serialization_module = module_scopes[i];
+            }
             _ = self.enterModuleContext(module_scopes[i]);
             self.scope.symbol_table = root_table;
             try self.bindImports(module, module_scopes);
@@ -121,6 +148,7 @@ pub const SemaAnalyzer = struct {
             try self.checkTopLevelStatements(&module.root);
             _ = try self.visitBlock(&module.root);
         }
+        try self.validateSchemaRules();
         try self.lowerPendingCopies();
         try self.resolveErrorEdges();
         try self.checkPendingWhens();
@@ -138,6 +166,7 @@ pub const SemaAnalyzer = struct {
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
+            .serialization_plans = try self.serialization_plans.toOwnedSlice(self.allocator),
         };
     }
 
@@ -229,6 +258,13 @@ pub const SemaAnalyzer = struct {
             if (binding == .intrinsic) {
                 try self.intrinsic_by_uid.put(self.allocator, symbol.uid, binding.intrinsic);
             }
+            if (binding == .serialization) {
+                try self.serialization_operation_by_uid.put(self.allocator, symbol.uid, binding.serialization);
+                if (symbol.kind == .generic_function) {
+                    try self.serialization_operation_by_generic.put(self.allocator, symbol.kind.generic_function, binding.serialization);
+                }
+                continue;
+            }
             if (symbol.kind == .generic_function) {
                 const generic_extern = try self.genericExtern(symbol.kind.generic_function, binding);
                 try self.extern_uids.put(self.allocator, generic_extern.uid, {});
@@ -251,7 +287,7 @@ pub const SemaAnalyzer = struct {
         const return_type = self.type_table.getTypePtrById(return_type_id);
         if (return_type.kind != .error_union) return 0;
         const set = self.errorSetOf(return_type.kind.error_union.error_set);
-        if (set.kind != .declared) return 0;
+        if (set.kind != .declared or set.ids.count() == 0) return 0;
         return std.mem.min(i64, set.ids.keys());
     }
 
@@ -277,7 +313,7 @@ pub const SemaAnalyzer = struct {
 
     fn isDeclaration(stmt: ast.Statement) bool {
         return switch (stmt) {
-            .import, .func, .@"struct", .@"enum", .@"union", .error_set, .trait => true,
+            .import, .func, .@"struct", .@"enum", .@"union", .error_set, .trait, .schema => true,
             else => false,
         };
     }
@@ -309,6 +345,12 @@ pub const SemaAnalyzer = struct {
                 .trait => |ts| {
                     if (ts.is_file_only) continue;
                     try self.checkPublicMethods(ts.methods);
+                },
+                .error_set => |es| {
+                    if (es.is_file_only) continue;
+                    for (es.members) |member| {
+                        try self.checkPublicAnnotation(es.identifier, member);
+                    }
                 },
                 .let => |ls| {
                     if (ls.is_file_only) continue;
@@ -383,7 +425,8 @@ pub const SemaAnalyzer = struct {
             if (isDeclaration(stmt.data)) continue;
             if (stmt.data != .let) return self.err_reporter.statementOutsideMain(stmt.loc);
             const let_stmt = stmt.data.let;
-            if (self.constant_by_exp.contains(let_stmt.value)) continue;
+            const value = let_stmt.value orelse return self.err_reporter.topLevelLetNotConstant(let_stmt.identifier, stmt.loc);
+            if (self.constant_by_exp.contains(value)) continue;
             return self.err_reporter.topLevelLetNotConstant(let_stmt.identifier, stmt.loc);
         }
     }
@@ -667,6 +710,7 @@ pub const SemaAnalyzer = struct {
                 .@"struct" => |ss| ss.identifier,
                 .@"enum" => |es| es.identifier,
                 .@"union" => |un| un.identifier,
+                .schema => |sc| sc.identifier,
                 else => null,
             };
             if (declared_type_name) |name| {
@@ -680,7 +724,15 @@ pub const SemaAnalyzer = struct {
                     symbol.is_file_only = es.is_file_only;
                     try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(es.identifier, stmt.loc);
+                    if (es.members.len > 0) {
+                        try self.pending_error_sets.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{
+                            .stmt = &stmt.data.error_set,
+                            .loc = stmt.loc,
+                            .module = self.module,
+                        });
+                    }
                 },
+                .schema => try self.declareSchema(&stmt.data.schema, stmt.loc),
                 .trait => |ts| {
                     try self.traits.append(self.allocator, .{ .trait_stmt = &stmt.data.trait, .loc = stmt.loc, .module = self.module });
                     self.scope.symbol_table.put(.{
@@ -745,12 +797,20 @@ pub const SemaAnalyzer = struct {
         }
 
         for (root.statements.items) |stmt| {
+            if (stmt.data != .error_set) continue;
+            const es = stmt.data.error_set;
+            if (es.members.len == 0) continue;
+            const symbol = try self.scope.symbol_table.getOrError(es.identifier);
+            try self.resolveMergedErrorSet(symbol.kind.defined_type.blueprint_type_id);
+        }
+
+        for (root.statements.items) |stmt| {
             if (stmt.data != .let) continue;
             const let_stmt = stmt.data.let;
             if (!self.isConstantCandidate(let_stmt)) continue;
             const index = self.constants.items.len;
             try self.constants.append(self.allocator, .{ .let_stmt = let_stmt, .loc = stmt.loc, .module = self.module });
-            try self.constant_by_exp.put(self.allocator, let_stmt.value, index);
+            try self.constant_by_exp.put(self.allocator, let_stmt.value.?, index);
             self.scope.symbol_table.put(.{
                 .identifier = let_stmt.identifier,
                 .uid = self.scope.genUid(),
@@ -802,12 +862,52 @@ pub const SemaAnalyzer = struct {
         }
     }
 
+    fn resolveMergedErrorSet(self: *Self, type_id: tt.TypeId) CompileError!void {
+        const entry = self.pending_error_sets.getPtr(type_id) orelse return;
+        if (entry.is_resolved) return;
+        const saved_module = self.enterModuleContext(entry.module);
+        defer self.exitModuleContext(saved_module);
+        if (entry.is_resolving) {
+            return self.err_reporter.errorSetRefersToItself(entry.stmt.identifier, entry.loc);
+        }
+        entry.is_resolving = true;
+
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = entry.module.root;
+        defer self.scope.symbol_table = saved_table;
+
+        const target_set = self.errorSetOf(type_id);
+        for (entry.stmt.members) |member| {
+            const is_plain_name = member.type == .@"struct" and !member.is_nullable and member.args.len == 0;
+            if (!is_plain_name) {
+                return self.err_reporter.notAnErrorSet(try member.value(self.allocator), member.loc);
+            }
+            const name = member.type.@"struct";
+            const symbol = self.scope.symbol_table.getOrError(name) catch {
+                return self.err_reporter.typeNotDefined(name, member.loc);
+            };
+            const is_error_set = symbol.kind == .defined_type and self.type_table.isErrorSet(symbol.kind.defined_type.blueprint_type_id);
+            if (!is_error_set) {
+                return self.err_reporter.notAnErrorSet(name, member.loc);
+            }
+            const member_type_id = symbol.kind.defined_type.blueprint_type_id;
+            try self.resolveMergedErrorSet(member_type_id);
+            for (self.errorSetOf(member_type_id).ids.keys()) |id| {
+                try target_set.ids.put(self.allocator, id, {});
+            }
+        }
+
+        entry.is_resolving = false;
+        entry.is_resolved = true;
+    }
+
     fn isConstantCandidate(self: *Self, let_stmt: ast.LetStmt) bool {
         if (let_stmt.is_mut) return false;
+        const value = let_stmt.value orelse return false;
         if (let_stmt.type_annotation) |annotation| {
             if (annotation.is_nullable or annotation.type == .array or annotation.type == .anonymous_struct) return false;
         }
-        return self.isConstantExp(let_stmt.value);
+        return self.isConstantExp(value);
     }
 
     fn isConstantExp(self: *Self, exp: *const ast.ExpNode) bool {
@@ -853,21 +953,44 @@ pub const SemaAnalyzer = struct {
         self.pending_signatures.getPtr(type_id).?.state = .filled;
     }
 
-    fn ensureStructFields(self: *Self, type_id: tt.TypeId) CompileError!void {
+    fn ensureStructMembers(self: *Self, type_id: tt.TypeId) CompileError!void {
         const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
         const entry = self.pending_structs.getPtr(base_id) orelse return;
-        if (entry.state == .filled) return;
-        if (entry.state == .filling) {
+        const has_members = entry.state == .members_filled or entry.state == .filling_defaults or entry.state == .filled;
+        if (has_members) return;
+        if (entry.state == .filling_members) {
             return self.err_reporter.cyclicDefault(entry.symbol.identifier, entry.loc);
         }
-        entry.state = .filling;
+        entry.state = .filling_members;
         const pending = entry.*;
         const saved_module = self.enterModuleContext(pending.module);
         defer self.exitModuleContext(saved_module);
         const saved_table = self.scope.symbol_table;
         self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
-        try self.fulfillStructType(pending.symbol, pending.def);
+        try self.fulfillStructMembers(pending.symbol, pending.def);
+        self.pending_structs.getPtr(base_id).?.state = .members_filled;
+    }
+
+    fn ensureStructFields(self: *Self, type_id: tt.TypeId) CompileError!void {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        const entry = self.pending_structs.getPtr(base_id) orelse return;
+        if (entry.state == .filled) return;
+        if (entry.state == .filling_members or entry.state == .filling_defaults) {
+            return self.err_reporter.cyclicDefault(entry.symbol.identifier, entry.loc);
+        }
+        if (entry.state == .pending) {
+            try self.ensureStructMembers(base_id);
+        }
+        const pending_entry = self.pending_structs.getPtr(base_id).?;
+        pending_entry.state = .filling_defaults;
+        const pending = pending_entry.*;
+        const saved_module = self.enterModuleContext(pending.module);
+        defer self.exitModuleContext(saved_module);
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = self.module.root;
+        defer self.scope.symbol_table = saved_table;
+        try self.fulfillStructFields(pending.symbol, pending.def);
         self.pending_structs.getPtr(base_id).?.state = .filled;
     }
 
@@ -887,19 +1010,20 @@ pub const SemaAnalyzer = struct {
         defer self.enclosing_type_id = saved_enclosing_type;
 
         const annotated_type_id = if (constant.let_stmt.type_annotation) |annotation| try self.resolveTypeAnnotation(annotation, null) else null;
-        var value = try self.evalExpExpecting(constant.let_stmt.value, annotated_type_id);
+        const value_exp = constant.let_stmt.value.?;
+        var value = try self.evalExpExpecting(value_exp, annotated_type_id);
         if (annotated_type_id) |type_id| {
-            if (!try self.canCoerce(value.type_id, type_id, constant.let_stmt.value.loc)) {
+            if (!try self.canCoerce(value.type_id, type_id, value_exp.loc)) {
                 return self.err_reporter.invalidType(
                     try self.type_table.name(type_id, self.allocator),
                     try self.type_table.name(value.type_id, self.allocator),
-                    constant.let_stmt.value.loc,
+                    value_exp.loc,
                 );
             }
             if (value.type_id != type_id) value = try ir.Value.init(self.allocator, .{ .data = value.data, .type_id = type_id });
         }
         if (!self.isConstantType(value.type_id)) {
-            return self.err_reporter.invalidConstantType(constant.let_stmt.identifier, try self.type_table.name(value.type_id, self.allocator), constant.let_stmt.value.loc);
+            return self.err_reporter.invalidConstantType(constant.let_stmt.identifier, try self.type_table.name(value.type_id, self.allocator), value_exp.loc);
         }
 
         self.constants.items[index].value = value;
@@ -1058,10 +1182,11 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn createAnonymousStruct(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !tt.Struct {
+    fn createAnonymousStruct(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !AnonymousStruct {
         const anonymous_init = exp.data.anonymous_init;
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
+        var values: std.ArrayList(*ir.Value) = .empty;
 
         if (anonymous_init.are_arguments_named == false) {
             return self.err_reporter.cantInferAnonymousStruct(exp.loc);
@@ -1084,13 +1209,14 @@ pub const SemaAnalyzer = struct {
                 .identifier = arg.identifier.?,
                 .is_mut = is_mut,
                 .type_id = field_type_id,
-                .default_value = exp_value,
+                .default_value = null,
             };
             try fields_in_order.append(
                 self.allocator,
                 field,
             );
             try fields.put(arg.identifier.?, field);
+            try values.append(self.allocator, exp_value);
         }
 
         var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
@@ -1098,7 +1224,7 @@ pub const SemaAnalyzer = struct {
             try field_index_by_name.put(field.identifier, @intCast(i));
         }
 
-        return tt.Struct{
+        const definition = tt.Struct{
             .identifier = "@",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
@@ -1106,10 +1232,12 @@ pub const SemaAnalyzer = struct {
             .static_fields = .init(self.allocator),
             .methods = .init(self.allocator),
         };
+        return .{ .definition = definition, .values = try values.toOwnedSlice(self.allocator) };
     }
 
     fn fulfillEnumType(self: *Self, enum_symbol: Symbol, enum_def: *const ast.EnumDef) !void {
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
+        try self.recordSchemaSections(blueprint_type_id, enum_def.schema_sections);
         const saved_enclosing_type = self.enclosing_type_id;
         self.enclosing_type_id = blueprint_type_id;
         defer self.enclosing_type_id = saved_enclosing_type;
@@ -1136,6 +1264,7 @@ pub const SemaAnalyzer = struct {
 
     fn fulfillUnionType(self: *Self, union_symbol: Symbol, union_def: *const ast.UnionDef, loc: err.Loc) !void {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
+        try self.recordSchemaSections(blueprint_type_id, union_def.schema_sections);
         const saved_enclosing_type = self.enclosing_type_id;
         self.enclosing_type_id = blueprint_type_id;
         defer self.enclosing_type_id = saved_enclosing_type;
@@ -1163,14 +1292,34 @@ pub const SemaAnalyzer = struct {
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
+        try self.fulfillStructMembers(struct_symbol, struct_def);
+        try self.fulfillStructFields(struct_symbol, struct_def);
+    }
+
+    fn fulfillStructMembers(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
+        const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
+        try self.recordSchemaSections(blueprint_type_id, struct_def.schema_sections);
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
+
+        const static_fields = try self.createStaticFields(struct_def.static_fields, blueprint_type_id);
+        const methods = try self.createMethodSignatures(struct_def.funcs, struct_symbol);
+
+        const struct_type_ptr = self.type_table.getTypePtrById(blueprint_type_id);
+        struct_type_ptr.kind.@"struct".static_fields = static_fields;
+        struct_type_ptr.kind.@"struct".methods = methods;
+        self.type_table.syncNullableCopy(blueprint_type_id);
+    }
+
+    fn fulfillStructFields(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
         const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
         const saved_enclosing_type = self.enclosing_type_id;
         self.enclosing_type_id = blueprint_type_id;
         defer self.enclosing_type_id = saved_enclosing_type;
+
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
-        const static_fields = try self.createStaticFields(struct_def.static_fields, blueprint_type_id);
-
         for (struct_def.fields) |field| {
             const struct_field = try self.createField(field, blueprint_type_id);
             try fields_in_order.append(
@@ -1180,7 +1329,6 @@ pub const SemaAnalyzer = struct {
             try fields.put(field.identifier, struct_field);
         }
 
-        const methods = try self.createMethodSignatures(struct_def.funcs, struct_symbol);
         for (struct_def.funcs) |func_node| {
             const name = func_node.data.func.identifier;
             if (!fields.contains(name)) continue;
@@ -1196,8 +1344,6 @@ pub const SemaAnalyzer = struct {
         struct_type_ptr.kind.@"struct".fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
         struct_type_ptr.kind.@"struct".field_index_by_name = field_index_by_name;
         struct_type_ptr.kind.@"struct".fields = fields;
-        struct_type_ptr.kind.@"struct".static_fields = static_fields;
-        struct_type_ptr.kind.@"struct".methods = methods;
         self.type_table.syncNullableCopy(blueprint_type_id);
     }
 
@@ -1421,7 +1567,7 @@ pub const SemaAnalyzer = struct {
                 .@"struct" => try self.visitStructStmt(&stmt),
                 .@"enum" => try self.visitEnumStmt(&stmt),
                 .@"union" => try self.visitUnionStmt(&stmt),
-                .import, .error_set, .trait => null,
+                .import, .error_set, .trait, .schema => null,
                 .assign => try self.visitAssignStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
                 .expression => try self.visitExpressionStmt(&stmt),
@@ -1460,7 +1606,10 @@ pub const SemaAnalyzer = struct {
         if (self.fn_depth == 0) {
             return self.err_reporter.statementOutsideMain(stmt.loc);
         }
-        const can_fail = self.activeReturnInference() != null or self.type_table.isErrorUnion(self.scope.return_type_id);
+        if (defer_stmt.is_error_only and self.deferred_depth > 0) {
+            return self.err_reporter.errdeferInsideDefer(stmt.loc);
+        }
+        const can_fail = self.activeReturnInference() != null or self.type_table.isErrorUnion(self.scope.return_type_id) or self.has_none_error_slot;
         if (defer_stmt.is_error_only and !can_fail) {
             return self.err_reporter.errdeferOutsideFailingFunction(stmt.loc);
         }
@@ -1478,6 +1627,8 @@ pub const SemaAnalyzer = struct {
             self.deferred_depth -= 1;
             self.deferred_loop_floor = saved_floor;
         }
+        const saved_init_states = try self.snapshotInitStates();
+        defer self.var_init_states = saved_init_states;
         var statements: std.ArrayList(ast.StatementNode) = .empty;
         try statements.append(self.allocator, defer_stmt.statement.*);
         const lowered = try self.visitBlock(&.{ .statements = statements });
@@ -1786,7 +1937,14 @@ pub const SemaAnalyzer = struct {
                 defer self.scope.exit(self.scope.return_type_id);
                 try self.scope.symbol_table.put(captured_symbol);
 
+                const before_catch = try self.snapshotInitStates();
                 const body = try self.visitBlock(&block.body);
+                const catch_states = self.var_init_states;
+                const catch_leaves = isBlockLeaving(body.block);
+                try self.mergeInitStates(&before_catch, &.{
+                    .{ .states = before_catch, .is_leaving = false },
+                    .{ .states = catch_states, .is_leaving = catch_leaves },
+                });
                 const is_value_used = !is_statement and payload != self.type_table.getPrimitive(.void);
                 if (is_value_used and !isBlockLeaving(body.block)) {
                     return self.err_reporter.catchBlockMustLeave(exp.loc);
@@ -1830,9 +1988,11 @@ pub const SemaAnalyzer = struct {
         var var_type_id: tt.TypeId = undefined;
         const let_stmt = stmt.data.let;
 
-        if (self.constant_by_exp.get(let_stmt.value)) |index| {
-            _ = try self.resolveConstant(index);
-            return null;
+        if (let_stmt.value) |value_exp| {
+            if (self.constant_by_exp.get(value_exp)) |index| {
+                _ = try self.resolveConstant(index);
+                return null;
+            }
         }
 
         const annotated_type_id = if (let_stmt.type_annotation) |type_annotation|
@@ -1840,9 +2000,30 @@ pub const SemaAnalyzer = struct {
         else
             null;
 
+        const value_exp = let_stmt.value orelse {
+            const type_id = annotated_type_id.?;
+            const uid = self.scope.genUid();
+            self.scope.symbol_table.put(.{
+                .identifier = let_stmt.identifier,
+                .uid = uid,
+                .type_id = type_id,
+                .kind = .{ .variable = .{ .is_mut = let_stmt.is_mut } },
+            }) catch {
+                return self.err_reporter.alreadyDefined(let_stmt.identifier, stmt.loc);
+            };
+            try self.var_init_states.put(self.allocator, uid, .unassigned);
+            try self.var_decl_loop_depth.put(self.allocator, uid, self.loop_starts.items.len);
+            return ir.Instruction{ .store_var = .{
+                .uid = uid,
+                .identifier = let_stmt.identifier,
+                .type_id = type_id,
+                .value = try ir.Value.init(self.allocator, .{ .data = .{ .i_null = {} }, .type_id = type_id }),
+            } };
+        };
+
         const saved_binding = self.lambda_binding;
-        self.lambda_binding = if (let_stmt.value.data == .lambda) let_stmt.identifier else null;
-        const expression_value = try self.evalExpExpecting(let_stmt.value, annotated_type_id);
+        self.lambda_binding = if (value_exp.data == .lambda) let_stmt.identifier else null;
+        const expression_value = try self.evalExpExpecting(value_exp, annotated_type_id);
         self.lambda_binding = saved_binding;
         const expression_type_id = expression_value.type_id;
 
@@ -1851,12 +2032,15 @@ pub const SemaAnalyzer = struct {
         } else {
             var_type_id = expression_type_id;
             const var_type_ptr = self.type_table.getTypePtrById(var_type_id);
+            if (var_type_ptr.kind == .null) {
+                return self.err_reporter.cantInferNullType(value_exp.loc);
+            }
             if (var_type_ptr.kind == .array and self.type_table.getTypePtrById(var_type_ptr.kind.array).kind == .unknown) {
-                return self.err_reporter.cantInferArrayLiteralType(let_stmt.value.loc);
+                return self.err_reporter.cantInferArrayLiteralType(value_exp.loc);
             }
         }
 
-        const boxed_value = try self.coerceValue(expression_value, var_type_id, stmt.data.let.value.loc);
+        const boxed_value = try self.coerceValue(expression_value, var_type_id, value_exp.loc);
 
         const expr_type = self.type_table.getTypePtrById(expression_type_id);
         if (expr_type.kind == .array and self.type_table.getTypePtrById(expr_type.kind.array).kind == .unknown) {
@@ -1874,7 +2058,7 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
         if (let_stmt.is_mut) {
-            try self.ensureNotReadOnlySource(let_stmt.value);
+            try self.ensureNotReadOnlySource(value_exp);
         }
 
         return ir.Instruction{ .store_var = .{
@@ -1993,16 +2177,28 @@ pub const SemaAnalyzer = struct {
 
         const args = try self.allocator.alloc(tt.TypeId, func_stmt.slots.len);
         for (bindings[outer_count..], func_stmt.slots, 0..) |binding, slot, slot_index| {
+            if (binding == null and slot.is_schema) {
+                args[slot_index] = try self.defaultSchemaType();
+                continue;
+            }
             args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, func_stmt.identifier, loc);
+        }
+        if (self.serialization_operation_by_generic.get(index)) |operation| {
+            if (!self.containsSlot(args)) {
+                return self.instantiateDerivedFunction(operation, args, loc);
+            }
         }
         return self.instantiateGenericFunction(index, args, loc);
     }
 
     fn bindExplicitTypeArguments(self: *Self, identifier: []const u8, slots: []const ast.Slot, arguments: []const *ast.TypeAnnotation, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
         if (arguments.len == 0) return;
-        if (arguments.len != slots.len) {
+        if (arguments.len > slots.len) {
             return self.err_reporter.wrongSlotCount(identifier, slots.len, arguments.len, loc);
         }
+        const could_resolve_schema = self.can_resolve_schema;
+        self.can_resolve_schema = true;
+        defer self.can_resolve_schema = could_resolve_schema;
         for (arguments, 0..) |argument, i| {
             const type_id = try self.resolveTypeAnnotation(argument, self.enclosing_type_id);
             try self.bindSlot(slots, bindings, i, type_id, argument.loc);
@@ -2043,9 +2239,19 @@ pub const SemaAnalyzer = struct {
             if (!areMentionedSlotsBound(param.type, slots, bindings)) continue;
             hint.* = .{ .type_id = try self.resolveTypeAnnotation(param.type, owner_type_id), .is_mut = param.is_mut };
         }
-        const is_return_known = isErrorSetBound(func.error_set, slots, bindings) and areMentionedSlotsBound(func.return_type, slots, bindings);
-        const return_type_id = if (is_return_known) try self.resolveFuncReturnType(func, owner_type_id, loc) else null;
-        return .{ .params = hints, .return_type_id = return_type_id };
+        const error_set = if (func.error_set) |set_name| blk: {
+            if (!isErrorSetBound(set_name, slots, bindings)) {
+                break :blk null;
+            }
+            break :blk try self.resolveFnErrorSet(.{ .named = .{ .identifier = set_name, .loc = loc } }, "");
+        } else null;
+        const return_type_id = if (error_set != null and areMentionedSlotsBound(func.return_type, slots, bindings))
+            try self.errorUnionType(error_set.?, try self.resolveTypeAnnotation(func.return_type, owner_type_id))
+        else if (func.error_set == null and areMentionedSlotsBound(func.return_type, slots, bindings))
+            try self.resolveTypeAnnotation(func.return_type, owner_type_id)
+        else
+            null;
+        return .{ .params = hints, .return_type_id = return_type_id, .error_set_id = error_set };
     }
 
     fn enterBoundSlotScope(self: *Self, slots: []const ast.Slot, bindings: []const ?tt.TypeId) CompileError!*SymbolTable {
@@ -2175,6 +2381,9 @@ pub const SemaAnalyzer = struct {
                 }
                 const are_both_failing = func.error_set != null and is_arg_failing;
                 const arg_return = if (are_both_failing) return_type.kind.error_union.payload else kind.func_type.return_type_id;
+                const could_bind_void_slots = self.can_bind_void_slots;
+                self.can_bind_void_slots = true;
+                defer self.can_bind_void_slots = could_bind_void_slots;
                 try self.inferSlots(func.return_type, arg_return, slots, bindings, loc);
             },
             else => {},
@@ -2718,6 +2927,15 @@ pub const SemaAnalyzer = struct {
     }
 
     fn checkSlotFits(self: *Self, slot: ast.Slot, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        const is_schema_mismatch = kind != .slot and slot.is_schema != (kind == .schema);
+        if (is_schema_mismatch) {
+            const found = try self.type_table.syntaxName(type_id, self.allocator);
+            if (slot.is_schema) {
+                return self.err_reporter.slotNeedsSchema(slot.identifier, found, loc);
+            }
+            return self.err_reporter.invalidSlotType(slot.identifier, found, loc);
+        }
         const is_error_set = self.type_table.isErrorSet(type_id) and !self.type_table.getTypePtrById(type_id).is_nullable;
         if (slot.is_error_set and !is_error_set) {
             return self.err_reporter.slotNeedsErrorSet(slot.identifier, try self.type_table.syntaxName(type_id, self.allocator), loc);
@@ -3066,6 +3284,7 @@ pub const SemaAnalyzer = struct {
 
     fn lowerMethods(self: *Self, funcs: []const ast.StatementNode, methods: std.StringHashMap(tt.TypeId), owner_type_id: tt.TypeId) CompileError![]ir.Func {
         var lowered: std.ArrayList(ir.Func) = .empty;
+        const owner_name = try self.type_table.syntaxName(owner_type_id, self.allocator);
         for (funcs) |func_node| {
             const func_stmt = func_node.data.func;
             if (func_stmt.slots.len > 0) {
@@ -3073,7 +3292,8 @@ pub const SemaAnalyzer = struct {
                 continue;
             }
             const fn_metadata = self.type_table.getTypePtrById(methods.get(func_stmt.identifier).?).kind.function;
-            try lowered.append(self.allocator, try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, func_stmt.identifier, func_node.loc));
+            const full_name = try allocPrint(self.allocator, "{s}.{s}", .{ owner_name, func_stmt.identifier });
+            try lowered.append(self.allocator, try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, full_name, func_node.loc));
         }
         return lowered.toOwnedSlice(self.allocator);
     }
@@ -3098,10 +3318,30 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.invalidType("boolean", try self.type_table.name(condition_value_type, self.allocator), if_stmt.condition.loc);
         }
 
+        const can_choose_branch = result == null and !self.is_checking_opaque and self.isPlanCheck(if_stmt.condition);
+        if (can_choose_branch) {
+            if (condition_value.data.i_bool) {
+                return .{ .block = (try self.visitBranchBlock(&if_stmt.then_block, null)).block };
+            }
+            const else_block = if_stmt.else_block orelse return .{ .block = &.{} };
+            return .{ .block = (try self.visitBranchBlock(&else_block, null)).block };
+        }
+
+        const before_if = try self.snapshotInitStates();
+        const then_visited = try self.visitBranchBlock(&if_stmt.then_block, result);
+        const then_states = self.var_init_states;
+        self.var_init_states = try cloneInitStates(self.allocator, &before_if);
+        const else_block = if (if_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).block else &.{};
+        const else_states = self.var_init_states;
+        try self.mergeInitStates(&before_if, &.{
+            .{ .states = then_states, .is_leaving = isBlockLeaving(then_visited.block) },
+            .{ .states = else_states, .is_leaving = if (if_stmt.else_block != null) isBlockLeaving(else_block) else false },
+        });
+
         return ir.Instruction{ .branch_if = .{
             .condition = condition_value,
-            .then_block = (try self.visitBranchBlock(&if_stmt.then_block, result)).block,
-            .else_block = if (if_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).block else &.{},
+            .then_block = then_visited.block,
+            .else_block = else_block,
         } };
     }
 
@@ -3142,13 +3382,24 @@ pub const SemaAnalyzer = struct {
             } }
         else
             .{ .store_var = .{ .uid = captured_symbol.uid, .identifier = captured_symbol.identifier, .type_id = captured_type_id, .value = subject_ref } });
+        const before_if = try self.snapshotInitStates();
+        var then_leaves = false;
         {
             try self.scope.enter(self.scope.return_type_id);
             defer self.scope.exit(self.scope.return_type_id);
             try self.scope.symbol_table.put(captured_symbol);
-            try then_instructions.appendSlice(self.allocator, (try self.visitBranchBlock(&capture.body, result)).block);
+            const visited = try self.visitBranchBlock(&capture.body, result);
+            then_leaves = isBlockLeaving(visited.block);
+            try then_instructions.appendSlice(self.allocator, visited.block);
         }
+        const then_states = self.var_init_states;
+        self.var_init_states = try cloneInitStates(self.allocator, &before_if);
         const else_instructions = if (capture.else_block) |else_block| (try self.visitBranchBlock(&else_block, result)).block else &.{};
+        const else_states = self.var_init_states;
+        try self.mergeInitStates(&before_if, &.{
+            .{ .states = then_states, .is_leaving = then_leaves },
+            .{ .states = else_states, .is_leaving = if (capture.else_block != null) isBlockLeaving(else_instructions) else false },
+        });
         const condition = if (unboxed_read) |read| read.found else try ir.Value.init(self.allocator, .{
             .data = .{ .unary_op = .{ .kind = .box_not_null, .right = subject_ref } },
             .type_id = self.type_table.getPrimitive(.boolean),
@@ -3177,15 +3428,21 @@ pub const SemaAnalyzer = struct {
         var default_block: ir.Block = &.{};
         var null_body: ?ir.Block = null;
 
+        const before_when = try self.snapshotInitStates();
+        var branch_states: std.ArrayList(BranchInitState) = .empty;
         for (when_stmt.prongs, 0..) |*prong, prong_idx| {
+            self.var_init_states = try cloneInitStates(self.allocator, &before_when);
             const lowered = switch (prong.pattern) {
                 .null_case => {
-                    null_body = (try self.visitBranchBlock(&prong.body, result)).block;
+                    const visited = try self.visitBranchBlock(&prong.body, result);
+                    null_body = visited.block;
+                    try branch_states.append(self.allocator, .{ .states = self.var_init_states, .is_leaving = isBlockLeaving(visited.block) });
                     continue;
                 },
                 .variant => try self.lowerWhenVariantProng(prong, subject, refs.unwrapped, result),
                 .values => try self.lowerWhenValuesProng(prong, prongs.values[prong_idx], prongs.ranges[prong_idx], refs.unwrapped, result),
             };
+            try branch_states.append(self.allocator, .{ .states = self.var_init_states, .is_leaving = isBlockLeaving(lowered.body) });
             if (unconditional_prong_idx == prong_idx) {
                 default_block = lowered.body;
                 continue;
@@ -3193,7 +3450,16 @@ pub const SemaAnalyzer = struct {
             case_of_prong[prong_idx] = cases.items.len;
             try cases.append(self.allocator, .{ .condition = lowered.condition, .body = lowered.body });
         }
-        if (when_stmt.else_block) |else_block| default_block = (try self.visitBranchBlock(&else_block, result)).block;
+        if (when_stmt.else_block) |else_block| {
+            self.var_init_states = try cloneInitStates(self.allocator, &before_when);
+            default_block = (try self.visitBranchBlock(&else_block, result)).block;
+            try branch_states.append(self.allocator, .{ .states = self.var_init_states, .is_leaving = isBlockLeaving(default_block) });
+        }
+        const is_when_exhaustive = when_stmt.else_block != null or unconditional_prong_idx != null or subject.base_kind == .@"enum" or subject.base_kind == .@"union" or subject.base_kind == .boolean or self.type_table.isErrorSet(subject.base_type);
+        if (!is_when_exhaustive) {
+            try branch_states.append(self.allocator, .{ .states = before_when, .is_leaving = false });
+        }
+        try self.mergeInitStates(&before_when, branch_states.items);
 
         const null_check: ?*ir.Value = if (subject.is_nullable) try ir.Value.init(self.allocator, .{
             .data = .{ .unary_op = .{ .kind = .box_not_null, .right = refs.subject } },
@@ -3452,8 +3718,18 @@ pub const SemaAnalyzer = struct {
 
         var missing: std.ArrayList(u8) = .empty;
         switch (subject.base_kind) {
-            .@"enum" => |enum_def| for (enum_def.variants_in_order) |name| {
-                if (!prongs.seen_values.contains(enum_def.variants.get(name).?)) try appendMissing(self.allocator, &missing, name);
+            .@"enum" => |enum_def| if (enum_def.error_set) |set| {
+                for (set.ids.keys()) |id| {
+                    if (!prongs.seen_values.contains(id)) {
+                        try appendMissing(self.allocator, &missing, self.type_table.error_names.items[@intCast(id)]);
+                    }
+                }
+            } else {
+                for (enum_def.variants_in_order) |name| {
+                    if (!prongs.seen_values.contains(enum_def.variants.get(name).?)) {
+                        try appendMissing(self.allocator, &missing, name);
+                    }
+                }
             },
             .@"union" => |union_def| for (union_def.variants_in_order) |name| {
                 if (!prongs.seen_variants.contains(name)) try appendMissing(self.allocator, &missing, name);
@@ -3734,13 +4010,28 @@ pub const SemaAnalyzer = struct {
 
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, id_symbol.type_id);
 
+                const init_state = self.var_init_states.getPtr(id_symbol.uid);
+                const is_outer = self.outerVariableContext(id_symbol) != null;
                 if (!id_symbol.kind.variable.is_mut) {
-                    return self.err_reporter.notMutable(id, assign_stmt.target.loc);
+                    const state = init_state orelse return self.err_reporter.notMutable(id, assign_stmt.target.loc);
+                    const decl_loop_depth = self.var_decl_loop_depth.get(id_symbol.uid) orelse 0;
+                    const can_init_immutable = state.* == .unassigned and !is_outer and self.deferred_depth == 0 and self.loop_starts.items.len == decl_loop_depth;
+                    if (!can_init_immutable) {
+                        return self.err_reporter.notMutable(id, assign_stmt.target.loc);
+                    }
+                    state.* = .assigned;
+                } else {
+                    if (id_symbol.kind.variable.is_borrowed) {
+                        return self.err_reporter.mutBorrowCantBeReassigned(id, assign_stmt.target.loc);
+                    }
+                    if (init_state) |state| {
+                        if (is_outer and state.* != .assigned) {
+                            return self.err_reporter.variableNotInitialized(id, assign_stmt.target.loc);
+                        }
+                        state.* = .assigned;
+                    }
+                    try self.ensureNotReadOnlySource(assign_stmt.exp);
                 }
-                if (id_symbol.kind.variable.is_borrowed) {
-                    return self.err_reporter.mutBorrowCantBeReassigned(id, assign_stmt.target.loc);
-                }
-                try self.ensureNotReadOnlySource(assign_stmt.exp);
 
                 const boxed_value = try self.coerceValue(assignment_value, id_symbol.type_id, assign_stmt.exp.loc);
 
@@ -3874,9 +4165,15 @@ pub const SemaAnalyzer = struct {
             );
         }
 
+        const before_loop = try self.snapshotInitStates();
         try self.loop_starts.append(self.allocator, self.defer_scopes.items.len);
         const block = try self.visitBlock(&for_stmt.do_block);
         _ = self.loop_starts.pop();
+        const body_states = self.var_init_states;
+        try self.mergeInitStates(&before_loop, &.{
+            .{ .states = before_loop, .is_leaving = false },
+            .{ .states = body_states, .is_leaving = false },
+        });
 
         return ir.Instruction{ .loop = .{
             .condition = condition_value,
@@ -3909,9 +4206,15 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(self.scope.return_type_id);
         _ = try self.bindLoopCapture(&body, capture.item, item, capture.is_item_mut, loc);
         if (capture.index) |name| _ = try self.bindLoopCapture(&body, name, index, false, loc);
+        const before_loop = try self.snapshotInitStates();
         try self.loop_starts.append(self.allocator, self.defer_scopes.items.len);
         defer _ = self.loop_starts.pop();
         try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).block);
+        const body_states = self.var_init_states;
+        try self.mergeInitStates(&before_loop, &.{
+            .{ .states = before_loop, .is_leaving = false },
+            .{ .states = body_states, .is_leaving = false },
+        });
         return body.toOwnedSlice(self.allocator);
     }
 
@@ -4240,11 +4543,21 @@ pub const SemaAnalyzer = struct {
             return ir.Instruction{ .return_stmt = .{ .value = value } };
         }
 
-        const error_set = try self.lambdaErrorSet(self.activeReturnInference().?);
+        const context_index = self.activeReturnInference().?;
+        const target_set_id = try self.lambdaErrorSet(context_index);
+        const target_set = self.errorSetOf(target_set_id);
         if (value.data == .i_int) {
-            try self.errorSetOf(error_set).ids.put(self.allocator, value.data.i_int, {});
+            if (target_set.kind == .inferred) {
+                try target_set.ids.put(self.allocator, value.data.i_int, {});
+            } else if (!target_set.has(value.data.i_int)) {
+                return self.err_reporter.errorNotInSet(
+                    self.type_table.error_names.items[@intCast(value.data.i_int)],
+                    try self.type_table.name(target_set_id, self.allocator),
+                    exp.loc,
+                );
+            }
         } else {
-            try self.addErrorEdge(value.type_id, error_set, exp.loc);
+            try self.addErrorEdge(value.type_id, target_set_id, exp.loc);
         }
         return ir.Instruction{ .return_error = .{ .value = value } };
     }
@@ -4599,6 +4912,12 @@ pub const SemaAnalyzer = struct {
                     }
                 }
             }
+            const is_member_for_function_type = isAnyMemberAccess(exp) and base_kind == .func_type;
+            if (is_member_for_function_type) {
+                if (try self.evalExpectedMethodRef(exp, base_kind.func_type)) |method_ref| {
+                    return method_ref;
+                }
+            }
             if (base_kind == .byte) {
                 if (intConstant(exp)) |number| {
                     return self.evalByteConstant(number, exp.loc);
@@ -4734,7 +5053,12 @@ pub const SemaAnalyzer = struct {
                 return self.evalIdentifier(exp);
             },
             .fn_call => return self.evalHandledCall(exp, null),
-            .type_application => return self.err_reporter.invalidExpression("a call after type arguments", "type arguments without a call", exp.loc),
+            .type_application => |application| {
+                if (try self.evalExplicitMethodRef(application.target, application.arguments, exp.loc)) |method_ref| {
+                    return method_ref;
+                }
+                return self.err_reporter.invalidExpression("a call after type arguments", "type arguments without a call", exp.loc);
+            },
             .try_exp => {
                 return self.evalTry(exp, null);
             },
@@ -4773,6 +5097,7 @@ pub const SemaAnalyzer = struct {
             .floor = self.scope.next_uid,
             .body_depth = self.fn_depth + 1,
             .is_return_inferred = typed.is_return_inferred,
+            .error_set = if (typed.is_return_inferred and hints != null) hints.?.error_set_id else null,
         });
         const context_index = self.lambda_contexts.items.len - 1;
         defer _ = self.lambda_contexts.pop();
@@ -4962,6 +5287,13 @@ pub const SemaAnalyzer = struct {
 
                 fn_identifier = symbol.identifier;
 
+                if (self.serialization_operation_by_uid.get(symbol.uid)) |operation| {
+                    const is_compile_time_value = operation == .blank or operation == .field_default or operation == .plan_of or operation == .is_proxied or operation == .has_proxies;
+                    if (is_compile_time_value) {
+                        return self.evalSerializationValue(operation, fn_call, exp.loc);
+                    }
+                }
+
                 if (self.intrinsic_by_uid.get(symbol.uid)) |intrinsic| {
                     if (try self.evalIntrinsicCall(intrinsic, symbol, fn_call)) |value| {
                         return value;
@@ -4997,6 +5329,7 @@ pub const SemaAnalyzer = struct {
                                     exp.loc,
                                 );
                             },
+                            .schema => return self.err_reporter.invalidType("function or struct", try allocPrint(self.allocator, "schema '{s}'", .{symbol.identifier}), exp.loc),
                             else => @panic("evalFnCall: called type isn't a struct, enum or union"),
                         }
                     },
@@ -5054,7 +5387,7 @@ pub const SemaAnalyzer = struct {
                 callee = try self.evalCallee(fn_call.target);
             } else {
                 const target = try self.evalExp(indexed.target);
-                try self.ensureStructFields(target.type_id);
+                try self.ensureStructMembers(target.type_id);
                 const fn_name = indexed.index.data.identifier;
                 if (self.genericMethodOf(target.type_id, fn_name)) |index| {
                     const generic = self.generic_functions.items[index];
@@ -5082,9 +5415,12 @@ pub const SemaAnalyzer = struct {
                     }
                     return self.err_reporter.wrongSlotCount(fn_name, 0, fn_call.type_arguments.len, exp.loc);
                 }
-                if (try self.fieldCallee(fn_call.target, target)) |field| {
-                    callee = field;
-                    break :resolve;
+                if (self.methodTypeOf(target.type_id, fn_name) == null) {
+                    try self.ensureStructFields(target.type_id);
+                    if (try self.fieldCallee(fn_call.target, target)) |field| {
+                        callee = field;
+                        break :resolve;
+                    }
                 }
                 const fn_type_id = try self.methodOrError(target.type_id, fn_name, exp.loc);
                 try self.checkMemberVisible(target.type_id, fn_name, self.file_only_methods.contains(fn_type_id), exp.loc);
@@ -5134,7 +5470,7 @@ pub const SemaAnalyzer = struct {
         //call args + auto binded struct
         const total_args_len = call_args_len + fn_call_arguments_values.items.len;
 
-        if (required_params_len > total_args_len) {
+        if (!is_struct_init and required_params_len > total_args_len) {
             return self.err_reporter.invalidNumberOfArgs(required_params_len, total_args_len, exp.loc);
         }
 
@@ -5373,6 +5709,1375 @@ pub const SemaAnalyzer = struct {
         };
     }
 
+    fn evalSerializationValue(self: *Self, operation: native.SerializationOperation, fn_call: ast.FnCall, loc: err.Loc) CompileError!*ir.Value {
+        const type_id = try self.resolveTypeAnnotation(fn_call.type_arguments[0], null);
+        switch (operation) {
+            .plan_of => {
+                const schema = if (fn_call.type_arguments.len > 1) try self.resolveSchemaArgument(fn_call.type_arguments[1]) else try self.defaultSchemaType();
+                const is_opaque = self.typeContainsSlot(type_id) or self.typeContainsSlot(schema);
+                const index: i64 = if (is_opaque) 0 else @intCast(try self.planIndex(type_id, schema, "", loc));
+                return ir.Value.init(self.allocator, .{ .data = .{ .i_int = index }, .type_id = self.type_table.getPrimitive(.int) });
+            },
+            .is_proxied => {
+                const schema = if (fn_call.type_arguments.len > 1) try self.resolveSchemaArgument(fn_call.type_arguments[1]) else try self.defaultSchemaType();
+                const is_opaque = self.typeContainsSlot(type_id) or self.typeContainsSlot(schema);
+                const is_proxied = !is_opaque and self.serialization_plans.items[try self.planIndex(type_id, schema, "", loc)].root_site != null;
+                return ir.Value.init(self.allocator, .{ .data = .{ .i_bool = is_proxied }, .type_id = self.type_table.getPrimitive(.boolean) });
+            },
+            .blank => return self.blankStruct(type_id, self.type_table.getTypePtrById(type_id).kind.@"struct"),
+            .field_default => {
+                const index_value = try self.evalExp(fn_call.arguments[0].exp);
+                const field = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order[@intCast(index_value.data.i_int)];
+                return self.coerceValue(field.default_value.?, field.type_id, loc);
+            },
+            .has_proxies => {
+                const schema = if (fn_call.type_arguments.len > 1) try self.resolveSchemaArgument(fn_call.type_arguments[1]) else try self.defaultSchemaType();
+                const is_opaque = self.typeContainsSlot(type_id) or self.typeContainsSlot(schema);
+                var visited: std.AutoHashMapUnmanaged(usize, void) = .empty;
+                const has_proxies = is_opaque or try self.hasSites(try self.planIndex(type_id, schema, "", loc), &visited);
+                return ir.Value.init(self.allocator, .{ .data = .{ .i_bool = has_proxies }, .type_id = self.type_table.getPrimitive(.boolean) });
+            },
+            .derive_decode, .derive_encode => @panic("evalSerializationValue: derive calls are instantiated, not evaluated"),
+        }
+    }
+
+    fn blankStruct(self: *Self, type_id: tt.TypeId, struct_def: tt.Struct) CompileError!*ir.Value {
+        const keys = try self.allocator.alloc([]const u8, struct_def.fields_in_order.len);
+        for (struct_def.fields_in_order, keys) |field, *key| {
+            key.* = field.identifier;
+        }
+        return ir.Value.init(self.allocator, .{ .data = .{ .struct_init = .{ .keys = keys, .values = &.{} } }, .type_id = type_id });
+    }
+
+    fn instantiateDerivedFunction(self: *Self, operation: native.SerializationOperation, args: []const tt.TypeId, loc: err.Loc) CompileError!Symbol {
+        var key = DerivedKey{ .operation = operation, .type_id = args[0], .schema = args[2] };
+        const plan = self.serialization_plans.items[try self.planIndex(key.type_id, key.schema, "", loc)];
+        const has_root_proxy = plan.shape == .proxy;
+        if (has_root_proxy) {
+            key.proxy = plan.shape.proxy.proxy + 1;
+        }
+        try self.checkFormatCapabilities(key, args[1], loc);
+        _ = try self.derivedFunctionName(key, loc);
+        const index = self.derived_functions.get(key) orelse @panic("instantiateDerivedFunction: derived function wasn't registered");
+        return self.instantiateGenericFunction(index, args[1..2], loc);
+    }
+
+    fn resolveSchemaArgument(self: *Self, annotation: *ast.TypeAnnotation) CompileError!tt.TypeId {
+        const could_resolve_schema = self.can_resolve_schema;
+        self.can_resolve_schema = true;
+        defer self.can_resolve_schema = could_resolve_schema;
+        return self.resolveTypeAnnotation(annotation, null);
+    }
+    fn checkFormatCapabilities(self: *Self, key: DerivedKey, format_type: tt.TypeId, loc: err.Loc) CompileError!void {
+        const capabilities = try self.capabilitiesOf(key, loc);
+        const is_decode = key.operation == .derive_decode;
+        const needs = [_]FormatNeed{
+            .{ .path = capabilities.null_path, .reason = "is nullable", .methods = if (is_decode) &.{"read_null"} else &.{"write_null"} },
+            .{ .path = capabilities.struct_path, .reason = "is a struct", .methods = if (is_decode) &.{ "begin_struct", "next_field", "missing_field" } else &.{ "begin_struct", "field", "end_struct" } },
+            .{ .path = capabilities.array_path, .reason = "is an array", .methods = if (is_decode) &.{ "begin_array", "has_item" } else &.{ "begin_array", "item", "end_array" } },
+            .{ .path = capabilities.map_path, .reason = "is a map", .methods = if (is_decode) &.{ "begin_map", "next_key" } else &.{ "begin_map", "key", "end_map" } },
+            .{ .path = capabilities.enum_path, .reason = "is an enum", .methods = if (is_decode) &.{"read_variant"} else &.{"write_variant"} },
+            .{ .path = capabilities.union_path, .reason = "is a union", .methods = if (is_decode) &.{ "begin_union", "end_union" } else &.{ "begin_union", "end_union" } },
+        };
+        for (needs) |need| {
+            const path = need.path orelse continue;
+            for (need.methods) |method| {
+                if (self.methodOf(format_type, method) != null) continue;
+                const saved_reporter = self.err_reporter;
+                defer self.err_reporter = saved_reporter;
+                const format_name = try self.type_table.syntaxName(format_type, self.allocator);
+                const type_name = try self.type_table.syntaxName(key.type_id, self.allocator);
+                const reason = try allocPrint(self.allocator, "'{s}' {s}", .{ path, need.reason });
+                const verb = if (is_decode) "decode" else "encode";
+                return self.err_reporter.formatLacksMethod(format_name, verb, type_name, reason, method, self.reportAtUserCall(loc));
+            }
+        }
+    }
+
+    fn reportAtUserCall(self: *Self, loc: err.Loc) err.Loc {
+        const is_in_std = self.module.bindings != null;
+        if (!is_in_std) {
+            return loc;
+        }
+        const context = self.err_reporter.copy_context orelse return loc;
+        self.err_reporter.copy_context = null;
+        self.err_reporter.src = context.call_src;
+        self.err_reporter.file_path = null;
+        for (self.loaded_modules) |module| {
+            if (module.src.ptr != context.call_src.ptr) continue;
+            self.err_reporter.file_path = module.file_path;
+        }
+        return context.call_loc;
+    }
+
+    fn derivedFunctionName(self: *Self, key: DerivedKey, loc: err.Loc) CompileError![]const u8 {
+        if (self.derived_names.get(key)) |name| {
+            return name;
+        }
+        const kind_name = if (key.operation == .derive_decode) "decode" else "encode";
+        const name = try allocPrint(self.allocator, "derived_{s}_{d}", .{ kind_name, self.derived_names.count() });
+        try self.derived_names.put(self.allocator, key, name);
+        const saved_schema = self.derive_schema;
+        self.derive_schema = key.schema;
+        defer self.derive_schema = saved_schema;
+        const source = try self.derivedSource(key, name, loc);
+        const index = try self.registerDerivedFunction(source);
+        try self.derived_functions.put(self.allocator, key, index);
+        return name;
+    }
+
+    fn registerDerivedFunction(self: *Self, source: []const u8) CompileError!usize {
+        const serialization_module = self.serialization_module orelse @panic("registerDerivedFunction: std/serialization isn't loaded");
+        const module = try self.allocator.create(ModuleScope);
+        module.* = serialization_module.*;
+        module.src = source;
+        module.file_path = "generated serialization code";
+        const saved_module = self.enterModuleContext(module);
+        defer self.exitModuleContext(saved_module);
+        const root = try self.allocator.create(ast.Root);
+        root.* = try modules.ModuleLoader.parse(self.allocator, source);
+        const stmt = &root.statements.items[0];
+        var symbol = try self.createGenericFuncSymbol(&stmt.data.func, stmt.loc);
+        symbol.is_file_only = true;
+        try module.root.put(symbol);
+        return symbol.kind.generic_function;
+    }
+
+    fn derivedSource(self: *Self, key: DerivedKey, name: []const u8, loc: err.Loc) CompileError![]const u8 {
+        var out: std.ArrayList(u8) = .empty;
+        const type_text = try self.derivedTypeText(key.type_id, loc);
+        const bound = try self.derivedBound(key, loc);
+        const type_ptr = self.type_table.getTypePtrById(key.type_id);
+        const is_container = !type_ptr.is_nullable and switch (type_ptr.kind) {
+            .@"struct", .array, .map, .@"union" => true,
+            else => false,
+        };
+        if (key.operation == .derive_decode) {
+            try self.emit(&out, "func ~{s}[R: {s}](mut reader: R, mut pending: []func() -> void, depth: int) -> SerializationError!{s}\n", .{ name, bound, type_text });
+        } else {
+            try self.emit(&out, "func ~{s}[W: {s}](value: {s}, mut writer: W, mut active: []string, depth: int) -> SerializationError!void\n", .{ name, bound, type_text });
+        }
+        if (is_container) {
+            try out.appendSlice(self.allocator, "if depth > MAX_DEPTH then\nreturn SerializationError.DepthExceeded\nend\n");
+            if (key.operation == .derive_encode) {
+                try out.appendSlice(self.allocator, "if !push_active(active, value) then\nreturn SerializationError.CycleDetected\nend\ndefer pop_active(active)\n");
+            }
+        }
+        const proxy: ?Proxy = if (key.proxy > 0) self.proxies.items[key.proxy - 1] else null;
+        if (proxy) |found| {
+            if (key.operation == .derive_decode) {
+                try self.emitProxyDecode(&out, found, loc);
+            } else {
+                try self.emitProxyEncode(&out, found, loc);
+            }
+        } else if (key.operation == .derive_decode) {
+            try self.emitDecodeBody(&out, key.type_id, type_text, loc);
+        } else {
+            try self.emitEncodeBody(&out, key.type_id, type_text, loc);
+        }
+        try out.appendSlice(self.allocator, "end\n");
+        return out.items;
+    }
+
+    fn emitDecodeBody(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+            try self.emit(out, "if (try reader.read_null()) then\nreturn null\nend\nreturn {s}\n", .{try self.decodeExpression(base, loc)});
+            return;
+        }
+        switch (type_ptr.kind) {
+            .@"struct" => try self.emitStructDecode(out, type_id, type_text, loc),
+            .array => |item_type| try self.emitArrayDecode(out, item_type, type_text, loc),
+            .map => |map| try self.emitMapDecode(out, map.value, type_text, loc),
+            .@"enum" => try self.emitEnumDecode(out, type_id, type_text, loc),
+            .@"union" => try self.emitUnionDecode(out, type_id, type_text, loc),
+            else => try self.emit(out, "return {s}\n", .{try self.decodeExpression(type_id, loc)}),
+        }
+    }
+
+    fn emitStructDecode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const plan = try self.planIndex(type_id, self.derive_schema, "", loc);
+        const structure = self.serialization_plans.items[plan].shape.structure;
+        const struct_fields = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order;
+        try self.emit(out, "try reader.begin_struct({d})\nlet mut value = blank[{s}]()\n", .{ plan, type_text });
+        for (structure.fields, 0..) |plan_field, i| {
+            const field = struct_fields[plan_field.field_index];
+            try self.emit(out, "let mut has_{d} = false\n", .{i});
+            if (!self.isConstantDefault(field)) continue;
+            try self.emitDefaultAssignment(out, "value", type_text, field, plan_field.field_index, loc);
+        }
+        for (structure.skipped) |skip| {
+            const field = struct_fields[skip.field_index];
+            if (!self.isConstantDefault(field)) continue;
+            try self.emitDefaultAssignment(out, "value", type_text, field, skip.field_index, loc);
+        }
+        try self.emit(out, "for true do\nlet index = try reader.next_field({d})\nif index < 0 then\nbreak\nend\n", .{plan});
+        if (structure.fields.len > 0) {
+            try out.appendSlice(self.allocator, "when index\n");
+            for (structure.fields, 0..) |plan_field, i| {
+                const field = struct_fields[plan_field.field_index];
+                try self.emit(out, "{d} then\nif has_{d} then\nreturn SerializationError.DuplicateField\nend\n", .{ i, i });
+                try self.emitFieldDecode(out, try allocPrint(self.allocator, "value.{s}", .{field.identifier}), field.type_id, plan_field.proxy, loc);
+                try self.emit(out, "has_{d} = true\nend\n", .{i});
+            }
+            try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownField\nend\nend\n");
+        } else {
+            try out.appendSlice(self.allocator, "return SerializationError.UnknownField\n");
+        }
+        try out.appendSlice(self.allocator, "end\n");
+        for (structure.fields, 0..) |plan_field, i| {
+            if (plan_field.default_value != null) continue;
+            try self.emit(out, "if !has_{d} then\ntry reader.missing_field({d}, {d})\nreturn SerializationError.MissingField\nend\n", .{ i, plan, i });
+        }
+        try out.appendSlice(self.allocator, "let mut defaults_target = value\n");
+        for (structure.fields, 0..) |plan_field, i| {
+            const field = struct_fields[plan_field.field_index];
+            const is_deferred = field.default_value != null and !self.isConstantDefault(field);
+            if (!is_deferred) continue;
+            try self.emit(out, "if !has_{d} then\n", .{i});
+            try self.emitDeferredDefault(out, type_text, field, plan_field.field_index, loc);
+            try out.appendSlice(self.allocator, "end\n");
+        }
+        for (structure.skipped) |skip| {
+            const field = struct_fields[skip.field_index];
+            if (self.isConstantDefault(field)) continue;
+            try self.emitDeferredDefault(out, type_text, field, skip.field_index, loc);
+        }
+        try out.appendSlice(self.allocator, "return value\n");
+    }
+
+    fn emitDefaultAssignment(self: *Self, out: *std.ArrayList(u8), target: []const u8, type_text: []const u8, field: tt.TypedIdentifier, field_index: u8, loc: err.Loc) CompileError!void {
+        try self.emit(out, "{s}.{s} = field_default[{s}, {s}]({d})\n", .{ target, field.identifier, type_text, try self.derivedTypeText(field.type_id, loc), field_index });
+    }
+
+    fn emitDeferredDefault(self: *Self, out: *std.ArrayList(u8), type_text: []const u8, field: tt.TypedIdentifier, field_index: u8, loc: err.Loc) CompileError!void {
+        try out.appendSlice(self.allocator, "array::append(pending, func() -> void\n");
+        try self.emitDefaultAssignment(out, "defaults_target", type_text, field, field_index, loc);
+        try out.appendSlice(self.allocator, "end)\n");
+    }
+    fn emitArrayDecode(self: *Self, out: *std.ArrayList(u8), item_type: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        try self.emit(out, "let mut items: {s} = []\ntry reader.begin_array()\nfor true do\nif !(try reader.has_item()) then\nbreak\nend\n", .{type_text});
+        if (self.type_table.getTypePtrById(item_type).is_nullable) {
+            try self.emit(out, "let mut item: {s} = null\n", .{try self.derivedTypeText(item_type, loc)});
+            try self.emitDecodeInto(out, "item", item_type, loc);
+            try out.appendSlice(self.allocator, "array::append(items, item)\n");
+        } else {
+            try self.emit(out, "array::append(items, {s})\n", .{try self.decodeExpression(item_type, loc)});
+        }
+        try out.appendSlice(self.allocator, "end\nreturn items\n");
+    }
+
+    fn emitMapDecode(self: *Self, out: *std.ArrayList(u8), value_type: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        try self.emit(out, "let mut entries: {s} = {{}}\ntry reader.begin_map()\nfor true do\nlet next = try reader.next_key()\nif next: name then\n", .{type_text});
+        if (self.type_table.getTypePtrById(value_type).is_nullable) {
+            try self.emit(out, "let mut item: {s} = null\n", .{try self.derivedTypeText(value_type, loc)});
+            try self.emitDecodeInto(out, "item", value_type, loc);
+            try out.appendSlice(self.allocator, "entries[name] = item\n");
+        } else {
+            try self.emit(out, "entries[name] = {s}\n", .{try self.decodeExpression(value_type, loc)});
+        }
+        try out.appendSlice(self.allocator, "else\nbreak\nend\nend\nreturn entries\n");
+    }
+
+    fn emitEnumDecode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const plan = try self.planIndex(type_id, self.derive_schema, "", loc);
+        const variants = self.serialization_plans.items[plan].shape.enumeration;
+        try self.emit(out, "let index = try reader.read_variant({d})\n", .{plan});
+        if (variants.len > 0) {
+            try out.appendSlice(self.allocator, "when index\n");
+            for (variants, 0..) |variant, i| {
+                try self.emit(out, "{d} then\nreturn {s}.{s}\nend\n", .{ i, type_text, variant.declared_name });
+            }
+            try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownVariant\nend\nend\n");
+        }
+        try out.appendSlice(self.allocator, "return SerializationError.UnknownVariant\n");
+    }
+    fn emitUnionDecode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const tagged = self.type_table.getTypePtrById(type_id).kind.@"union";
+        const plan = try self.planIndex(type_id, self.derive_schema, "", loc);
+        const variants = self.serialization_plans.items[plan].shape.tagged_union;
+        try self.emit(out, "let index = try reader.begin_union({d})\n", .{plan});
+        if (variants.len > 0) {
+            try out.appendSlice(self.allocator, "when index\n");
+            for (variants, 0..) |variant, i| {
+                const payload_type = tagged.variants.get(variant.declared_name).?;
+                try self.emit(out, "{d} then\n", .{i});
+                if (self.type_table.getTypePtrById(payload_type).is_nullable) {
+                    try self.emit(out, "let mut payload: {s} = null\n", .{try self.derivedTypeText(payload_type, loc)});
+                    try self.emitDecodeInto(out, "payload", payload_type, loc);
+                    try self.emit(out, "let result = {s}({s} = payload)\n", .{ type_text, variant.declared_name });
+                } else {
+                    try self.emit(out, "let result = {s}({s} = {s})\n", .{ type_text, variant.declared_name, try self.decodeExpression(payload_type, loc) });
+                }
+                try out.appendSlice(self.allocator, "try reader.end_union()\nreturn result\nend\n");
+            }
+            try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownVariant\nend\nend\n");
+        }
+        try out.appendSlice(self.allocator, "return SerializationError.UnknownVariant\n");
+    }
+    fn emitFieldDecode(self: *Self, out: *std.ArrayList(u8), target: []const u8, type_id: tt.TypeId, proxy: ?usize, loc: err.Loc) CompileError!void {
+        const index = proxy orelse return self.emitDecodeInto(out, target, type_id, loc);
+        const name = try self.derivedFunctionName(self.proxyKey(.derive_decode, self.nonNullType(type_id), index), loc);
+        const expression = try allocPrint(self.allocator, "try {s}(reader, pending, depth + 1)", .{name});
+        if (!self.type_table.getTypePtrById(type_id).is_nullable) {
+            try self.emit(out, "{s} = {s}\n", .{ target, expression });
+            return;
+        }
+        try self.emit(out, "if !(try reader.read_null()) then\n{s} = {s}\nelse\n{s} = null\nend\n", .{ target, expression, target });
+    }
+
+    fn emitFieldEncode(self: *Self, out: *std.ArrayList(u8), source: []const u8, type_id: tt.TypeId, proxy: ?usize, number: usize, loc: err.Loc) CompileError!void {
+        const index = proxy orelse return self.emitEncode(out, source, type_id, number, loc);
+        const name = try self.derivedFunctionName(self.proxyKey(.derive_encode, self.nonNullType(type_id), index), loc);
+        if (!self.type_table.getTypePtrById(type_id).is_nullable) {
+            try self.emit(out, "try {s}({s}, writer, active, depth + 1)\n", .{ name, source });
+            return;
+        }
+        const capture = try allocPrint(self.allocator, "present_{d}", .{number});
+        try self.emit(out, "if {s}: {s} then\ntry {s}({s}, writer, active, depth + 1)\nelse\ntry writer.write_null()\nend\n", .{ source, capture, name, capture });
+    }
+
+    fn emitDecodeInto(self: *Self, out: *std.ArrayList(u8), target: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (!type_ptr.is_nullable) {
+            try self.emit(out, "{s} = {s}\n", .{ target, try self.decodeExpression(type_id, loc) });
+            return;
+        }
+        const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        try self.emit(out, "if !(try reader.read_null()) then\n{s} = {s}\nelse\n{s} = null\nend\n", .{ target, try self.decodeExpression(base, loc), target });
+    }
+
+    fn decodeExpression(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
+        if (try self.typeProxy(type_id, self.derive_schema)) |proxy| {
+            return allocPrint(self.allocator, "try {s}(reader, pending, depth + 1)", .{try self.derivedFunctionName(self.proxyKey(.derive_decode, type_id, proxy), loc)});
+        }
+        return switch (self.type_table.getTypePtrById(type_id).kind) {
+            .int => "try reader.read_int()",
+            .float => "try reader.read_float()",
+            .boolean => "try reader.read_bool()",
+            .string => "try reader.read_string()",
+            .byte => "try read_byte(reader)",
+            .@"struct", .array, .map, .@"enum", .@"union" => try allocPrint(self.allocator, "try {s}(reader, pending, depth + 1)", .{try self.derivedFunctionName(.{ .operation = .derive_decode, .type_id = type_id, .schema = self.derive_schema }, loc)}),
+            else => self.unserializableType(type_id, "", loc),
+        };
+    }
+
+    fn emitEncodeBody(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            try self.emitEncode(out, "value", type_id, 0, loc);
+            return;
+        }
+        switch (type_ptr.kind) {
+            .@"struct" => try self.emitStructEncode(out, type_id, loc),
+            .array => |item_type| try self.emitArrayEncode(out, item_type, loc),
+            .map => |map| try self.emitMapEncode(out, map.value, loc),
+            .@"enum" => try self.emitEnumEncode(out, type_id, type_text, loc),
+            .@"union" => try self.emitUnionEncode(out, type_id, loc),
+            else => try self.emit(out, "{s}\n", .{try self.encodeStatement("value", type_id, loc)}),
+        }
+    }
+
+    fn emitStructEncode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const plan = try self.planIndex(type_id, self.derive_schema, "", loc);
+        const structure = self.serialization_plans.items[plan].shape.structure;
+        const struct_fields = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order;
+        try self.emit(out, "try writer.begin_struct({d}, {d})\n", .{ plan, structure.fields.len });
+        for (structure.fields, 0..) |plan_field, i| {
+            const field = struct_fields[plan_field.field_index];
+            const source = try allocPrint(self.allocator, "value.{s}", .{field.identifier});
+            if (plan_field.omits_null) {
+                try self.emit(out, "if {s} != null then\n", .{source});
+            }
+            try self.emit(out, "try writer.field({d}, {d})\n", .{ plan, i });
+            try self.emitFieldEncode(out, source, field.type_id, plan_field.proxy, i, loc);
+            if (plan_field.omits_null) {
+                try out.appendSlice(self.allocator, "end\n");
+            }
+        }
+        try out.appendSlice(self.allocator, "try writer.end_struct()\n");
+    }
+    fn emitArrayEncode(self: *Self, out: *std.ArrayList(u8), item_type: tt.TypeId, loc: err.Loc) CompileError!void {
+        try out.appendSlice(self.allocator, "try writer.begin_array(array::len(value))\nlet mut index = 0\nfor value: item do\ntry writer.item(index)\n");
+        try self.emitEncode(out, "item", item_type, 0, loc);
+        try out.appendSlice(self.allocator, "index = index + 1\nend\ntry writer.end_array()\n");
+    }
+
+    fn emitMapEncode(self: *Self, out: *std.ArrayList(u8), value_type: tt.TypeId, loc: err.Loc) CompileError!void {
+        try out.appendSlice(self.allocator, "try writer.begin_map(map::len(value))\nfor value: item, entry_key do\ntry writer.key(entry_key)\n");
+        try self.emitEncode(out, "item", value_type, 0, loc);
+        try out.appendSlice(self.allocator, "end\ntry writer.end_map()\n");
+    }
+
+    fn emitEnumEncode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const enumeration = self.type_table.getTypePtrById(type_id).kind.@"enum";
+        const plan = try self.planIndex(type_id, self.derive_schema, "", loc);
+        const variants = self.serialization_plans.items[plan].shape.enumeration;
+        var written_values: std.AutoHashMapUnmanaged(i64, void) = .empty;
+        for (variants, 0..) |variant, i| {
+            const number = enumeration.variants.get(variant.declared_name).?;
+            if (written_values.contains(number)) continue;
+            try written_values.put(self.allocator, number, {});
+            try self.emit(out, "if value == {s}.{s} then\ntry writer.write_variant({d}, {d})\nreturn\nend\n", .{ type_text, variant.declared_name, plan, i });
+        }
+        try out.appendSlice(self.allocator, "return SerializationError.UnknownVariant\n");
+    }
+    fn emitUnionEncode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const tagged = self.type_table.getTypePtrById(type_id).kind.@"union";
+        const plan = try self.planIndex(type_id, self.derive_schema, "", loc);
+        const variants = self.serialization_plans.items[plan].shape.tagged_union;
+        if (variants.len == 0) return;
+        try out.appendSlice(self.allocator, "when value\n");
+        for (variants, 0..) |variant, i| {
+            try self.emit(out, "{s}: payload then\ntry writer.begin_union({d}, {d})\n", .{ variant.declared_name, plan, i });
+            try self.emitEncode(out, "payload", tagged.variants.get(variant.declared_name).?, 0, loc);
+            try out.appendSlice(self.allocator, "try writer.end_union()\nend\n");
+        }
+        try out.appendSlice(self.allocator, "end\n");
+    }
+    fn emitEncode(self: *Self, out: *std.ArrayList(u8), source: []const u8, type_id: tt.TypeId, number: usize, loc: err.Loc) CompileError!void {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (!type_ptr.is_nullable) {
+            try self.emit(out, "{s}\n", .{try self.encodeStatement(source, type_id, loc)});
+            return;
+        }
+        const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        const capture = try allocPrint(self.allocator, "present_{d}", .{number});
+        try self.emit(out, "if {s}: {s} then\n{s}\nelse\ntry writer.write_null()\nend\n", .{ source, capture, try self.encodeStatement(capture, base, loc) });
+    }
+
+    fn encodeStatement(self: *Self, source: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
+        if (try self.typeProxy(type_id, self.derive_schema)) |proxy| {
+            return allocPrint(self.allocator, "try {s}({s}, writer, active, depth + 1)", .{ try self.derivedFunctionName(self.proxyKey(.derive_encode, type_id, proxy), loc), source });
+        }
+        const method = switch (self.type_table.getTypePtrById(type_id).kind) {
+            .int, .byte => "write_int",
+            .float => "write_float",
+            .boolean => "write_bool",
+            .string => "write_string",
+            .@"struct", .array, .map, .@"enum", .@"union" => {
+                const name = try self.derivedFunctionName(.{ .operation = .derive_encode, .type_id = type_id, .schema = self.derive_schema }, loc);
+                return allocPrint(self.allocator, "try {s}({s}, writer, active, depth + 1)", .{ name, source });
+            },
+            else => return self.unserializableType(type_id, "", loc),
+        };
+        return allocPrint(self.allocator, "try writer.{s}({s})", .{ method, source });
+    }
+
+    fn isConstantDefault(self: *Self, field: tt.TypedIdentifier) bool {
+        _ = self;
+        const value = field.default_value orelse return false;
+        return switch (value.data) {
+            .i_int, .i_float, .i_bool, .i_string, .i_null => true,
+            .i_array => |array| array.values.len == 0,
+            else => false,
+        };
+    }
+
+    fn planIndex(self: *Self, type_id: tt.TypeId, schema: tt.TypeId, path: []const u8, loc: err.Loc) CompileError!usize {
+        const key = PlanKey{ .type_id = type_id, .schema = schema };
+        if (self.plan_by_key.get(key)) |index| {
+            return index;
+        }
+        const index = self.serialization_plans.items.len;
+        try self.serialization_plans.append(self.allocator, .{ .type_id = type_id, .shape = .scalar });
+        try self.plan_by_key.put(self.allocator, key, index);
+        const shape = try self.planShape(index, type_id, schema, path, loc);
+        self.serialization_plans.items[index].shape = shape;
+        try self.attachProxySites(index, schema, loc);
+        return index;
+    }
+
+    fn attachProxySites(self: *Self, plan_index: usize, schema: tt.TypeId, loc: err.Loc) CompileError!void {
+        const plan = self.serialization_plans.items[plan_index];
+        const type_ptr = self.type_table.getTypePtrById(plan.type_id);
+        switch (plan.shape) {
+            .structure => |structure| {
+                const struct_fields = type_ptr.kind.@"struct".fields_in_order;
+                for (@constCast(structure.fields)) |*plan_field| {
+                    const field = struct_fields[plan_field.field_index];
+                    const target = ProxyTarget{ .container = plan.type_id, .place = .{ .field = field.identifier }, .item_type = field.type_id };
+                    const site = try self.siteFor(plan_field.proxy, plan_field.plan, target, schema, loc);
+                    plan_field.site = site;
+                }
+            },
+            .array => |child| {
+                const target = ProxyTarget{ .container = plan.type_id, .place = .index, .item_type = type_ptr.kind.array };
+                const site = try self.siteFor(null, child, target, schema, loc);
+                self.serialization_plans.items[plan_index].item_site = site;
+            },
+            .map => |child| {
+                const target = ProxyTarget{ .container = plan.type_id, .place = .key, .item_type = type_ptr.kind.map.value };
+                const site = try self.siteFor(null, child, target, schema, loc);
+                self.serialization_plans.items[plan_index].item_site = site;
+            },
+            .tagged_union => |variants| {
+                const tagged = type_ptr.kind.@"union";
+                for (@constCast(variants)) |*variant| {
+                    const payload_plan = variant.plan orelse continue;
+                    const target = ProxyTarget{ .container = plan.type_id, .place = .payload, .item_type = tagged.variants.get(variant.declared_name).? };
+                    const site = try self.siteFor(null, payload_plan, target, schema, loc);
+                    variant.site = site;
+                }
+            },
+            .proxy, .nullable => {
+                const holder = try self.type_table.getOrAddArray(plan.type_id);
+                const target = ProxyTarget{ .container = holder, .place = .index, .item_type = plan.type_id };
+                const site = try self.siteFor(null, plan_index, target, schema, loc);
+                self.serialization_plans.items[plan_index].root_site = site;
+            },
+            else => {},
+        }
+    }
+
+    fn siteFor(self: *Self, field_proxy: ?usize, value_plan: usize, target: ProxyTarget, schema: tt.TypeId, loc: err.Loc) CompileError!?ir.PlanSite {
+        var chain: std.ArrayList(usize) = .empty;
+        var current: usize = undefined;
+        if (field_proxy) |index| {
+            try chain.append(self.allocator, index);
+            current = try self.planIndex(self.proxies.items[index].proxy_type, schema, "", loc);
+        } else {
+            const plan = self.serialization_plans.items[value_plan];
+            const unwrapped = if (plan.shape == .nullable) self.serialization_plans.items[plan.shape.nullable] else plan;
+            if (unwrapped.shape != .proxy) {
+                return null;
+            }
+            try chain.append(self.allocator, unwrapped.shape.proxy.proxy);
+            current = unwrapped.shape.proxy.plan;
+        }
+        var visited: std.AutoHashMapUnmanaged(usize, void) = .empty;
+        while (self.serialization_plans.items[current].shape == .proxy) {
+            if (visited.contains(current)) {
+                return self.err_reporter.invalidSchema("a 'via' chain can't loop back to the same type", self.reportAtUserCall(loc));
+            }
+            try visited.put(self.allocator, current, {});
+            const link = self.serialization_plans.items[current].shape.proxy;
+            try chain.append(self.allocator, link.proxy);
+            current = link.plan;
+        }
+        const target_plan = self.serialization_plans.items[current];
+        const is_nullable_chain = target_plan.shape == .nullable and self.serialization_plans.items[target_plan.shape.nullable].shape == .proxy;
+        if (is_nullable_chain) {
+            return self.err_reporter.invalidSchema("a 'via' can't convert to a nullable type that has its own 'via'", self.reportAtUserCall(loc));
+        }
+        return .{
+            .proxy_plan = current,
+            .is_nullable_target = self.type_table.getTypePtrById(target.item_type).is_nullable,
+            .decode = try self.proxyDecoder(target, chain.items, target_plan.type_id, loc),
+            .encode = try self.proxyEncoder(target.item_type, chain.items, target_plan.type_id, loc),
+        };
+    }
+
+    fn proxyDecoder(self: *Self, target: ProxyTarget, chain: []const usize, raw_type: tt.TypeId, loc: err.Loc) CompileError!ir.SiteFunction {
+        const name = try allocPrint(self.allocator, "proxy_into_{d}", .{self.proxy_converter_count});
+        self.proxy_converter_count += 1;
+        const container = try self.derivedTypeText(target.container, loc);
+        const raw_text = try self.derivedTypeText(raw_type, loc);
+        const int = self.type_table.getPrimitive(.int);
+        var captures: std.ArrayList(tt.TypeId) = .empty;
+        try captures.append(self.allocator, target.container);
+        var out: std.ArrayList(u8) = .empty;
+        switch (target.place) {
+            .field => try self.emit(&out, "func ~{s}(mut target: {s}, proxy: {s}) -> bool\n", .{ name, container, raw_text }),
+            .index => try self.emit(&out, "func ~{s}(mut target: {s}, index: int, proxy: {s}) -> bool\n", .{ name, container, raw_text }),
+            .key => try self.emit(&out, "func ~{s}(mut target: {s}, key: string, proxy: {s}) -> bool\n", .{ name, container, raw_text }),
+            .payload => try self.emit(&out, "func ~{s}(mut target: {s}, tag: int, proxy: {s}) -> bool\n", .{ name, container, raw_text }),
+        }
+        switch (target.place) {
+            .field => {},
+            .index, .payload => try captures.append(self.allocator, int),
+            .key => try captures.append(self.allocator, self.type_table.getPrimitive(.string)),
+        }
+        try captures.append(self.allocator, raw_type);
+        var previous: []const u8 = "proxy";
+        var i = chain.len;
+        while (i > 0) {
+            i -= 1;
+            const proxy = self.proxies.items[chain[i]];
+            const from = try self.derivedFunctionAlias(proxy.from);
+            const converted = try allocPrint(self.allocator, "converted_{d}", .{i});
+            if (proxy.can_fail) {
+                try self.emit(&out, "let {s} = {s}({s}) catch e then\nreturn false\nend\n", .{ converted, from, previous });
+            } else {
+                try self.emit(&out, "let {s} = {s}({s})\n", .{ converted, from, previous });
+            }
+            previous = converted;
+        }
+        switch (target.place) {
+            .field => |member| try self.emit(&out, "target.{s} = {s}\n", .{ member, previous }),
+            .index => try self.emit(&out, "target[index] = {s}\n", .{previous}),
+            .key => try self.emit(&out, "target[key] = {s}\n", .{previous}),
+            .payload => {
+                const item_text = try self.derivedTypeText(target.item_type, loc);
+                try self.emit(&out, "let payload: {s} = {s}\nset_payload(target, tag, payload)\n", .{ item_text, previous });
+            },
+        }
+        try out.appendSlice(self.allocator, "return true\nend\n");
+        const arg_count = captures.items.len;
+        try captures.append(self.allocator, int);
+        return .{
+            .uid = try self.registerSiteFunction(out.items, loc),
+            .captures = captures.items,
+            .arg_count = arg_count,
+            .return_type = self.type_table.getPrimitive(.boolean),
+        };
+    }
+
+    fn proxyEncoder(self: *Self, value_type: tt.TypeId, chain: []const usize, raw_type: tt.TypeId, loc: err.Loc) CompileError!ir.SiteFunction {
+        const key = ProxyEncoderKey{ .value_type = value_type, .first_proxy = chain[0], .raw_type = raw_type };
+        if (self.proxy_encoders.get(key)) |found| {
+            return found;
+        }
+        const name = try allocPrint(self.allocator, "proxy_out_{d}", .{self.proxy_converter_count});
+        self.proxy_converter_count += 1;
+        const out_type = try self.type_table.getOrAddArray(raw_type);
+        const children_type = try self.type_table.getOrAddArray(try self.type_table.getOrAddFuncType(.{ .params = &.{}, .return_type_id = self.type_table.getPrimitive(.void) }));
+        var text: std.ArrayList(u8) = .empty;
+        try self.emit(&text, "func ~{s}(value: {s}, mut out: {s}) -> void\n", .{ name, try self.derivedTypeText(value_type, loc), try self.derivedTypeText(out_type, loc) });
+        var call: []const u8 = "value";
+        if (self.type_table.getTypePtrById(value_type).is_nullable) {
+            try text.appendSlice(self.allocator, "if value: present then\n");
+            call = "present";
+        }
+        for (chain) |index| {
+            const to = try self.derivedFunctionAlias(self.proxies.items[index].to);
+            call = try allocPrint(self.allocator, "{s}({s})", .{ to, call });
+        }
+        try self.emit(&text, "array::append(out, {s})\n", .{call});
+        if (self.type_table.getTypePtrById(value_type).is_nullable) {
+            try text.appendSlice(self.allocator, "end\n");
+        }
+        try text.appendSlice(self.allocator, "end\n");
+        const int = self.type_table.getPrimitive(.int);
+        const captures = try self.allocator.alloc(tt.TypeId, 6);
+        captures[0] = value_type;
+        captures[1] = out_type;
+        captures[2] = children_type;
+        captures[3] = int;
+        captures[4] = int;
+        captures[5] = int;
+        const function = ir.SiteFunction{
+            .uid = try self.registerSiteFunction(text.items, loc),
+            .captures = captures,
+            .arg_count = 2,
+            .return_type = self.type_table.getPrimitive(.void),
+        };
+        try self.proxy_encoders.put(self.allocator, key, function);
+        return function;
+    }
+
+    fn registerSiteFunction(self: *Self, source: []const u8, loc: err.Loc) CompileError!usize {
+        const index = try self.registerDerivedFunction(source);
+        const symbol = try self.instantiateGenericFunction(index, &.{}, loc);
+        return self.type_table.getTypePtrById(symbol.type_id).kind.function.uid;
+    }
+
+    fn hasSites(self: *Self, plan_index: usize, visited: *std.AutoHashMapUnmanaged(usize, void)) CompileError!bool {
+        if (visited.contains(plan_index)) {
+            return false;
+        }
+        try visited.put(self.allocator, plan_index, {});
+        const plan = self.serialization_plans.items[plan_index];
+        return switch (plan.shape) {
+            .scalar, .enumeration => false,
+            .proxy => true,
+            .nullable => |child| try self.hasSites(child, visited),
+            .array, .map => |child| plan.item_site != null or try self.hasSites(child, visited),
+            .structure => |structure| blk: {
+                for (structure.fields) |field| {
+                    const has_site = field.site != null or try self.hasSites(field.plan, visited);
+                    if (has_site) {
+                        break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .tagged_union => |variants| blk: {
+                for (variants) |variant| {
+                    const payload_plan = variant.plan orelse continue;
+                    const has_site = variant.site != null or try self.hasSites(payload_plan, visited);
+                    if (has_site) {
+                        break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+        };
+    }
+
+    fn planShape(self: *Self, plan_index: usize, type_id: tt.TypeId, schema: tt.TypeId, path: []const u8, loc: err.Loc) CompileError!ir.PlanShape {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+            return .{ .nullable = try self.planIndex(base, schema, path, loc) };
+        }
+        if (try self.typeProxy(type_id, schema)) |proxy| {
+            try self.active_proxy_plans.append(self.allocator, plan_index);
+            defer _ = self.active_proxy_plans.pop();
+            const target_plan = try self.planIndex(self.proxies.items[proxy].proxy_type, schema, path, loc);
+            for (self.active_proxy_plans.items) |active| {
+                if (active == target_plan) {
+                    return self.err_reporter.invalidSchema("a 'via' chain can't loop back to the same type", self.reportAtUserCall(loc));
+                }
+            }
+            return .{ .proxy = .{ .proxy = proxy, .plan = target_plan } };
+        }
+        switch (type_ptr.kind) {
+            .int, .byte, .float, .boolean, .string => return .scalar,
+            .array => |item_type| return .{ .array = try self.planIndex(item_type, schema, try allocPrint(self.allocator, "{s}[]", .{path}), loc) },
+            .map => |map| {
+                const key = self.type_table.getTypePtrById(map.key);
+                const is_string_key = key.kind == .string and !key.is_nullable;
+                if (!is_string_key) {
+                    return self.unserializableType(type_id, path, loc);
+                }
+                return .{ .map = try self.planIndex(map.value, schema, try allocPrint(self.allocator, "{s}[]", .{path}), loc) };
+            },
+            .@"enum" => |enumeration| {
+                if (enumeration.error_set != null) {
+                    return self.unserializableType(type_id, path, loc);
+                }
+                return .{ .enumeration = try self.planVariants(type_id, schema, enumeration.variants_in_order, null, path, loc) };
+            },
+            .@"union" => |tagged| return .{ .tagged_union = try self.planVariants(type_id, schema, tagged.variants_in_order, tagged.variants, path, loc) },
+            .@"struct" => |struct_def| return .{ .structure = try self.planStructure(type_id, schema, struct_def, path, loc) },
+            else => return self.unserializableType(type_id, path, loc),
+        }
+    }
+
+    fn planStructure(self: *Self, type_id: tt.TypeId, schema: tt.TypeId, struct_def: tt.Struct, path: []const u8, loc: err.Loc) CompileError!ir.PlanStructure {
+        const rules = try self.validatedRules(type_id, schema);
+        const case = self.caseOf(schema);
+        var fields: std.ArrayList(ir.PlanField) = .empty;
+        var skipped: std.ArrayList(ir.PlanSkip) = .empty;
+        for (struct_def.fields_in_order, 0..) |field, i| {
+            const field_path = if (path.len == 0) field.identifier else try allocPrint(self.allocator, "{s}.{s}", .{ path, field.identifier });
+            if (field.is_file_only) {
+                return self.unserializableType(type_id, field_path, loc);
+            }
+            const default_value = if (field.default_value) |value| try self.coerceValue(value, field.type_id, loc) else null;
+            const naming = try self.memberNaming(field.identifier, case, rules.get(field.identifier));
+            if (naming.is_skipped) {
+                try skipped.append(self.allocator, .{ .field_index = @intCast(i), .default_value = default_value.? });
+                continue;
+            }
+            const proxy: ?usize = if (naming.via) |rule| try self.resolveProxy(rule, rules.get(field.identifier).?.module, self.nonNullType(field.type_id), false) else null;
+            const field_plan_type = if (proxy) |index| try self.proxiedFieldType(field.type_id, self.proxies.items[index].proxy_type) else field.type_id;
+            try fields.append(self.allocator, .{
+                .name = naming.name,
+                .aliases = naming.aliases,
+                .omits_null = naming.omits_null,
+                .field_index = @intCast(i),
+                .plan = try self.planIndex(field_plan_type, schema, field_path, loc),
+                .default_value = default_value,
+                .proxy = proxy,
+            });
+        }
+        try self.checkDistinctNames(type_id, schema, fields.items, loc);
+        return .{ .fields = fields.items, .skipped = skipped.items };
+    }
+
+    fn planVariants(self: *Self, type_id: tt.TypeId, schema: tt.TypeId, names: []const []const u8, payloads: ?std.StringHashMap(tt.TypeId), path: []const u8, loc: err.Loc) CompileError![]const ir.PlanVariant {
+        const rules = try self.validatedRules(type_id, schema);
+        const case = self.caseOf(schema);
+        const variants = try self.allocator.alloc(ir.PlanVariant, names.len);
+        for (names, variants) |name, *variant| {
+            const naming = try self.memberNaming(name, case, rules.get(name));
+            const payload_plan: ?usize = if (payloads) |map| blk: {
+                const variant_path = if (path.len == 0) name else try allocPrint(self.allocator, "{s}.{s}", .{ path, name });
+                break :blk try self.planIndex(map.get(name).?, schema, variant_path, loc);
+            } else null;
+            variant.* = .{ .name = naming.name, .aliases = naming.aliases, .declared_name = name, .plan = payload_plan };
+        }
+        const as_fields = try self.allocator.alloc(ir.PlanField, variants.len);
+        for (variants, as_fields, 0..) |variant, *field, i| {
+            field.* = .{ .name = variant.name, .aliases = variant.aliases, .omits_null = false, .field_index = @intCast(i), .plan = 0, .default_value = null };
+        }
+        try self.checkDistinctNames(type_id, schema, as_fields, loc);
+        return variants;
+    }
+
+    fn memberNaming(self: *Self, identifier: []const u8, case: NameCase, member: ?MemberRules) CompileError!MemberNaming {
+        var naming = MemberNaming{ .name = try self.externalName(identifier, case) };
+        const rules = member orelse return naming;
+        var has_explicit_name = false;
+        var aliases: std.ArrayList([]const u8) = .empty;
+        for (rules.rules) |*rule| {
+            switch (rule.kind) {
+                .name => |name| {
+                    if (has_explicit_name) {
+                        try aliases.append(self.allocator, name);
+                        continue;
+                    }
+                    naming.name = name;
+                    has_explicit_name = true;
+                },
+                .skip => naming.is_skipped = true,
+                .omit_null => naming.omits_null = true,
+                .via => naming.via = rule,
+            }
+        }
+        naming.aliases = aliases.items;
+        return naming;
+    }
+
+    fn checkDistinctNames(self: *Self, type_id: tt.TypeId, schema: tt.TypeId, fields: []const ir.PlanField, loc: err.Loc) CompileError!void {
+        var owners: std.StringHashMapUnmanaged(void) = .empty;
+        for (fields) |field| {
+            const names = [_][]const []const u8{ &.{field.name}, field.aliases };
+            for (names) |group| {
+                for (group) |name| {
+                    if (!owners.contains(name)) {
+                        try owners.put(self.allocator, name, {});
+                        continue;
+                    }
+                    const saved_reporter = self.err_reporter;
+                    defer self.err_reporter = saved_reporter;
+                    const type_name = try self.type_table.syntaxName(type_id, self.allocator);
+                    const schema_name = try self.type_table.syntaxName(schema, self.allocator);
+                    return self.err_reporter.invalidSchema(try allocPrint(self.allocator, "two members of '{s}' are named '{s}' in schema '{s}'", .{ type_name, name, schema_name }), self.reportAtUserCall(loc));
+                }
+            }
+        }
+    }
+
+    fn caseOf(self: *Self, schema: tt.TypeId) NameCase {
+        const entry = self.schemaEntryOf(schema) orelse return .exact;
+        return entry.case;
+    }
+
+    fn schemaEntryOf(self: *Self, schema: tt.TypeId) ?SchemaEntry {
+        const index = self.type_table.getTypePtrById(schema).kind.schema.index orelse return null;
+        return self.schemas.items[index];
+    }
+
+    fn externalName(self: *Self, identifier: []const u8, case: NameCase) CompileError![]const u8 {
+        if (case == .exact) {
+            return identifier;
+        }
+        var words: std.ArrayList([]const u8) = .empty;
+        var start: usize = 0;
+        for (identifier, 0..) |c, i| {
+            const is_separator = c == '_' or c == '-';
+            if (is_separator) {
+                if (i > start) {
+                    try words.append(self.allocator, identifier[start..i]);
+                }
+                start = i + 1;
+                continue;
+            }
+            if (i == start or !std.ascii.isUpper(c)) continue;
+            const previous = identifier[i - 1];
+            const follows_lower = std.ascii.isLower(previous) or std.ascii.isDigit(previous);
+            const ends_acronym = std.ascii.isUpper(previous) and i + 1 < identifier.len and std.ascii.isLower(identifier[i + 1]);
+            if (follows_lower or ends_acronym) {
+                try words.append(self.allocator, identifier[start..i]);
+                start = i;
+            }
+        }
+        if (start < identifier.len) {
+            try words.append(self.allocator, identifier[start..]);
+        }
+        var out: std.ArrayList(u8) = .empty;
+        for (words.items, 0..) |word, i| {
+            const separator: ?u8 = switch (case) {
+                .snake => '_',
+                .kebab => '-',
+                else => null,
+            };
+            if (i > 0 and separator != null) {
+                try out.append(self.allocator, separator.?);
+            }
+            const is_capitalized = case == .pascal or (case == .camel and i > 0);
+            for (word, 0..) |c, j| {
+                const letter = if (is_capitalized and j == 0) std.ascii.toUpper(c) else std.ascii.toLower(c);
+                try out.append(self.allocator, letter);
+            }
+        }
+        return out.items;
+    }
+
+    fn declareSchema(self: *Self, stmt: *const ast.SchemaStmt, loc: err.Loc) CompileError!void {
+        var case: NameCase = .exact;
+        for (stmt.options) |option| {
+            if (!std.mem.eql(u8, option.name, "case")) {
+                return self.err_reporter.invalidSchema(try allocPrint(self.allocator, "'{s}' isn't a schema option: the only one is 'case'", .{option.name}), option.loc);
+            }
+            const text = switch (option.value.data) {
+                .string_literal => |value| value,
+                else => return self.err_reporter.invalidSchema("'case' takes a string: \"snake\", \"camel\", \"kebab\", \"pascal\" or \"exact\"", option.value.loc),
+            };
+            case = std.meta.stringToEnum(NameCase, text) orelse {
+                return self.err_reporter.invalidSchema(try allocPrint(self.allocator, "'{s}' isn't a case: use \"snake\", \"camel\", \"kebab\", \"pascal\" or \"exact\"", .{text}), option.value.loc);
+            };
+        }
+        const index = self.schemas.items.len;
+        const type_id = try self.type_table.addType(.{ .kind = .{ .schema = .{ .identifier = stmt.identifier, .index = index } }, .is_nullable = false });
+        try self.schemas.append(self.allocator, .{ .stmt = stmt, .module = self.module, .type_id = type_id, .case = case });
+        self.scope.symbol_table.put(.{
+            .identifier = stmt.identifier,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .defined_type = .{ .blueprint_type_id = type_id } },
+        }) catch return self.err_reporter.alreadyDefined(stmt.identifier, loc);
+    }
+
+    fn defaultSchemaType(self: *Self) CompileError!tt.TypeId {
+        if (self.default_schema_type) |type_id| {
+            return type_id;
+        }
+        const type_id = try self.type_table.addType(.{ .kind = .{ .schema = .{ .identifier = "default", .index = null } }, .is_nullable = false });
+        self.default_schema_type = type_id;
+        return type_id;
+    }
+
+    fn recordSchemaSections(self: *Self, type_id: tt.TypeId, sections: []const ast.SchemaSection) CompileError!void {
+        if (sections.len == 0) return;
+        try self.type_sections.put(self.allocator, type_id, .{ .sections = sections, .module = self.module });
+    }
+
+    fn validateSchemaRules(self: *Self) CompileError!void {
+        var sections = self.type_sections.iterator();
+        while (sections.next()) |entry| {
+            for (entry.value_ptr.sections) |section| {
+                const schema = try self.sectionSchema(section, entry.value_ptr.module);
+                _ = try self.validatedRules(entry.key_ptr.*, schema);
+            }
+        }
+        for (self.schemas.items) |schema| {
+            try self.validateTypeRules(schema);
+            for (schema.stmt.blocks) |block| {
+                const type_id = try self.blockType(block, schema.module);
+                _ = try self.validatedRules(type_id, schema.type_id);
+            }
+        }
+    }
+
+    fn validatedRules(self: *Self, type_id: tt.TypeId, schema: tt.TypeId) CompileError!RulesByMember {
+        const rules = try self.schemaRulesFor(type_id, schema);
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        for (rules.keys(), rules.values()) |name, member| {
+            switch (type_ptr.kind) {
+                .@"struct" => |struct_def| {
+                    const field = struct_def.fields.get(name) orelse {
+                        return self.schemaError(member.module, try allocPrint(self.allocator, "'{s}' has no field '{s}'", .{ struct_def.identifier, name }), member.loc);
+                    };
+                    if (field.is_file_only) {
+                        return self.schemaError(member.module, try allocPrint(self.allocator, "'{s}.{s}' is private: schemas only reach public fields", .{ struct_def.identifier, name }), member.loc);
+                    }
+                    try self.checkFieldRules(struct_def.identifier, field, member);
+                },
+                .@"enum" => |enumeration| {
+                    if (!enumeration.variants.contains(name)) {
+                        return self.schemaError(member.module, try allocPrint(self.allocator, "'{s}' has no variant '{s}'", .{ enumeration.identifier, name }), member.loc);
+                    }
+                    try self.checkVariantRules(member);
+                },
+                .@"union" => |tagged| {
+                    if (!tagged.variants.contains(name)) {
+                        return self.schemaError(member.module, try allocPrint(self.allocator, "'{s}' has no variant '{s}'", .{ tagged.identifier, name }), member.loc);
+                    }
+                    try self.checkVariantRules(member);
+                },
+                else => {},
+            }
+        }
+        return rules;
+    }
+
+    fn checkFieldRules(self: *Self, struct_name: []const u8, field: tt.TypedIdentifier, member: MemberRules) CompileError!void {
+        for (member.rules) |*rule| {
+            switch (rule.kind) {
+                .skip => {
+                    if (field.default_value == null) {
+                        return self.schemaError(member.module, try allocPrint(self.allocator, "'{s}.{s}' can't be skipped: it has no default", .{ struct_name, field.identifier }), rule.loc);
+                    }
+                },
+                .omit_null => {
+                    if (!self.type_table.getTypePtrById(field.type_id).is_nullable) {
+                        return self.schemaError(member.module, try allocPrint(self.allocator, "'{s}.{s}' can't use omit_null: it isn't nullable", .{ struct_name, field.identifier }), rule.loc);
+                    }
+                },
+                .via => _ = try self.resolveProxy(rule, member.module, self.nonNullType(field.type_id), false),
+                .name => {},
+            }
+        }
+    }
+
+    fn checkVariantRules(self: *Self, member: MemberRules) CompileError!void {
+        for (member.rules) |rule| {
+            const is_name = rule.kind == .name;
+            if (!is_name) {
+                return self.schemaError(member.module, "variants only take names", rule.loc);
+            }
+        }
+    }
+
+    fn schemaRulesFor(self: *Self, type_id: tt.TypeId, schema: tt.TypeId) CompileError!RulesByMember {
+        var rules: RulesByMember = .empty;
+        const entry = self.schemaEntryOf(schema) orelse return rules;
+        if (self.type_sections.get(type_id)) |sections| {
+            for (sections.sections) |section| {
+                if ((try self.sectionSchema(section, sections.module)) != schema) continue;
+                for (section.members) |member| {
+                    try self.addMemberRules(&rules, member, sections.module);
+                }
+            }
+        }
+        for (entry.stmt.blocks) |block| {
+            if (!try self.isBlockFor(block, entry.module, type_id)) continue;
+            for (block.members) |member| {
+                try self.addMemberRules(&rules, member, entry.module);
+            }
+        }
+        return rules;
+    }
+
+    fn addMemberRules(self: *Self, rules: *RulesByMember, member: ast.SchemaMember, module: *ModuleScope) CompileError!void {
+        if (rules.contains(member.name)) {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' already has rules in this schema: name each member in one place", .{member.name}), member.loc);
+        }
+        try rules.put(self.allocator, member.name, .{ .rules = member.rules, .loc = member.loc, .module = module });
+    }
+
+    fn sectionSchema(self: *Self, section: ast.SchemaSection, module: *ModuleScope) CompileError!tt.TypeId {
+        const symbol = module.root.get(section.schema_name) orelse {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' isn't a schema", .{section.schema_name}), section.loc);
+        };
+        const is_schema = symbol.kind == .defined_type and self.type_table.getTypePtrById(symbol.kind.defined_type.blueprint_type_id).kind == .schema;
+        if (!is_schema) {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' isn't a schema", .{section.schema_name}), section.loc);
+        }
+        return symbol.kind.defined_type.blueprint_type_id;
+    }
+
+    fn blockType(self: *Self, block: ast.SchemaBlock, module: *ModuleScope) CompileError!tt.TypeId {
+        const symbol = module.root.get(block.type_name) orelse {
+            return self.schemaError(module, try allocPrint(self.allocator, "Type '{s}' isn't defined", .{block.type_name}), block.loc);
+        };
+        const type_id = switch (symbol.kind) {
+            .defined_type => |defined| defined.blueprint_type_id,
+            .generic_type => |index| (self.generic_types.items[index].opaque_copy orelse return self.schemaError(module, "generic type isn't ready", block.loc)).kind.defined_type.blueprint_type_id,
+            else => return self.schemaError(module, try allocPrint(self.allocator, "'{s}' isn't a struct, enum or union", .{block.type_name}), block.loc),
+        };
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        const does_kind_match = switch (block.kind) {
+            .@"struct" => kind == .@"struct",
+            .@"enum" => kind == .@"enum",
+            .@"union" => kind == .@"union",
+        };
+        if (!does_kind_match) {
+            const kind_name = switch (block.kind) {
+                .@"struct" => "a struct",
+                .@"enum" => "an enum",
+                .@"union" => "a union",
+            };
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' isn't {s}", .{ block.type_name, kind_name }), block.loc);
+        }
+        return type_id;
+    }
+
+    fn isBlockFor(self: *Self, block: ast.SchemaBlock, module: *ModuleScope, type_id: tt.TypeId) CompileError!bool {
+        const symbol = module.root.get(block.type_name) orelse return false;
+        switch (symbol.kind) {
+            .defined_type => |defined| return defined.blueprint_type_id == type_id,
+            .generic_type => |index| {
+                const copy = self.copied_types.get(type_id) orelse return false;
+                return copy.generic == index;
+            },
+            else => return false,
+        }
+    }
+
+    fn schemaError(self: *Self, module: *ModuleScope, message: []const u8, loc: err.Loc) CompileError {
+        const saved_reporter = self.err_reporter;
+        defer self.err_reporter = saved_reporter;
+        self.err_reporter.copy_context = null;
+        self.err_reporter.src = module.src;
+        self.err_reporter.file_path = module.file_path;
+        return self.err_reporter.invalidSchema(message, loc);
+    }
+
+    fn resolveProxy(self: *Self, rule: *const ast.SchemaRule, module: *ModuleScope, value_type: tt.TypeId, is_type_level: bool) CompileError!usize {
+        if (self.proxy_by_rule.get(@intFromPtr(rule))) |index| {
+            return index;
+        }
+        const via = rule.kind.via;
+        const to = try self.proxyFunction(via.to, module, "to");
+        const from = try self.proxyFunction(via.from, module, "from");
+        const to_type = self.type_table.getTypePtrById(to.type_id).kind.function;
+        const from_type = self.type_table.getTypePtrById(from.type_id).kind.function;
+        const value_name = try self.type_table.syntaxName(value_type, self.allocator);
+        const is_to_valid = to_type.params.len == 1 and to_type.params[0].type_id == value_type;
+        if (!is_to_valid) {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' must take one '{s}'", .{ to.identifier, value_name }), via.to.loc);
+        }
+        const proxy_type = to_type.return_type_id;
+        const proxy_kind = self.type_table.getTypePtrById(proxy_type).kind;
+        const would_loop = is_type_level and proxy_type == value_type;
+        const is_proxy_valid = proxy_kind != .error_union and proxy_kind != .void and !would_loop;
+        if (!is_proxy_valid) {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' must return another type, not '{s}'", .{ to.identifier, try self.type_table.syntaxName(proxy_type, self.allocator) }), via.to.loc);
+        }
+        const from_result = self.type_table.getTypePtrById(from_type.return_type_id);
+        const can_fail = from_result.kind == .error_union;
+        const from_value = if (can_fail) from_result.kind.error_union.payload else from_type.return_type_id;
+        const is_from_valid = from_type.params.len == 1 and from_type.params[0].type_id == proxy_type and from_value == value_type;
+        if (!is_from_valid) {
+            const proxy_name = try self.type_table.syntaxName(proxy_type, self.allocator);
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' must take one '{s}' and return '{s}'", .{ from.identifier, proxy_name, value_name }), via.from.loc);
+        }
+        const index = self.proxies.items.len;
+        try self.proxies.append(self.allocator, .{ .to = to, .from = from, .value_type = value_type, .proxy_type = proxy_type, .can_fail = can_fail });
+        try self.proxy_by_rule.put(self.allocator, @intFromPtr(rule), index);
+        return index;
+    }
+
+    fn proxyFunction(self: *Self, exp: *const ast.ExpNode, module: *ModuleScope, role: []const u8) CompileError!Symbol {
+        if (exp.data != .identifier) {
+            return self.schemaError(module, try allocPrint(self.allocator, "via's '{s}' must name a function", .{role}), exp.loc);
+        }
+        const name = exp.data.identifier;
+        const symbol = module.root.get(name) orelse {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' isn't defined", .{name}), exp.loc);
+        };
+        if (symbol.kind != .function) {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' isn't a function: via takes two functions", .{name}), exp.loc);
+        }
+        return symbol;
+    }
+
+    fn typeProxy(self: *Self, type_id: tt.TypeId, schema: tt.TypeId) CompileError!?usize {
+        const entry = self.schemaEntryOf(schema) orelse return null;
+        for (entry.stmt.type_rules) |*type_rule| {
+            const symbol = entry.module.root.get(type_rule.type_name) orelse continue;
+            const is_match = switch (symbol.kind) {
+                .defined_type => |defined| defined.blueprint_type_id == type_id,
+                .generic_type => |index| if (self.copied_types.get(type_id)) |copy| copy.generic == index else false,
+                else => false,
+            };
+            if (!is_match) continue;
+            const rule = try self.typeRuleVia(type_rule, entry.module);
+            return try self.resolveProxy(rule, entry.module, type_id, true);
+        }
+        return null;
+    }
+
+    fn typeRuleVia(self: *Self, type_rule: *const ast.SchemaTypeRule, module: *ModuleScope) CompileError!*const ast.SchemaRule {
+        const is_single_via = type_rule.rules.len == 1 and type_rule.rules[0].kind == .via;
+        if (!is_single_via) {
+            return self.schemaError(module, "a type line in a schema only takes via(to, from): put member rules in a struct, enum or union block", type_rule.loc);
+        }
+        return &type_rule.rules[0];
+    }
+
+    fn validateTypeRules(self: *Self, schema: SchemaEntry) CompileError!void {
+        for (schema.stmt.type_rules) |*type_rule| {
+            const symbol = schema.module.root.get(type_rule.type_name) orelse {
+                return self.schemaError(schema.module, try allocPrint(self.allocator, "Type '{s}' isn't defined", .{type_rule.type_name}), type_rule.loc);
+            };
+            const type_id = switch (symbol.kind) {
+                .defined_type => |defined| defined.blueprint_type_id,
+                else => {
+                    _ = try self.typeRuleVia(type_rule, schema.module);
+                    continue;
+                },
+            };
+            const rule = try self.typeRuleVia(type_rule, schema.module);
+            _ = try self.resolveProxy(rule, schema.module, type_id, true);
+        }
+    }
+
+    fn nonNullType(self: *Self, type_id: tt.TypeId) tt.TypeId {
+        return self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+    }
+
+    fn proxiedFieldType(self: *Self, field_type: tt.TypeId, proxy_type: tt.TypeId) CompileError!tt.TypeId {
+        if (!self.type_table.getTypePtrById(field_type).is_nullable) {
+            return proxy_type;
+        }
+        return self.type_table.getOrAddNullable(proxy_type);
+    }
+
+    fn isPlanCheck(self: *Self, exp: *const ast.ExpNode) bool {
+        if (exp.data != .fn_call) {
+            return false;
+        }
+        const target = exp.data.fn_call.target;
+        if (target.data != .identifier) {
+            return false;
+        }
+        const symbol = self.scope.symbol_table.get(target.data.identifier) orelse return false;
+        const operation = self.serialization_operation_by_uid.get(symbol.uid) orelse return false;
+        return operation == .is_proxied or operation == .has_proxies;
+    }
+
+    fn derivedFunctionAlias(self: *Self, symbol: Symbol) CompileError![]const u8 {
+        if (self.derived_function_aliases.get(symbol.uid)) |name| {
+            return name;
+        }
+        const module = self.serialization_module orelse @panic("derivedFunctionAlias: std/serialization isn't loaded");
+        const name = try allocPrint(self.allocator, "derived_function_{d}", .{self.derived_function_aliases.count()});
+        var alias = symbol;
+        alias.identifier = name;
+        alias.is_file_only = true;
+        try module.root.put(alias);
+        try self.derived_function_aliases.put(self.allocator, symbol.uid, name);
+        return name;
+    }
+
+    fn proxyKey(self: *Self, operation: native.SerializationOperation, type_id: tt.TypeId, proxy: usize) DerivedKey {
+        return .{ .operation = operation, .type_id = type_id, .schema = self.derive_schema, .proxy = proxy + 1 };
+    }
+
+    fn emitProxyDecode(self: *Self, out: *std.ArrayList(u8), proxy: Proxy, loc: err.Loc) CompileError!void {
+        try out.appendSlice(self.allocator, "let pending_base = array::len(pending)\n");
+        if (self.type_table.getTypePtrById(proxy.proxy_type).is_nullable) {
+            try self.emit(out, "let mut proxy: {s} = null\n", .{try self.derivedTypeText(proxy.proxy_type, loc)});
+            try self.emitDecodeInto(out, "proxy", proxy.proxy_type, loc);
+        } else {
+            try self.emit(out, "let proxy = {s}\n", .{try self.decodeExpression(proxy.proxy_type, loc)});
+        }
+        try out.appendSlice(self.allocator, "apply_pending_since(pending, pending_base)\n");
+        const from = try self.derivedFunctionAlias(proxy.from);
+        if (!proxy.can_fail) {
+            try self.emit(out, "return {s}(proxy)\n", .{from});
+            return;
+        }
+        try self.emit(out, "let converted = {s}(proxy) catch e then\nreturn SerializationError.InvalidValue\nend\nreturn converted\n", .{from});
+    }
+
+    fn emitProxyEncode(self: *Self, out: *std.ArrayList(u8), proxy: Proxy, loc: err.Loc) CompileError!void {
+        try self.emit(out, "let proxy = {s}(value)\n", .{try self.derivedFunctionAlias(proxy.to)});
+        try self.emitEncode(out, "proxy", proxy.proxy_type, 0, loc);
+    }
+
+    fn unserializableType(self: *Self, type_id: tt.TypeId, path: []const u8, loc: err.Loc) CompileError {
+        const saved_reporter = self.err_reporter;
+        defer self.err_reporter = saved_reporter;
+        const name = try self.type_table.syntaxName(type_id, self.allocator);
+        const found = if (path.len == 0) name else try allocPrint(self.allocator, "{s} at '{s}'", .{ name, path });
+        return self.err_reporter.invalidType("a serializable type with public fields", found, self.reportAtUserCall(loc));
+    }
+
+    fn derivedBound(self: *Self, key: DerivedKey, loc: err.Loc) CompileError![]const u8 {
+        const capabilities = try self.capabilitiesOf(key, loc);
+        const is_decode = key.operation == .derive_decode;
+        var bound: std.ArrayList(u8) = .empty;
+        try bound.appendSlice(self.allocator, if (is_decode) "ScalarReader" else "ScalarWriter");
+        const traits = [_]struct { path: ?[]const u8, reader: []const u8, writer: []const u8 }{
+            .{ .path = capabilities.null_path, .reader = "NullReader", .writer = "NullWriter" },
+            .{ .path = capabilities.struct_path, .reader = "StructReader", .writer = "StructWriter" },
+            .{ .path = capabilities.array_path, .reader = "ArrayReader", .writer = "ArrayWriter" },
+            .{ .path = capabilities.map_path, .reader = "MapReader", .writer = "MapWriter" },
+            .{ .path = capabilities.enum_path, .reader = "EnumReader", .writer = "EnumWriter" },
+            .{ .path = capabilities.union_path, .reader = "UnionReader", .writer = "UnionWriter" },
+        };
+        for (traits) |trait| {
+            if (trait.path == null) continue;
+            try self.emit(&bound, " + {s}", .{if (is_decode) trait.reader else trait.writer});
+        }
+        return bound.items;
+    }
+    fn capabilitiesOf(self: *Self, key: DerivedKey, loc: err.Loc) CompileError!Capabilities {
+        var capabilities = Capabilities{};
+        var visited: std.AutoHashMapUnmanaged(usize, void) = .empty;
+        const plan_type = if (key.proxy > 0) self.proxies.items[key.proxy - 1].proxy_type else key.type_id;
+        const plan = try self.planIndex(plan_type, key.schema, "", loc);
+        try self.collectCapabilities(plan, try self.type_table.syntaxName(key.type_id, self.allocator), &capabilities, &visited);
+        return capabilities;
+    }
+    fn collectCapabilities(self: *Self, plan_index: usize, path: []const u8, capabilities: *Capabilities, visited: *std.AutoHashMapUnmanaged(usize, void)) CompileError!void {
+        if (visited.contains(plan_index)) return;
+        try visited.put(self.allocator, plan_index, {});
+        const plan = self.serialization_plans.items[plan_index];
+        switch (plan.shape) {
+            .scalar => {},
+            .proxy => |proxy| try self.collectCapabilities(proxy.plan, path, capabilities, visited),
+            .nullable => |child| {
+                if (capabilities.null_path == null) {
+                    capabilities.null_path = path;
+                }
+                try self.collectCapabilities(child, path, capabilities, visited);
+            },
+            .array => |child| {
+                if (capabilities.array_path == null) {
+                    capabilities.array_path = path;
+                }
+                try self.collectCapabilities(child, try allocPrint(self.allocator, "{s}[]", .{path}), capabilities, visited);
+            },
+            .map => |child| {
+                if (capabilities.map_path == null) {
+                    capabilities.map_path = path;
+                }
+                try self.collectCapabilities(child, try allocPrint(self.allocator, "{s}[]", .{path}), capabilities, visited);
+            },
+            .structure => |structure| {
+                if (capabilities.struct_path == null) {
+                    capabilities.struct_path = path;
+                }
+                const struct_fields = self.type_table.getTypePtrById(plan.type_id).kind.@"struct".fields_in_order;
+                for (structure.fields) |field| {
+                    const field_path = try allocPrint(self.allocator, "{s}.{s}", .{ path, struct_fields[field.field_index].identifier });
+                    try self.collectCapabilities(field.plan, field_path, capabilities, visited);
+                }
+            },
+            .enumeration => {
+                if (capabilities.enum_path == null) {
+                    capabilities.enum_path = path;
+                }
+            },
+            .tagged_union => |variants| {
+                if (capabilities.union_path == null) {
+                    capabilities.union_path = path;
+                }
+                for (variants) |variant| {
+                    try self.collectCapabilities(variant.plan.?, try allocPrint(self.allocator, "{s}.{s}", .{ path, variant.declared_name }), capabilities, visited);
+                }
+            },
+        }
+    }
+    fn derivedTypeText(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+            return allocPrint(self.allocator, "?{s}", .{try self.derivedTypeText(base, loc)});
+        }
+        return switch (type_ptr.kind) {
+            .int => "int",
+            .float => "float",
+            .boolean => "bool",
+            .string => "string",
+            .byte => "byte",
+            .array => |item_type| allocPrint(self.allocator, "[]{s}", .{try self.derivedTypeText(item_type, loc)}),
+            .map => |map| allocPrint(self.allocator, "map[{s}, {s}]", .{ try self.derivedTypeText(map.key, loc), try self.derivedTypeText(map.value, loc) }),
+            .@"struct", .@"enum", .@"union" => self.derivedTypeName(type_id),
+            else => self.unserializableType(type_id, "", loc),
+        };
+    }
+
+    fn derivedTypeName(self: *Self, type_id: tt.TypeId) CompileError![]const u8 {
+        if (self.derived_type_names.get(type_id)) |name| {
+            return name;
+        }
+        const module = self.serialization_module orelse @panic("derivedTypeName: std/serialization isn't loaded");
+        const name = try allocPrint(self.allocator, "derived_type_{d}", .{type_id});
+        try module.root.put(.{
+            .identifier = name,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .defined_type = .{ .blueprint_type_id = type_id } },
+            .is_file_only = true,
+        });
+        try self.derived_type_names.put(self.allocator, type_id, name);
+        return name;
+    }
+
+    fn emit(self: *Self, out: *std.ArrayList(u8), comptime format: []const u8, args: anytype) CompileError!void {
+        try out.appendSlice(self.allocator, try allocPrint(self.allocator, format, args));
+    }
+
     fn methodOrError(self: *Self, type_id: tt.TypeId, name: []const u8, loc: err.Loc) CompileError!tt.TypeId {
         if (self.methodOf(type_id, name)) |method| return method;
         return switch (self.type_table.getTypePtrById(type_id).kind) {
@@ -5419,17 +7124,15 @@ pub const SemaAnalyzer = struct {
 
     fn evalAnonymousStructInit(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const anonymous_struct = try self.createAnonymousStruct(exp, false);
-        const keys = try self.allocator.alloc([]const u8, anonymous_struct.fields_in_order.len);
-        const values = try self.allocator.alloc(*ir.Value, anonymous_struct.fields_in_order.len);
-
-        for (anonymous_struct.fields_in_order, 0..) |field, i| {
+        const fields_in_order = anonymous_struct.definition.fields_in_order;
+        const keys = try self.allocator.alloc([]const u8, fields_in_order.len);
+        for (fields_in_order, 0..) |field, i| {
             keys[i] = field.identifier;
-            values[i] = field.default_value.?;
         }
 
         return ir.Value.init(self.allocator, .{
-            .data = .{ .struct_init = .{ .keys = keys, .values = values } },
-            .type_id = try self.type_table.getOrAddAnonymousStruct(anonymous_struct),
+            .data = .{ .struct_init = .{ .keys = keys, .values = anonymous_struct.values } },
+            .type_id = try self.type_table.getOrAddAnonymousStruct(anonymous_struct.definition),
         });
     }
 
@@ -5461,12 +7164,276 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
-        return self.indexInto(exp, try self.evalExp(exp.data.indexed.target));
+        const indexed = exp.data.indexed;
+        const is_member_access = !indexed.is_bracket and !indexed.is_nullable and indexed.index.data == .identifier;
+        if (is_member_access) {
+            const member_name = indexed.index.data.identifier;
+            if (self.genericTypeIndexOf(indexed.target)) |generic_index| {
+                const opaque_copy = self.generic_types.items[generic_index].opaque_copy orelse @panic("evalIndexedExp: generic type has no opaque copy");
+                const opaque_type_id = opaque_copy.kind.defined_type.blueprint_type_id;
+                if (self.methodTypeOf(opaque_type_id, member_name) != null or self.genericMethodOf(opaque_type_id, member_name) != null) {
+                    return self.err_reporter.genericNeedsCall(member_name, exp.loc);
+                }
+            }
+            if (indexed.target.data != .identifier) {
+                if (try self.resolveStaticTypeTarget(indexed.target)) |owner_type_id| {
+                    return self.evalStaticTypeMember(owner_type_id, member_name, exp.loc);
+                }
+            }
+        }
+        const is_single_generic_method_arg = indexed.is_bracket and !indexed.is_nullable and isAnyMemberAccess(indexed.target);
+        if (is_single_generic_method_arg) {
+            if (try self.resolveStaticTypeTarget(indexed.target.data.indexed.target)) |owner_type_id| {
+                const member_name = indexed.target.data.indexed.index.data.identifier;
+                if (self.genericMethodOf(owner_type_id, member_name) != null) {
+                    const arg = try self.typeArgumentFromExpression(indexed.index);
+                    const args = [_]*ast.TypeAnnotation{arg};
+                    if (try self.evalExplicitMethodRef(indexed.target, &args, exp.loc)) |method_ref| {
+                        return method_ref;
+                    }
+                }
+            }
+        }
+        return self.indexInto(exp, try self.evalExp(indexed.target));
+    }
+
+    fn evalStaticTypeMember(self: *Self, owner_type_id: tt.TypeId, member_name: []const u8, loc: err.Loc) CompileError!*ir.Value {
+        try self.ensureStructMembers(owner_type_id);
+        const type_kind = self.type_table.getTypePtrById(owner_type_id).kind;
+        switch (type_kind) {
+            .@"struct" => |struct_def| {
+                if (struct_def.static_fields.get(member_name)) |constant| {
+                    return constant.default_value.?;
+                }
+                if (struct_def.methods.get(member_name)) |fn_type_id| {
+                    return self.evalUnboundMethodRef(owner_type_id, member_name, fn_type_id, loc);
+                }
+                if (self.genericMethodOf(owner_type_id, member_name) != null) {
+                    return self.err_reporter.genericNeedsCall(member_name, loc);
+                }
+                if (struct_def.fields.contains(member_name)) {
+                    return self.err_reporter.invalidStaticStructField(struct_def.identifier, member_name, loc);
+                }
+                return self.err_reporter.invalidStructField(struct_def.identifier, member_name, loc);
+            },
+            .@"enum" => |enum_def| {
+                if (enum_def.variants.get(member_name)) |value| {
+                    return ir.Value.init(self.allocator, .{
+                        .data = .{ .i_int = value },
+                        .type_id = owner_type_id,
+                    });
+                }
+                if (enum_def.static_fields.get(member_name)) |constant| {
+                    return constant.default_value.?;
+                }
+                if (enum_def.methods.get(member_name)) |fn_type_id| {
+                    return self.evalUnboundMethodRef(owner_type_id, member_name, fn_type_id, loc);
+                }
+                if (self.genericMethodOf(owner_type_id, member_name) != null) {
+                    return self.err_reporter.genericNeedsCall(member_name, loc);
+                }
+                return self.err_reporter.invalidEnumVariant(enum_def.identifier, member_name, loc);
+            },
+            .@"union" => |union_def| {
+                if (union_def.static_fields.get(member_name)) |constant| {
+                    return constant.default_value.?;
+                }
+                if (union_def.methods.get(member_name)) |fn_type_id| {
+                    return self.evalUnboundMethodRef(owner_type_id, member_name, fn_type_id, loc);
+                }
+                if (self.genericMethodOf(owner_type_id, member_name) != null) {
+                    return self.err_reporter.genericNeedsCall(member_name, loc);
+                }
+                return self.err_reporter.invalidStaticUnionField(union_def.identifier, member_name, loc);
+            },
+            else => @panic("evalStaticTypeMember: owner isn't a struct, enum or union"),
+        }
+    }
+
+    fn evalUnboundMethodRef(self: *Self, owner_type_id: tt.TypeId, member_name: []const u8, fn_type_id: tt.TypeId, loc: err.Loc) CompileError!*ir.Value {
+        try self.checkMemberVisible(owner_type_id, member_name, self.file_only_methods.contains(fn_type_id), loc);
+        return self.evalFuncRef(fn_type_id, loc);
+    }
+
+    fn evalExpectedMethodRef(self: *Self, exp: *const ast.ExpNode, func_type: tt.FuncType) CompileError!?*ir.Value {
+        const indexed = exp.data.indexed;
+        const member_name = indexed.index.data.identifier;
+        if (self.genericTypeIndexOf(indexed.target)) |generic_type_index| {
+            const owner_type_id = try self.inferGenericTypeForMethod(generic_type_index, member_name, func_type, exp.loc) orelse return null;
+            return try self.resolveExpectedMethodOnType(exp, owner_type_id, member_name, func_type);
+        }
+        const owner_type_id = try self.resolveStaticTypeTarget(indexed.target) orelse return null;
+        return try self.resolveExpectedMethodOnType(exp, owner_type_id, member_name, func_type);
+    }
+
+    fn resolveExpectedMethodOnType(self: *Self, exp: *const ast.ExpNode, owner_type_id: tt.TypeId, member_name: []const u8, func_type: tt.FuncType) CompileError!?*ir.Value {
+        try self.ensureStructMembers(owner_type_id);
+        if (self.genericMethodOf(owner_type_id, member_name)) |generic_method_index| {
+            const generic = self.generic_functions.items[generic_method_index];
+            try self.checkMemberVisible(owner_type_id, member_name, generic.func_stmt.is_file_only, exp.loc);
+            return try self.evalGenericFuncRef(exp, generic_method_index, func_type);
+        }
+        const fn_type_id = self.methodTypeOf(owner_type_id, member_name) orelse return null;
+        return try self.evalUnboundMethodRef(owner_type_id, member_name, fn_type_id, exp.loc);
+    }
+
+    fn evalExplicitMethodRef(self: *Self, target: *const ast.ExpNode, type_arguments: []const *ast.TypeAnnotation, loc: err.Loc) CompileError!?*ir.Value {
+        if (!isAnyMemberAccess(target)) {
+            return null;
+        }
+        const indexed = target.data.indexed;
+        const owner_type_id = try self.resolveStaticTypeTarget(indexed.target) orelse return null;
+        try self.ensureStructMembers(owner_type_id);
+        const member_name = indexed.index.data.identifier;
+        const generic_method_index = self.genericMethodOf(owner_type_id, member_name) orelse return null;
+        const generic = self.generic_functions.items[generic_method_index];
+        try self.checkMemberVisible(owner_type_id, member_name, generic.func_stmt.is_file_only, loc);
+        if (type_arguments.len != generic.func_stmt.slots.len) {
+            return self.err_reporter.wrongSlotCount(member_name, generic.func_stmt.slots.len, type_arguments.len, loc);
+        }
+        const args = try self.allocator.alloc(tt.TypeId, type_arguments.len);
+        for (type_arguments, args) |annotation, *arg| {
+            arg.* = try self.resolveTypeAnnotation(annotation, self.enclosing_type_id);
+        }
+        const copy_symbol = try self.instantiateGenericFunction(generic_method_index, args, loc);
+        return try self.evalFuncRef(copy_symbol.type_id, loc);
+    }
+
+    fn inferGenericTypeForMethod(self: *Self, generic_type_index: usize, member_name: []const u8, func_type: tt.FuncType, loc: err.Loc) CompileError!?tt.TypeId {
+        const generic = self.generic_types.items[generic_type_index];
+        const funcs = switch (generic.def) {
+            .@"struct" => |s| s.funcs,
+            .@"union" => |u| u.funcs,
+        };
+        const method_stmt: ast.FuncStmt = for (funcs) |func_node| {
+            if (std.mem.eql(u8, func_node.data.func.identifier, member_name)) {
+                break func_node.data.func;
+            }
+        } else return null;
+
+        const bindings = try self.allocator.alloc(?tt.TypeId, generic.slots.len);
+        @memset(bindings, null);
+        if (method_stmt.def.params.len == func_type.params.len) {
+            for (method_stmt.def.params, func_type.params) |param, expected_param| {
+                const annotation = param.type_annotation orelse continue;
+                try self.inferGenericTypeMethodSlots(annotation, expected_param.type_id, generic_type_index, generic.slots, bindings, loc);
+            }
+        }
+        if (method_stmt.def.return_type) |return_annotation| {
+            const return_type = self.type_table.getTypePtrById(func_type.return_type_id);
+            const expected_return = if (return_type.kind == .error_union) return_type.kind.error_union.payload else func_type.return_type_id;
+            try self.inferGenericTypeMethodSlots(return_annotation, expected_return, generic_type_index, generic.slots, bindings, loc);
+        }
+
+        const args = try self.allocator.alloc(tt.TypeId, bindings.len);
+        for (bindings, generic.slots, 0..) |binding, slot, slot_index| {
+            args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, member_name, loc);
+        }
+        const copy_symbol = try self.instantiateGenericType(generic_type_index, args, loc);
+        return copy_symbol.kind.defined_type.blueprint_type_id;
+    }
+
+    fn inferGenericTypeMethodSlots(
+        self: *Self,
+        annotation: *const ast.TypeAnnotation,
+        expected_type_id: tt.TypeId,
+        generic_type_index: usize,
+        slots: []const ast.Slot,
+        bindings: []?tt.TypeId,
+        loc: err.Loc,
+    ) CompileError!void {
+        var type_id = expected_type_id;
+        if (annotation.is_nullable) {
+            if (self.type_table.getTypePtrById(type_id).kind == .null) return;
+            type_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        }
+        switch (annotation.type) {
+            .type_self => {
+                const copy = self.copied_types.get(type_id) orelse return;
+                if (copy.generic != generic_type_index or copy.args.len != slots.len) return;
+                for (copy.args, 0..) |copied_arg, i| {
+                    try self.bindSlot(slots, bindings, i, copied_arg, loc);
+                }
+            },
+            .array => |inner| {
+                const kind = self.type_table.getTypePtrById(type_id).kind;
+                if (kind != .array) return;
+                try self.inferGenericTypeMethodSlots(inner, kind.array, generic_type_index, slots, bindings, loc);
+            },
+            .function => |fn_annotation| {
+                const kind = self.type_table.getTypePtrById(type_id).kind;
+                if (kind != .func_type or fn_annotation.params.len != kind.func_type.params.len) return;
+                for (fn_annotation.params, kind.func_type.params) |param, expected_param| {
+                    try self.inferGenericTypeMethodSlots(param.type, expected_param.type_id, generic_type_index, slots, bindings, loc);
+                }
+                const return_type = self.type_table.getTypePtrById(kind.func_type.return_type_id);
+                const expected_return = if (return_type.kind == .error_union) return_type.kind.error_union.payload else kind.func_type.return_type_id;
+                try self.inferGenericTypeMethodSlots(fn_annotation.return_type, expected_return, generic_type_index, slots, bindings, loc);
+            },
+            else => try self.inferSlots(annotation, expected_type_id, slots, bindings, loc),
+        }
+    }
+
+    fn genericTypeIndexOf(self: *Self, exp: *const ast.ExpNode) ?usize {
+        if (exp.data != .identifier) return null;
+        const sym = self.scope.symbol_table.get(exp.data.identifier) orelse return null;
+        if (sym.kind != .generic_type) return null;
+        return sym.kind.generic_type;
+    }
+
+    fn resolveStaticTypeTarget(self: *Self, exp: *const ast.ExpNode) CompileError!?tt.TypeId {
+        switch (exp.data) {
+            .identifier => |name| {
+                const sym = self.scope.symbol_table.get(name) orelse return null;
+                if (sym.kind != .defined_type) return null;
+                return sym.kind.defined_type.blueprint_type_id;
+            },
+            .type_application => |application| {
+                const generic_index = self.genericTypeIndexOf(application.target) orelse return null;
+                return try self.instantiateGenericTypeFromAnnotations(generic_index, application.arguments, exp.loc);
+            },
+            .indexed => |indexed| {
+                const is_single_type_arg = indexed.is_bracket and !indexed.is_nullable;
+                if (!is_single_type_arg) return null;
+                const generic_index = self.genericTypeIndexOf(indexed.target) orelse return null;
+                const arg = try self.typeArgumentFromExpression(indexed.index);
+                const args = [_]*ast.TypeAnnotation{arg};
+                return try self.instantiateGenericTypeFromAnnotations(generic_index, &args, exp.loc);
+            },
+            else => return null,
+        }
+    }
+
+    fn instantiateGenericTypeFromAnnotations(self: *Self, generic_index: usize, annotations: []const *ast.TypeAnnotation, loc: err.Loc) CompileError!tt.TypeId {
+        const generic = self.generic_types.items[generic_index];
+        if (annotations.len != generic.slots.len) {
+            return self.err_reporter.wrongSlotCount(generic.identifier, generic.slots.len, annotations.len, loc);
+        }
+        const args = try self.allocator.alloc(tt.TypeId, annotations.len);
+        for (annotations, args) |annotation, *arg| {
+            arg.* = try self.resolveTypeAnnotation(annotation, self.enclosing_type_id);
+        }
+        const symbol = try self.instantiateGenericType(generic_index, args, loc);
+        return symbol.kind.defined_type.blueprint_type_id;
+    }
+
+    fn methodTypeOf(self: *Self, type_id: tt.TypeId, name: []const u8) ?tt.TypeId {
+        return switch (self.type_table.getTypePtrById(type_id).kind) {
+            .@"struct" => |s| s.methods.get(name),
+            .@"enum" => |e| e.methods.get(name),
+            .@"union" => |u| u.methods.get(name),
+            else => null,
+        };
     }
 
     fn indexInto(self: *Self, exp: *const ast.ExpNode, target: *ir.Value) !*ir.Value {
-        try self.ensureStructFields(target.type_id);
         const indexed_exp = exp.data.indexed;
+        const is_static_access = !indexed_exp.is_bracket and !indexed_exp.is_nullable and self.definedTypeOf(indexed_exp.target) != null;
+        if (is_static_access) {
+            try self.ensureStructMembers(target.type_id);
+        } else {
+            try self.ensureStructFields(target.type_id);
+        }
         const is_nullable = indexed_exp.is_nullable;
         const target_type = target.type_id;
 
@@ -5524,8 +7491,9 @@ pub const SemaAnalyzer = struct {
                         const field_member = struct_def.fields.get(member_name);
                         const static_field_member = struct_def.static_fields.get(member_name);
                         const method_member = struct_def.methods.get(member_name);
+                        const has_generic_method = self.genericMethodOf(target_type, member_name) != null;
 
-                        if (field_member == null and static_field_member == null and method_member == null) {
+                        if (field_member == null and static_field_member == null and method_member == null and !has_generic_method) {
                             return self.err_reporter.invalidStructField(struct_def.identifier, member_name, exp.loc);
                         }
                         if (field_member) |field| {
@@ -5533,6 +7501,12 @@ pub const SemaAnalyzer = struct {
                         }
                         if (field_member == null) {
                             if (static_field_member) |constant| return constant.default_value.?;
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                if (method_member) |fn_type_id| {
+                                    return self.evalUnboundMethodRef(target_type, member_name, fn_type_id, exp.loc);
+                                }
+                                return self.err_reporter.genericNeedsCall(member_name, exp.loc);
+                            }
                             return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
                         if (self.definedTypeOf(indexed_exp.target) != null) {
@@ -5572,7 +7546,16 @@ pub const SemaAnalyzer = struct {
 
                         if (enum_def.static_fields.get(member_name)) |constant| return constant.default_value.?;
 
-                        if (enum_def.methods.contains(member_name)) {
+                        if (enum_def.methods.get(member_name)) |fn_type_id| {
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                return self.evalUnboundMethodRef(target_type, member_name, fn_type_id, exp.loc);
+                            }
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
+                        }
+                        if (self.genericMethodOf(target_type, member_name) != null) {
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                return self.err_reporter.genericNeedsCall(member_name, exp.loc);
+                            }
                             return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
 
@@ -5587,12 +7570,20 @@ pub const SemaAnalyzer = struct {
                 return switch (indexed_exp.index.data) {
                     .identifier => |member_name| {
                         if (union_def.static_fields.get(member_name)) |constant| return constant.default_value.?;
+                        if (union_def.methods.get(member_name)) |fn_type_id| {
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                return self.evalUnboundMethodRef(target_type, member_name, fn_type_id, exp.loc);
+                            }
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
+                        }
+                        if (self.genericMethodOf(target_type, member_name) != null) {
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                return self.err_reporter.genericNeedsCall(member_name, exp.loc);
+                            }
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
+                        }
                         if (self.definedTypeOf(indexed_exp.target) != null) {
                             return self.err_reporter.invalidStaticUnionField(union_def.identifier, member_name, exp.loc);
-                        }
-                        // reading a variant is always ?T: null when it isn't the active one
-                        if (union_def.methods.contains(member_name)) {
-                            return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
                         const variant_type_id = union_def.variants.get(member_name) orelse {
                             return self.err_reporter.invalidUnionMember(union_def.identifier, member_name, exp.loc);
@@ -5633,6 +7624,13 @@ pub const SemaAnalyzer = struct {
             if (symbol.kind == .function) {
                 try self.ensureSignature(symbol.type_id);
                 return self.evalFuncRef(symbol.type_id, exp.loc);
+            }
+            if (symbol.kind == .variable) {
+                if (self.var_init_states.get(symbol.uid)) |state| {
+                    if (state != .assigned) {
+                        return self.err_reporter.variableNotInitialized(symbol.identifier, exp.loc);
+                    }
+                }
             }
             if (self.outerVariableContext(symbol)) |context_index| {
                 return self.evalCaptureRef(context_index, symbol, exp.loc);
@@ -5904,6 +7902,10 @@ pub const SemaAnalyzer = struct {
             const item_value = try self.coerceValue(exp_value, array_literal_type, exp.loc);
 
             try values.append(self.allocator, item_value);
+        }
+
+        if (expected_item_type_id == null and array_literal_type == self.type_table.getPrimitive(.null)) {
+            return self.err_reporter.cantInferArrayLiteralType(exp.loc);
         }
 
         const array_type_id = try self.type_table.getOrAddArray(array_literal_type);
@@ -6497,6 +8499,10 @@ pub const SemaAnalyzer = struct {
                     .generic_type => |index| try self.resolveGenericTypeAnnotation(index, type_annotation, current_defined_type_type_id),
                     else => return self.err_reporter.invalidType("a type", "a value", type_annotation.loc),
                 };
+                const is_misused_schema = self.type_table.getTypePtrById(blueprint_type_id).kind == .schema and (!self.can_resolve_schema or type_annotation.is_nullable);
+                if (is_misused_schema) {
+                    return self.err_reporter.invalidType("a type", try allocPrint(self.allocator, "schema '{s}'", .{struct_name}), type_annotation.loc);
+                }
                 return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(blueprint_type_id) else blueprint_type_id;
             },
             .anonymous_struct => |struct_metadata| {
@@ -6650,7 +8656,63 @@ pub const SemaAnalyzer = struct {
             .not => .not,
         };
     }
+
+    fn snapshotInitStates(self: *Self) CompileError!InitStateMap {
+        return cloneInitStates(self.allocator, &self.var_init_states);
+    }
+
+    fn mergeInitStates(self: *Self, before: *const InitStateMap, branches: []const BranchInitState) CompileError!void {
+        var merged: InitStateMap = .empty;
+        var entries = before.iterator();
+        while (entries.next()) |entry| {
+            const uid = entry.key_ptr.*;
+            var has_non_leaving = false;
+            var all_assigned = true;
+            var all_unassigned = true;
+            for (branches) |branch| {
+                if (branch.is_leaving) continue;
+                has_non_leaving = true;
+                const state = branch.states.get(uid) orelse entry.value_ptr.*;
+                if (state != .assigned) {
+                    all_assigned = false;
+                }
+                if (state != .unassigned) {
+                    all_unassigned = false;
+                }
+            }
+            const next_state: InitState = if (!has_non_leaving)
+                entry.value_ptr.*
+            else if (all_assigned)
+                .assigned
+            else if (all_unassigned)
+                .unassigned
+            else
+                .maybe_assigned;
+            try merged.put(self.allocator, uid, next_state);
+        }
+        self.var_init_states = merged;
+    }
 };
+
+const InitState = enum {
+    unassigned,
+    maybe_assigned,
+    assigned,
+};
+
+const InitStateMap = std.AutoHashMapUnmanaged(usize, InitState);
+
+const BranchInitState = struct {
+    states: InitStateMap,
+    is_leaving: bool,
+};
+
+fn cloneInitStates(allocator: std.mem.Allocator, source: *const InitStateMap) CompileError!InitStateMap {
+    if (source.count() == 0) {
+        return .empty;
+    }
+    return source.clone(allocator);
+}
 
 const ErrorEdge = struct {
     from: tt.TypeId,
@@ -6811,12 +8873,17 @@ const VisitedBlock = struct {
 
 const ExitQuery = enum { returns, leaves_block };
 
+const AnonymousStruct = struct {
+    definition: tt.Struct,
+    values: []*ir.Value,
+};
+
 const PendingStruct = struct {
     symbol: Symbol,
     def: *const ast.Struct,
     loc: err.Loc,
     module: *ModuleScope,
-    state: enum { pending, filling, filled } = .pending,
+    state: enum { pending, filling_members, members_filled, filling_defaults, filled } = .pending,
 };
 
 const PendingSignature = struct {
@@ -6825,6 +8892,14 @@ const PendingSignature = struct {
     loc: err.Loc,
     module: *ModuleScope,
     state: enum { pending, filling, filled } = .pending,
+};
+
+const PendingErrorSet = struct {
+    stmt: *const ast.ErrorSetStmt,
+    loc: err.Loc,
+    module: *ModuleScope,
+    is_resolving: bool = false,
+    is_resolved: bool = false,
 };
 
 const Constant = struct {
@@ -6874,6 +8949,7 @@ const LambdaContext = struct {
 const LambdaHints = struct {
     params: []const ?tt.FuncTypeParam,
     return_type_id: ?tt.TypeId,
+    error_set_id: ?tt.TypeId = null,
 };
 
 const TypedLambda = struct {
@@ -6896,6 +8972,88 @@ const WhenSubject = struct {
     base_kind: @FieldType(tt.Type, "kind"),
     is_mutable: bool,
     exp: *const ast.ExpNode,
+};
+
+const ProxyTarget = struct {
+    container: tt.TypeId,
+    place: union(enum) {
+        field: []const u8,
+        index,
+        key,
+        payload,
+    },
+    item_type: tt.TypeId,
+};
+
+const ProxyEncoderKey = struct {
+    value_type: tt.TypeId,
+    first_proxy: usize,
+    raw_type: tt.TypeId,
+};
+
+const DerivedKey = struct {
+    operation: native.SerializationOperation,
+    type_id: tt.TypeId,
+    schema: tt.TypeId,
+    proxy: usize = 0,
+};
+
+const Proxy = struct {
+    to: Symbol,
+    from: Symbol,
+    value_type: tt.TypeId,
+    proxy_type: tt.TypeId,
+    can_fail: bool,
+};
+
+const PlanKey = struct {
+    type_id: tt.TypeId,
+    schema: tt.TypeId,
+};
+
+const NameCase = enum { exact, snake, camel, kebab, pascal };
+
+const SchemaEntry = struct {
+    stmt: *const ast.SchemaStmt,
+    module: *ModuleScope,
+    type_id: tt.TypeId,
+    case: NameCase,
+};
+
+const TypeSections = struct {
+    sections: []const ast.SchemaSection,
+    module: *ModuleScope,
+};
+
+const MemberRules = struct {
+    rules: []const ast.SchemaRule,
+    loc: err.Loc,
+    module: *ModuleScope,
+};
+
+const RulesByMember = std.StringArrayHashMapUnmanaged(MemberRules);
+
+const MemberNaming = struct {
+    name: []const u8,
+    aliases: []const []const u8 = &.{},
+    omits_null: bool = false,
+    is_skipped: bool = false,
+    via: ?*const ast.SchemaRule = null,
+};
+
+const Capabilities = struct {
+    null_path: ?[]const u8 = null,
+    struct_path: ?[]const u8 = null,
+    array_path: ?[]const u8 = null,
+    map_path: ?[]const u8 = null,
+    enum_path: ?[]const u8 = null,
+    union_path: ?[]const u8 = null,
+};
+
+const FormatNeed = struct {
+    path: ?[]const u8,
+    reason: []const u8,
+    methods: []const []const u8,
 };
 
 const GenericFunction = struct {

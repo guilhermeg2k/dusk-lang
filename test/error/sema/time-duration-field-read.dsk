@@ -1,0 +1,6 @@
+import "std/time"
+
+func main() -> !void
+    let value = time::nanoseconds(0)
+    let raw = value.nanosecond_count
+end

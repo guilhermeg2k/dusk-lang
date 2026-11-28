@@ -1,0 +1,7 @@
+.{
+    .name = .dusk_timezone_data,
+    .fingerprint = 0xbaa31b919496c15a,
+    .version = "2026.6.0",
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "root.zig", "manifest.json", "zones.bin", "LICENSE.tzdb", "LICENSE.unicode", "README.md" },
+}

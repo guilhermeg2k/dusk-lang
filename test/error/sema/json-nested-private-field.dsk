@@ -1,0 +1,10 @@
+import "std/json"
+struct Hidden
+    ~value: int = 1
+end
+struct Outer
+    inner: []Hidden
+end
+func main() -> !void
+    let value = try json::decode[Outer]("{}")
+end

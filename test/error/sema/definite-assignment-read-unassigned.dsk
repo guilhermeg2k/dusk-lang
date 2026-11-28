@@ -1,0 +1,4 @@
+func main() -> void
+    let x: int
+    let y = x + 1
+end

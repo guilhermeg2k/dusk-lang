@@ -18,6 +18,16 @@ const WakeResult = @import("scheduler.zig").WakeResult;
 const TrustStore = @import("../io/net/trust_store.zig").TrustStore;
 const ConnectionPool = @import("../io/http/connection_pool.zig").ConnectionPool;
 const ServerState = @import("../io/http/http_server.zig").ServerState;
+const Process = @import("../io/process/process.zig").Process;
+const process_runtime = @import("../io/process/process.zig");
+const Subscription = @import("../io/os/signal.zig").Subscription;
+const TerminalOutput = @import("../io/terminal.zig").TerminalOutput;
+const TerminalSize = @import("../io/terminal.zig").TerminalSize;
+const WorkerDispatch = @import("loop/worker_dispatch.zig").WorkerDispatch;
+const WorkerPool = @import("loop/worker_pool.zig").WorkerPool;
+const Databases = @import("../io/sqlite/sqlite.zig").Databases;
+const SqliteTimer = @import("../io/sqlite/sqlite.zig").OperationTimer;
+const LocalTimezoneLookup = @import("../io/time/timezone_job.zig").LocalLookup;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -27,6 +37,8 @@ pub const EventLoop = struct {
     allocator: std.mem.Allocator,
     loop: ?*uv.Loop = null,
     pending_operations: usize = 0,
+    live_processes: usize = 0,
+    processes: SlotTable(Process) = .{},
     is_shutting_down: bool = false,
     callback_failure: ?anyerror = null,
     streams: SlotTable(Stream) = .{},
@@ -36,12 +48,43 @@ pub const EventLoop = struct {
     connection_pool: ConnectionPool = .{},
     http_servers: SlotTable(ServerState) = .{},
     compression_streams: SlotTable(CompressionStream) = .{},
+    compression_workers: ?*WorkerDispatch = null,
     host_slots: HostSlots = .{},
     resources: ResourceRegistry = .{},
     stdin_stream_id: ?i64 = null,
+    signal_subscriptions: SlotTable(Subscription) = .{},
+    terminal_outputs: [2]?*TerminalOutput = .{ null, null },
+    has_used_raw_terminal: bool = false,
+    worker_dispatches: std.ArrayList(*WorkerDispatch) = .empty,
+    sqlite: Databases = .{},
+    local_timezone: LocalTimezoneLookup = .{},
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
+        self.restoreTerminal();
+        for (self.processes.entries.items) |entry| {
+            const process = entry orelse continue;
+            process.release();
+        }
+        while (self.live_processes > 0) {
+            _ = uv.uv_run(self.loop.?, .once);
+        }
+        defer self.processes.deinit(self.allocator);
+        self.sqlite.interruptAll();
+        for (self.worker_dispatches.items) |dispatch| {
+            dispatch.shutDown();
+        }
+        self.sqlite.deinit(self.allocator);
+        defer self.worker_dispatches.deinit(self.allocator);
+        for (self.signal_subscriptions.entries.items) |entry| {
+            const subscription = entry orelse continue;
+            subscription.close();
+        }
+        defer self.signal_subscriptions.deinit(self.allocator);
+        for (self.terminal_outputs) |entry| {
+            const output = entry orelse continue;
+            output.close();
+        }
         for (self.streams.entries.items) |entry| {
             const stream = entry orelse continue;
             stream.releaseAtExit();
@@ -58,6 +101,7 @@ pub const EventLoop = struct {
         defer self.freeCompressionStreams();
         defer self.host_slots.deinit(self.allocator);
         defer self.resources.deinit(self.allocator);
+        defer self.local_timezone.deinit(self.allocator);
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
@@ -85,6 +129,28 @@ pub const EventLoop = struct {
     fn loopMemory(loop: *uv.Loop) []align(16) u8 {
         const bytes: [*]align(16) u8 = @ptrCast(@alignCast(loop));
         return bytes[0..uv.uv_loop_size()];
+    }
+
+    pub fn startWorkerDispatch(self: *Self, options: WorkerPool.Options) !*WorkerDispatch {
+        try self.worker_dispatches.ensureUnusedCapacity(self.allocator, 1);
+        const dispatch = try WorkerDispatch.create(self, options);
+        self.worker_dispatches.appendAssumeCapacity(dispatch);
+        return dispatch;
+    }
+
+    pub fn watchSignal(self: *Self, scheduler: *Scheduler, signal: i64) !i64 {
+        try self.signal_subscriptions.reserve(self.allocator);
+        const subscription = try Subscription.create(self, scheduler, signal);
+        return self.signal_subscriptions.addAssumeCapacity(subscription);
+    }
+
+    pub fn signalAt(self: *Self, handle: i64) ?*Subscription {
+        return self.signal_subscriptions.get(handle);
+    }
+
+    pub fn closeSignal(self: *Self, handle: i64) void {
+        const subscription = self.signal_subscriptions.remove(handle) orelse return;
+        subscription.close();
     }
 
     pub fn startTimer(self: *Self, scheduler: *Scheduler, ms: u64, task: *TaskState) !void {
@@ -125,18 +191,16 @@ pub const EventLoop = struct {
     }
 
     pub fn startCompressionJob(self: *Self, scheduler: *Scheduler, task: *TaskState, settings: CompressionJob.Settings, input: []const u8) !void {
-        const loop = try self.ensureLoopStarted();
-        const job = try CompressionJob.create(self.allocator, settings, input, uv.uv_req_size(.work));
-        errdefer job.destroy();
-        job.event_loop = self;
-        job.scheduler = scheduler;
-        job.task = task;
-        const work: *uv.Request = @ptrCast(job.workRequest());
-        uv.uv_req_set_data(work, job);
-        if (uv.uv_queue_work(loop, work, onCompressionJobWork, onCompressionJobDone) != 0) {
-            return error.PoolJobFailed;
-        }
-        self.pending_operations += 1;
+        const dispatch = self.compression_workers orelse blk: {
+            const started = try self.startWorkerDispatch(.{ .thread_count = 2, .max_outstanding = 128 });
+            self.compression_workers = started;
+            break :blk started;
+        };
+        const entry = try CompressionJob.create(self.allocator, settings, input);
+        errdefer entry.destroy();
+        entry.scheduler = scheduler;
+        entry.task = task;
+        try dispatch.submit(&entry.job);
     }
 
     pub fn parkForHostSlot(self: *Self, scheduler: *Scheduler, task: *TaskState, key: []const u8, timeout_ms: ?u64) !void {
@@ -193,7 +257,15 @@ pub const EventLoop = struct {
             },
             .listener => self.closeListener(slot.table_id),
             .compression => self.closeCompressionStream(slot.table_id),
+            .process => {
+                const process = self.processAt(slot.table_id) orelse return;
+                process.releaseOnceExited();
+            },
+            .signal => self.closeSignal(slot.table_id),
             .certificate => self.closeCertificate(slot.table_id),
+            .database => {
+                _ = self.sqlite.close(self, null, null, slot.table_id) catch false;
+            },
             .http_server => self.closeHttpServer(slot.table_id),
         }
     }
@@ -231,6 +303,55 @@ pub const EventLoop = struct {
         const stream_id = self.streams.addAssumeCapacity(stream);
         stream.id = stream_id;
         return stream_id;
+    }
+
+    pub fn openProcessPipe(self: *Self, scheduler: *Scheduler) !i64 {
+        const loop = try self.ensureLoopStarted();
+        try self.streams.reserve(self.allocator);
+        const stream = try Stream.openProcessPipe(self.allocator, self, scheduler, loop);
+        const stream_id = self.streams.addAssumeCapacity(stream);
+        stream.id = stream_id;
+        return stream_id;
+    }
+
+    pub fn restoreTerminal(self: *Self) void {
+        if (!self.has_used_raw_terminal) return;
+        _ = uv.uv_tty_reset_mode();
+    }
+
+    pub fn terminalSize(self: *Self, file: c_int) !?TerminalSize {
+        const slot = &self.terminal_outputs[if (file == 2) 1 else 0];
+        if (slot.* == null) {
+            const loop = try self.ensureLoopStarted();
+            slot.* = TerminalOutput.open(self.allocator, loop, file) catch |failure| {
+                if (failure == error.OutOfMemory) {
+                    return failure;
+                }
+                return null;
+            };
+        }
+        return slot.*.?.size();
+    }
+
+    pub fn pauseStdinWhenIdle(self: *Self) void {
+        const stream_id = self.stdin_stream_id orelse return;
+        const stream = self.streamAt(stream_id) orelse return;
+        stream.pauseReadingWhenIdle();
+    }
+
+    pub fn closeChildPipes(self: *Self) void {
+        for (self.processes.entries.items) |entry| {
+            const process = entry orelse continue;
+            process.closePipes();
+        }
+    }
+
+    pub fn processAt(self: *Self, handle: i64) ?*Process {
+        const process = self.processes.get(handle) orelse return null;
+        if (process.is_released) {
+            return null;
+        }
+        return process;
     }
 
     pub fn openListener(self: *Self, scheduler: *Scheduler) !i64 {
@@ -348,14 +469,14 @@ pub const EventLoop = struct {
     }
 
     pub fn hasPendingOperations(self: *const Self) bool {
-        return self.pending_operations > 0;
+        return self.pending_operations > 0 or self.live_processes > 0;
     }
 };
 
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer };
+    pub const Kind = enum { process, process_lifetime_timer, process_wait_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer, terminal_output, worker_async, sqlite_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -370,6 +491,23 @@ fn closeLeftoverHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
 pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
     const owner = HandleOwner.of(handle);
     switch (owner.kind) {
+        .process => {
+            const process: *Process = @alignCast(@fieldParentPtr("owner", owner));
+            process.markHandleClosed();
+        },
+        .process_lifetime_timer => {
+            const process: *Process = @alignCast(@fieldParentPtr("lifetime_timer_owner", owner));
+            process.markHandleClosed();
+        },
+        .process_wait_timer => {
+            const process: *Process = @alignCast(@fieldParentPtr("wait_timer_owner", owner));
+            process.markHandleClosed();
+        },
+        .process_pipe => process_runtime.captureHandleClosed(owner),
+        .signal => {
+            const subscription: *Subscription = @alignCast(@fieldParentPtr("owner", owner));
+            subscription.destroy();
+        },
         .timer => {
             const request: *TimerRequest = @alignCast(@fieldParentPtr("owner", owner));
             const allocator = request.event_loop.allocator;
@@ -379,6 +517,10 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
         .stream => {
             const stream: *Stream = @alignCast(@fieldParentPtr("owner", owner));
             stream.markHandleClosed();
+        },
+        .terminal_output => {
+            const output: *TerminalOutput = @alignCast(@fieldParentPtr("owner", owner));
+            output.destroy();
         },
         .stream_timer => {
             const stream: *Stream = @alignCast(@fieldParentPtr("timer_owner", owner));
@@ -404,10 +546,18 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
             const request: *OpenRequest = @alignCast(@fieldParentPtr("owner", owner));
             request.markTimerClosed();
         },
+        .worker_async => {
+            const dispatch: *WorkerDispatch = @alignCast(@fieldParentPtr("owner", owner));
+            dispatch.destroy();
+        },
         .slot_timer => {
             const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", owner));
             waiter.event_loop.host_slots.removeWaiter(waiter.event_loop.allocator, waiter.key, waiter);
             waiter.destroy();
+        },
+        .sqlite_timer => {
+            const timer: *SqliteTimer = @alignCast(@fieldParentPtr("owner", owner));
+            timer.destroy();
         },
     }
 }
@@ -470,27 +620,6 @@ fn onTimer(handle: *uv.Handle) callconv(.c) void {
         event_loop.callback_failure = failure;
     };
     uv.uv_close(handle, onHandleClosed);
-}
-
-fn onCompressionJobWork(work: *uv.Request) callconv(.c) void {
-    compressionJobOf(work).runOnPoolThread();
-}
-
-fn compressionJobOf(work: *uv.Request) *CompressionJob {
-    return @ptrCast(@alignCast(uv.uv_req_get_data(work).?));
-}
-
-fn onCompressionJobDone(work: *uv.Request, _: c_int) callconv(.c) void {
-    const job = compressionJobOf(work);
-    defer job.destroy();
-    const event_loop = job.event_loop;
-    event_loop.pending_operations -= 1;
-    if (event_loop.is_shutting_down) return;
-    const wake_result = job.takeWakeResult();
-    job.scheduler.wake(job.task, wake_result) catch |failure| {
-        wake_result.payload.free(event_loop.allocator);
-        event_loop.callback_failure = failure;
-    };
 }
 
 fn onFsJobWork(work: *uv.Request) callconv(.c) void {

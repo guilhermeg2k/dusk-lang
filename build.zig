@@ -7,8 +7,10 @@ pub fn build(b: *std.Build) void {
     const libuv = b.dependency("libuv", .{ .target = target, .optimize = optimize }).artifact("uv");
     const mbedtls = b.dependency("mbedtls", .{ .target = target, .optimize = optimize }).artifact("mbedtls");
     const llhttp = b.dependency("llhttp", .{ .target = target, .optimize = optimize }).artifact("llhttp");
+    const timezone_data = b.dependency("timezone_data", .{}).module("timezone_data");
     const zlib_ng = b.dependency("zlib_ng", .{ .target = target, .optimize = optimize }).artifact("z-ng");
-    const libraries: RuntimeLibraries = .{ .libuv = libuv, .mbedtls = mbedtls, .llhttp = llhttp, .zlib_ng = zlib_ng };
+    const sqlite = b.dependency("sqlite", .{ .target = target, .optimize = optimize }).artifact("sqlite");
+    const libraries: RuntimeLibraries = .{ .libuv = libuv, .mbedtls = mbedtls, .llhttp = llhttp, .zlib_ng = zlib_ng, .sqlite = sqlite };
 
     const exe = b.addExecutable(.{
         .name = "dusk",
@@ -20,6 +22,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     linkRuntimeLibraries(b, exe.root_module, libraries);
+    exe.root_module.addImport("timezone_data", timezone_data);
 
     exe.root_module.addAnonymousImport("build_zon", .{
         .root_source_file = b.path("build.zig.zon"),
@@ -35,7 +38,9 @@ pub fn build(b: *std.Build) void {
     }
 
     // tests
+    const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &.{};
     const tests = b.addTest(.{
+        .filters = test_filters,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/test.zig"),
             .target = target,
@@ -44,9 +49,23 @@ pub fn build(b: *std.Build) void {
         }),
     });
     linkRuntimeLibraries(b, tests.root_module, libraries);
+    tests.root_module.addImport("timezone_data", timezone_data);
     tests.root_module.addAnonymousImport("build_zon", .{
         .root_source_file = b.path("build.zig.zon"),
     });
+
+    const process_fixture = b.addExecutable(.{
+        .name = "dusk-process-fixture",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+    });
+    process_fixture.root_module.addCSourceFile(.{ .file = b.path("test/fixtures/process/child.c"), .flags = &.{"-std=c99"} });
+    const fixture_paths = b.addOptions();
+    fixture_paths.addOptionPath("process_fixture", process_fixture.getEmittedBin());
+    fixture_paths.addOptionPath("dusk", exe.getEmittedBin());
+    tests.root_module.addOptions("test_paths", fixture_paths);
+    const install_fixture = b.addInstallArtifact(process_fixture, .{});
+    const fixture_step = b.step("process-fixture", "Build the process test helper");
+    fixture_step.dependOn(&install_fixture.step);
 
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run tests");
@@ -63,6 +82,7 @@ const RuntimeLibraries = struct {
     mbedtls: *std.Build.Step.Compile,
     llhttp: *std.Build.Step.Compile,
     zlib_ng: *std.Build.Step.Compile,
+    sqlite: *std.Build.Step.Compile,
 };
 
 fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: RuntimeLibraries) void {
@@ -70,9 +90,15 @@ fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: Run
     module.linkLibrary(libraries.mbedtls);
     module.linkLibrary(libraries.llhttp);
     module.linkLibrary(libraries.zlib_ng);
+    module.linkLibrary(libraries.sqlite);
     const flags = &[_][]const u8{ "-std=c99", "-fno-strict-aliasing" };
     module.addCSourceFile(.{ .file = b.path("src/runtime/io/net/tls_glue.c"), .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/runtime/io/http/http_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/io/time/timezone_glue.c"), .flags = flags });
+    if (module.resolved_target.?.result.os.tag == .windows) {
+        module.linkSystemLibrary("advapi32", .{});
+    }
+    module.addCSourceFile(.{ .file = b.path("src/runtime/io/process/process_glue.c"), .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/runtime/io/compression/compression_glue.c"), .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/runtime/io/fs/fs_glue.c"), .flags = flags });
 }
