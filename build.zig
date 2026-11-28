@@ -38,7 +38,9 @@ pub fn build(b: *std.Build) void {
     }
 
     // tests
+    const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &.{};
     const tests = b.addTest(.{
+        .filters = test_filters,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/test.zig"),
             .target = target,
