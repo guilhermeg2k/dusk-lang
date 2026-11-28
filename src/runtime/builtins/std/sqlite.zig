@@ -41,6 +41,8 @@ fn version(vm: *VM, _: []v.Value) anyerror!NativeResult {
 }
 
 fn openHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const task = vm.running_task.?;
+    vm.event_loop.sqlite.clearFailure(task);
     const path = bytesArg(args, 0);
     if (std.mem.indexOfScalar(u8, path, 0) != null) {
         return native.fail(SqliteError.CantOpen);
@@ -52,18 +54,18 @@ fn openHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
         .is_read_only = args[4].bool,
         .can_create = args[5].bool,
     };
-    const task = vm.running_task.?;
     try vm.event_loop.sqlite.open(&vm.event_loop, &vm.scheduler, task, path, settings);
     task.park();
     return native.parked();
 }
 
 fn executeHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const task = vm.running_task.?;
+    vm.event_loop.sqlite.clearFailure(task);
     const sql = bytesArg(args, 1);
     if (std.mem.indexOfScalar(u8, sql, 0) != null) {
         return native.fail(SqliteError.InvalidSql);
     }
-    const task = vm.running_task.?;
     const is_queued = try vm.event_loop.sqlite.execute(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, args[2].bool, args[3].int64);
     if (!is_queued) {
         return native.fail(SqliteError.Closed);
@@ -73,13 +75,14 @@ fn executeHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn executeWithHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const task = vm.running_task.?;
+    vm.event_loop.sqlite.clearFailure(task);
     const sql = bytesArg(args, 1);
     if (std.mem.indexOfScalar(u8, sql, 0) != null) {
         return native.fail(SqliteError.InvalidSql);
     }
     const allocator = vm.event_loop.allocator;
     const params = try copyParams(allocator, args[2..7], null);
-    const task = vm.running_task.?;
     const is_queued = vm.event_loop.sqlite.executeWith(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, params, args[7].bool, args[8].int64) catch |failure| {
         params.deinit(allocator);
         return failure;
@@ -93,13 +96,14 @@ fn executeWithHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn executeManyHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const task = vm.running_task.?;
+    vm.event_loop.sqlite.clearFailure(task);
     const sql = bytesArg(args, 1);
     if (std.mem.indexOfScalar(u8, sql, 0) != null) {
         return native.fail(SqliteError.InvalidSql);
     }
     const allocator = vm.event_loop.allocator;
     const params = try copyParams(allocator, args[2..7], args[7]);
-    const task = vm.running_task.?;
     const is_queued = vm.event_loop.sqlite.executeMany(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, params, args[8].bool, args[9].int64) catch |failure| {
         params.deinit(allocator);
         return failure;
@@ -113,13 +117,14 @@ fn executeManyHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn queryHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const task = vm.running_task.?;
+    vm.event_loop.sqlite.clearFailure(task);
     const sql = bytesArg(args, 1);
     if (std.mem.indexOfScalar(u8, sql, 0) != null) {
         return native.fail(SqliteError.InvalidSql);
     }
     const allocator = vm.event_loop.allocator;
     const params = try copyParams(allocator, args[2..7], null);
-    const task = vm.running_task.?;
     const is_queued = vm.event_loop.sqlite.query(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, params, args[7].int64, args[8].bool, args[9].int64) catch |failure| {
         params.deinit(allocator);
         return failure;
@@ -134,6 +139,7 @@ fn queryHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn beginHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const task = vm.running_task.?;
+    vm.event_loop.sqlite.clearFailure(task);
     const is_queued = try vm.event_loop.sqlite.begin(&vm.event_loop, &vm.scheduler, task, args[0].int64);
     if (!is_queued) {
         return native.fail(SqliteError.Closed);
@@ -144,6 +150,7 @@ fn beginHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn commitHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const task = vm.running_task.?;
+    vm.event_loop.sqlite.clearFailure(task);
     const is_queued = try vm.event_loop.sqlite.commit(&vm.event_loop, &vm.scheduler, task, args[0].int64);
     if (!is_queued) {
         return native.fail(SqliteError.Closed);

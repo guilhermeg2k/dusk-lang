@@ -53,6 +53,20 @@ func count_users(db: sqlite::Database) -> sqlite::SqliteError!int
     return count orelse -1
 end
 
+func fail_without_diagnostic(db: sqlite::Database) -> void
+    db.query[Plain]("select id from missing_table") catch e then
+        assert(e == sqlite::SqliteError.InvalidSql)
+    end
+end
+
+func message_of_nul_query(db: sqlite::Database) -> string
+    let mut diagnostic = sqlite::Diagnostic()
+    db.query[Plain]("select 1\0", diagnostic = diagnostic) catch e then
+        assert(e == sqlite::SqliteError.InvalidSql)
+    end
+    return diagnostic.message
+end
+
 func main() -> !void
     let db = try sqlite::open(":memory:")
     let setup = try db.execute("""
@@ -140,11 +154,28 @@ func main() -> !void
         assert((try await(started)) == 3)
     end
 
+    fail_without_diagnostic(db)
+    assert(message_of_nul_query(db) == "")
+    for 1..300: i do
+        let mut failing = spawn(func() -> int
+            fail_without_diagnostic(db)
+            return 0
+        end)
+        await(failing)
+        let mut reading = spawn(func() -> string
+            return message_of_nul_query(db)
+        end)
+        assert(await(reading) == "")
+    end
+
+    fail_without_diagnostic(db)
     db.close()
     has_failed = false
-    db.query[Plain]("select 1 as id") catch e then
+    let mut closed_diagnostic = sqlite::Diagnostic()
+    db.query[Plain]("select 1 as id", diagnostic = closed_diagnostic) catch e then
         assert(e == sqlite::SqliteError.Closed)
         has_failed = true
     end
     assert(has_failed)
+    assert(closed_diagnostic.message == "")
 end

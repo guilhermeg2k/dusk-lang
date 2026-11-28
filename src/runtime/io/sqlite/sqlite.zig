@@ -212,7 +212,6 @@ pub const Databases = struct {
     }
 
     pub fn begin(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64) !bool {
-        self.clearFailure(task);
         const connection = try self.usableConnection(handle, task, false) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .begin, "BEGIN IMMEDIATE");
         self.enqueue(connection, operation);
@@ -358,7 +357,7 @@ pub const Databases = struct {
         entry.value_ptr.* = failure;
     }
 
-    fn clearFailure(self: *Self, task: *TaskState) void {
+    pub fn clearFailure(self: *Self, task: *TaskState) void {
         const failure = self.takeFailure(task) orelse return;
         freeMessage(failure.message);
     }
