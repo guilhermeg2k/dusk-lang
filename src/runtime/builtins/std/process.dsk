@@ -1,0 +1,177 @@
+import "std/io"
+
+error ProcessError
+    InvalidArgument
+    NotFound
+    PermissionDenied
+    InvalidExecutable
+    ResourceLimit
+    TimedOut
+    OutputTooLarge
+    InvalidUtf8
+    Unsupported
+    Other
+    Busy
+    Closed
+    NotPiped
+end
+
+enum Stdio
+    Inherit
+    Ignore
+    Pipe
+end
+
+union Termination
+    Exited: int
+    Signaled: int
+end
+
+struct Result
+    stdout: buffer
+    stderr: buffer
+    termination: Termination
+
+    func is_success(self: @) -> bool
+        when self.termination
+            Exited: code then return code == 0 end
+            Signaled: _ then return false end
+        end
+    end
+
+    func stdout_text(self: @) -> ProcessError!string
+        return try bytes_to_text(self.stdout)
+    end
+
+    func stderr_text(self: @) -> ProcessError!string
+        return try bytes_to_text(self.stderr)
+    end
+end
+
+func run(args: []string, cwd: ?string = null, env: ?map[string, string] = null, timeout_ms: int = -1, max_output: int = 16777216) -> ProcessError!Result
+    let handle = try run_handle(args, cwd, env, timeout_ms, max_output)
+    let termination = make_termination(child_status(handle))
+    let stdout = capture_bytes(handle, 0)
+    let stderr = capture_bytes(handle, 1)
+    release_run(handle)
+    return Result(stdout = stdout, stderr = stderr, termination = termination)
+end
+
+struct Child
+    ~handle: int
+    ~owner: resource
+
+    func wait(self: @, timeout_ms: int = -1) -> ProcessError!Termination
+        return make_termination(try child_wait(self.handle, timeout_ms))
+    end
+
+    func kill(self: @) -> ProcessError!void
+        try child_kill(self.handle)
+    end
+
+    func stdin(self: @) -> ProcessError!PipeWriter
+        return PipeWriter(handle = try child_pipe(self.handle, 0), owner = self.owner)
+    end
+
+    func stdout(self: @) -> ProcessError!PipeReader
+        return PipeReader(handle = try child_pipe(self.handle, 1), owner = self.owner)
+    end
+
+    func stderr(self: @) -> ProcessError!PipeReader
+        return PipeReader(handle = try child_pipe(self.handle, 2), owner = self.owner)
+    end
+
+    func close(self: @) -> ProcessError!void
+        try child_close(self.handle)
+        release(self.owner)
+    end
+end
+
+func start(args: []string, cwd: ?string = null, env: ?map[string, string] = null, stdin_mode: Stdio = Stdio.Ignore, stdout_mode: Stdio = Stdio.Inherit, stderr_mode: Stdio = Stdio.Inherit) -> ProcessError!Child
+    let handle = try start_handle(args, cwd, env, stdin_mode, stdout_mode, stderr_mode)
+    return Child(handle = handle, owner = own(3, handle))
+end
+
+func ~make_termination(values: []int) -> Termination
+    if values[1] != 0 then
+        return Termination(Signaled = values[1])
+    end
+    return Termination(Exited = values[0])
+end
+
+struct PipeReader
+    ~handle: int
+    ~owner: resource
+
+    func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
+        return try stream_read_line(self.handle, max, timeout_ms)
+    end
+
+    func read_bytes(self: @, max: int) -> io::IoError!?buffer
+        return try stream_read_bytes(self.handle, max, -1)
+    end
+
+    func read_exact(self: @, count: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        return try stream_read_exact(self.handle, count, timeout_ms)
+    end
+
+    func read_all(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!string
+        return try stream_read_all(self.handle, max_bytes, timeout_ms)
+    end
+
+    func read_all_bytes(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!buffer
+        return try stream_read_all_bytes(self.handle, max_bytes, timeout_ms)
+    end
+
+    func set_read_timeout(self: @, timeout_ms: int) -> void
+        stream_set_read_timeout(self.handle, timeout_ms)
+    end
+
+    func close(self: @) -> void
+        stream_close(self.handle)
+    end
+end
+
+struct PipeWriter
+    ~handle: int
+    ~owner: resource
+
+    func write(self: @, text: string) -> io::IoError!void
+        try stream_write(self.handle, text)
+    end
+
+    func write_bytes(self: @, data: buffer) -> io::IoError!void
+        try stream_write_bytes(self.handle, data)
+    end
+
+    func flush(self: @) -> io::IoError!void
+        try stream_flush(self.handle)
+    end
+
+    func close(self: @) -> void
+        stream_close(self.handle)
+    end
+end
+
+extern func ~run_handle(args: []string, cwd: ?string, env: ?map[string, string], timeout_ms: int, max_output: int) -> ProcessError!int
+extern func ~start_handle(args: []string, cwd: ?string, env: ?map[string, string], stdin_mode: Stdio, stdout_mode: Stdio, stderr_mode: Stdio) -> ProcessError!int
+extern func ~capture_bytes(handle: int, channel: int) -> buffer
+extern func ~child_status(handle: int) -> []int
+extern func ~release_run(handle: int) -> void
+extern func ~bytes_to_text(data: buffer) -> ProcessError!string
+extern func ~child_wait(handle: int, timeout_ms: int) -> ProcessError![]int
+extern func ~child_kill(handle: int) -> ProcessError!void
+extern func ~child_pipe(handle: int, channel: int) -> ProcessError!int
+extern func ~child_close(handle: int) -> ProcessError!void
+extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
+extern func ~stream_read_all(handle: int, max_bytes: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_read_all_bytes(handle: int, max_bytes: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~stream_set_read_timeout(handle: int, timeout_ms: int) -> void
+extern func ~stream_write(handle: int, text: string) -> io::IoError!void
+extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
+extern func ~stream_flush(handle: int) -> io::IoError!void
+extern func ~stream_close(handle: int) -> void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void

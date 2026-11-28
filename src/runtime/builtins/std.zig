@@ -8,6 +8,10 @@ pub const Module = struct {
 };
 
 pub const modules = [_]Module{
+    .{ .path = "process", .source = @embedFile("std/process.dsk"), .bindings = &@import("std/process.zig").bindings },
+    .{ .path = "random", .source = @embedFile("std/random.dsk"), .bindings = &@import("std/random.zig").bindings },
+    .{ .path = "path", .source = @embedFile("std/path.dsk"), .bindings = &@import("std/path.zig").bindings },
+    .{ .path = "os", .source = @embedFile("std/os.dsk"), .bindings = &@import("std/os.zig").bindings },
     .{ .path = "math", .source = @embedFile("std/math.dsk"), .bindings = &@import("std/math.zig").bindings },
     .{ .path = "buffer", .source = @embedFile("std/buffer.dsk"), .bindings = &@import("std/buffer.zig").bindings },
     .{ .path = "string", .source = @embedFile("std/string.dsk"), .bindings = &@import("std/string.zig").bindings },
@@ -20,6 +24,9 @@ pub const modules = [_]Module{
     .{ .path = "net", .source = @embedFile("std/net.dsk"), .bindings = &@import("std/net.zig").bindings },
     .{ .path = "url", .source = @embedFile("std/url.dsk"), .bindings = &@import("std/url.zig").bindings },
     .{ .path = "http", .source = @embedFile("std/http.dsk"), .bindings = &@import("std/http.zig").bindings },
+    .{ .path = "json", .source = @embedFile("std/json.dsk"), .bindings = &@import("std/json.zig").bindings },
+    .{ .path = "serialization", .source = @embedFile("std/serialization.dsk"), .bindings = &@import("std/serialization.zig").bindings },
+    .{ .path = "sqlite", .source = @embedFile("std/sqlite.dsk"), .bindings = &@import("std/sqlite.zig").bindings },
     .{ .path = "compression", .source = @embedFile("std/compression.dsk"), .bindings = &@import("std/compression.zig").bindings },
 };
 

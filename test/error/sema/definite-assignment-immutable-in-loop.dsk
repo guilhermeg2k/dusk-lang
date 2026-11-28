@@ -1,0 +1,6 @@
+func main() -> void
+    let x: int
+    for 1..3: i do
+        x = i
+    end
+end

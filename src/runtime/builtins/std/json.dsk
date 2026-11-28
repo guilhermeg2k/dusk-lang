@@ -1,0 +1,87 @@
+import "std/serialization"
+import "std/array"
+
+error JsonError
+    InvalidJson
+    TypeMismatch
+    MissingField
+    UnknownField
+    DuplicateKey
+    NumberOutOfRange
+    UnknownVariant
+    InvalidUnion
+    NonFiniteNumber
+    DepthExceeded
+    CycleDetected
+    InvalidOptions
+    InvalidValue
+end
+
+struct Diagnostic
+    path: string = ""
+    byte_offset: ?int = null
+    line: ?int = null
+    column: ?int = null
+end
+
+struct DecodeOptions
+    should_reject_unknown_fields: bool = false
+    max_depth: int = 128
+end
+
+struct EncodeOptions
+    max_depth: int = 128
+end
+
+extern func ~encode_value[T](value: T, options: EncodeOptions, plan: int) -> JsonError!string
+extern func ~encode_with_sites[T](value: T, options: EncodeOptions, plan: int, roots: []func() -> void) -> JsonError!string
+extern func ~collect_sites[T](value: T, options: EncodeOptions, plan: int, mut roots: []func() -> void, mut queue: []func() -> void) -> JsonError!void
+extern func ~collect_nested(mut queue: []func() -> void, start: int, stop: int, options: EncodeOptions) -> JsonError!void
+extern func ~decode_value[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut steps: []func() -> bool) -> JsonError!T
+extern func ~decode_proxied[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut steps: []func() -> bool, mut result: []T) -> JsonError!void
+extern func ~describe_step(step: func() -> bool, text: string, mut diagnostic: ?Diagnostic) -> void
+
+func encode[T, S: schema](value: T, options: EncodeOptions = @()) -> JsonError!string
+    if serialization::has_proxies[T, S]() then
+        let mut roots: []func() -> void = []
+        let mut queue: []func() -> void = []
+        try collect_sites[T](value, options, serialization::plan_of[T, S](), roots, queue)
+        let mut start = 0
+        for start < array::len(queue) do
+            let stop = array::len(queue)
+            let mut i = start
+            for i < stop do
+                queue[i]()
+                i = i + 1
+            end
+            try collect_nested(queue, start, stop, options)
+            start = stop
+        end
+        return try encode_with_sites(value, options, serialization::plan_of[T, S](), roots)
+    end
+    return try encode_value(value, options, serialization::plan_of[T, S]())
+end
+
+func decode[T, S: schema](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T
+    let mut steps: []func() -> bool = []
+    if serialization::is_proxied[T, S]() then
+        let mut result: []T = []
+        try decode_proxied[T](text, diagnostic, options, serialization::plan_of[T, S](), steps, result)
+        try run_steps(steps, text, diagnostic)
+        return result[0]
+    end
+    let value = try decode_value[T](text, diagnostic, options, serialization::plan_of[T, S](), steps)
+    if array::len(steps) > 0 then
+        try run_steps(steps, text, diagnostic)
+    end
+    return value
+end
+
+func ~run_steps(steps: []func() -> bool, text: string, mut diagnostic: ?Diagnostic) -> JsonError!void
+    for steps: step do
+        if !step() then
+            describe_step(step, text, diagnostic)
+            return JsonError.InvalidValue
+        end
+    end
+end

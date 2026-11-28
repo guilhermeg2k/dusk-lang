@@ -1,0 +1,4 @@
+struct Address
+    zipCode: string
+    cityName: string
+end

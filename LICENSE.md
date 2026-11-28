@@ -32,3 +32,4 @@ a build.zig.
 | [Mbed TLS](https://github.com/duskilang/mbedtls/tree/v4.1.1-dusk) (with TF-PSA-Crypto) | 4.1.1 | [Apache 2.0](https://github.com/duskilang/mbedtls/blob/v4.1.1-dusk/LICENSE) (dual-licensed Apache 2.0 or GPL 2.0 or later; used under Apache 2.0) |
 | [llhttp](https://github.com/duskilang/llhttp/tree/v9.4.3-dusk) | 9.4.3 | [MIT](https://github.com/duskilang/llhttp/blob/v9.4.3-dusk/LICENSE) |
 | [zlib-ng](https://github.com/duskilang/zlib-ng/tree/v2.3.3-dusk) | 2.3.3 | [zlib](https://github.com/duskilang/zlib-ng/blob/v2.3.3-dusk/LICENSE.md) |
+| [SQLite](https://github.com/duskilang/sqlite/tree/v3.54.1-dusk) | 3.54.1 | [Public Domain](https://github.com/duskilang/sqlite/blob/v3.54.1-dusk/LICENSE.md) |

@@ -1,0 +1,5 @@
+import "std/time"
+
+func main() -> !void
+    let zone = time::load_timezone_id("UTC")
+end

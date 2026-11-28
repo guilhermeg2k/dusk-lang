@@ -1,0 +1,81 @@
+import "std/time"
+import "std/string"
+
+func check(text: string, milliseconds: int) -> !void
+    let timestamp = try time::from_iso_string(text)
+    assert(time::to_unix_ms(timestamp) == milliseconds)
+    assert(time::to_unix_ms(try time::from_iso_string(try time::to_iso_string(timestamp))) == milliseconds)
+end
+
+func check_error(text: string, expected: time::TimeError) -> void
+    let timestamp = time::from_iso_string(text) catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func main() -> !void
+    try check("1970-01-01T00:00:00Z", 0)
+    try check("1970-01-01T00:00:00+00:00", 0)
+    try check("1970-01-01T00:00:00-00:00", 0)
+    try check("1970-01-01T05:30:00+05:30", 0)
+    try check("1969-12-31T20:30:00-03:30", 0)
+    try check("1970-01-01T00:00:00+23:59", -86340000)
+    try check("1970-01-01T00:00:00-23:59", 86340000)
+    try check("2000-03-01T00:15:00+01:00", 951866100000)
+    try check("2000-01-01T00:30:00+01:00", 946683000000)
+    try check("0000-02-29T00:00:00Z", -62162121600000)
+    try check("-0400-02-29T00:00:00Z", -74784902400000)
+    try check("-0001-01-01T00:00:00Z", -62198755200000)
+    try check("+10000-01-01T00:00:00Z", 253402300800000)
+    try check("1970-01-01T00:00:00.1Z", 100)
+    try check("1970-01-01T00:00:00.12Z", 120)
+    try check("1970-01-01T00:00:00.123Z", 123)
+    try check("1970-01-01T00:00:00.12399999999999999999999999Z", 123)
+    try check("1969-12-31T23:59:59.999999Z", -1)
+    try check("-292275055-05-16T16:47:04.192Z", -9223372036854775807 - 1)
+    try check("+292278994-08-17T07:12:55.807Z", 9223372036854775807)
+    try check("-292275055-05-16T15:47:04.192-01:00", -9223372036854775807 - 1)
+    try check("+292278994-08-17T08:12:55.807+01:00", 9223372036854775807)
+    let long_digits = try string::repeat("9", 10000)
+    try check("1970-01-01T00:00:00.123${long_digits}+01:00", -3599877)
+    check_error("1970-01-01T00:00:00.123${long_digits}xZ", time::TimeError.InvalidTimestamp)
+    check_error("+${long_digits}-01-01T00:00:00Z", time::TimeError.Overflow)
+    check_error("-${long_digits}-01-01T00:00:00Z", time::TimeError.Overflow)
+    check_error("+${long_digits}-02-29T00:00:00Z", time::TimeError.InvalidTimestamp)
+    check_error("+${long_digits}-01-01T00:00:00Zx", time::TimeError.InvalidTimestamp)
+    check_error("+${long_digits}2-02-29T00:00:00Z", time::TimeError.Overflow)
+    for [
+        "-292275055-05-16T16:47:04.191Z",
+        "+292278994-08-17T07:12:55.808Z",
+        "-292275055-05-16T16:47:04.192+00:01",
+        "+292278994-08-17T07:12:55.807-00:01",
+        "+100000000000000000000000-01-01T00:00:00Z",
+        "-100000000000000000000000-01-01T00:00:00Z"
+    ]: text do
+        check_error(text, time::TimeError.Overflow)
+    end
+    for [
+        "", "2024", "2024-01-01", "00:00:00Z",
+        "2023-02-29T00:00:00Z", "1900-02-29T00:00:00Z", "-0100-02-29T00:00:00Z",
+        "2024-00-01T00:00:00Z", "2024-13-01T00:00:00Z", "2024-99-01T00:00:00Z",
+        "2024-01-00T00:00:00Z", "2024-01-32T00:00:00Z", "2024-04-31T00:00:00Z",
+        "2024-01-01T24:00:00Z", "2024-01-01T00:60:00Z", "2024-01-01T00:00:60Z",
+        "2024-01-01T00:00:00.Z", "2024-01-01T00:00:00.1xZ", "2024-01-01T00:00:00,123Z",
+        "2024-01-01T00:00:00+24:00", "2024-01-01T00:00:00+00:60",
+        "2024-01-01T00:00:00+0000", "2024-01-01T00:00:00+1:00", "2024-01-01T00:00:00+00:00:00",
+        "2024-01-01T00:00:00+00:00Z", "2024-01-01T00:00:00Z+00:00",
+        "2024-01-01T00:00:00", "2024-01-01t00:00:00Z", "2024-01-01T00:00:00z",
+        "2024-01-01 00:00:00Z", " 2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z ",
+        "2024-W01-01T00:00:00Z", "2024-001T00:00:00Z", "P1D", "2024-01-01T00:00:00Z/2025-01-01T00:00:00Z",
+        "10000-01-01T00:00:00Z", "+0001-01-01T00:00:00Z", "-001-01-01T00:00:00Z",
+        "2024-01-01T00:00:00.１２３Z", "2024-01-01T00:00:00Z\0"
+    ]: text do
+        check_error(text, time::TimeError.InvalidTimestamp)
+    end
+    let complete = "-292275055-05-16T15:47:04.192-01:00"
+    for 0..string::len(complete) - 1: length do
+        check_error(try string::slice(complete, 0, length), time::TimeError.InvalidTimestamp)
+    end
+end

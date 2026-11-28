@@ -1,0 +1,53 @@
+enum Platform
+    Linux
+    MacOS
+    Windows
+    Other
+end
+
+error OsError
+    InvalidArgument
+    InvalidUtf8
+    NotFound
+    Unsupported
+    Busy
+    Closed
+    Other
+end
+
+extern func platform() -> Platform
+extern func args() -> OsError![]string
+extern func env(name: string) -> OsError!?string
+extern func cwd() -> OsError!string
+extern func set_exit_code(code: int) -> OsError!void
+
+enum Signal
+    Interrupt
+    Terminate
+    WindowChange
+end
+
+struct SignalStream
+    ~handle: int
+    ~owner: resource
+
+    func wait(self: @) -> OsError!void
+        try signal_wait(self.handle)
+    end
+
+    func close(self: @) -> void
+        signal_close(self.handle)
+        release(self.owner)
+    end
+end
+
+func watch_signal(signal: Signal) -> OsError!SignalStream
+    let handle = try signal_watch(signal)
+    return SignalStream(handle = handle, owner = own(4, handle))
+end
+
+extern func ~signal_watch(signal: Signal) -> OsError!int
+extern func ~signal_wait(handle: int) -> OsError!void
+extern func ~signal_close(handle: int) -> void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void

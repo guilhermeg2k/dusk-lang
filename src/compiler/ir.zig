@@ -11,6 +11,73 @@ pub const Program = struct {
     defined_types: []const DefinedType,
     error_names: []const []const u8,
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    serialization_plans: []const Plan = &.{},
+};
+
+pub const Plan = struct {
+    type_id: TypeId,
+    shape: PlanShape,
+    item_site: ?PlanSite = null,
+    root_site: ?PlanSite = null,
+};
+
+pub const PlanSite = struct {
+    proxy_plan: usize,
+    is_nullable_target: bool,
+    decode: SiteFunction,
+    encode: SiteFunction,
+};
+
+pub const SiteFunction = struct {
+    uid: usize,
+    captures: []const TypeId,
+    arg_count: usize,
+    return_type: TypeId,
+};
+
+pub const PlanShape = union(enum) {
+    scalar,
+    nullable: usize,
+    array: usize,
+    map: usize,
+    structure: PlanStructure,
+    enumeration: []const PlanVariant,
+    tagged_union: []const PlanVariant,
+    proxy: PlanProxy,
+};
+
+pub const PlanProxy = struct {
+    proxy: usize,
+    plan: usize,
+};
+
+pub const PlanStructure = struct {
+    fields: []const PlanField,
+    skipped: []const PlanSkip,
+};
+
+pub const PlanField = struct {
+    name: []const u8,
+    aliases: []const []const u8,
+    omits_null: bool,
+    field_index: u8,
+    plan: usize,
+    default_value: ?*Value,
+    proxy: ?usize = null,
+    site: ?PlanSite = null,
+};
+
+pub const PlanSkip = struct {
+    field_index: u8,
+    default_value: *Value,
+};
+
+pub const PlanVariant = struct {
+    name: []const u8,
+    aliases: []const []const u8,
+    declared_name: []const u8,
+    plan: ?usize,
+    site: ?PlanSite = null,
 };
 
 pub const Block = []const Instruction;

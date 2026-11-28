@@ -1,11 +1,12 @@
 import "std/task"
 import "std/io"
+import "std/time"
 
 func main() -> void
     spawn(func()
-        task::sleep(5000)
+        task::sleep(time::milliseconds(5000))
     end)
-    task::sleep(1)
+    task::sleep(time::milliseconds(1))
     let items = [1]
     io::println("${items[3]}")
 end

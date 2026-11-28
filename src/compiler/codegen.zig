@@ -5,6 +5,7 @@ const tt = @import("type_table.zig");
 const bc = @import("../runtime/bytecode.zig");
 const native = @import("../runtime/builtins/native.zig");
 const err = @import("compile_error.zig");
+const serialization_plan = @import("../runtime/serialization_plan.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -35,6 +36,7 @@ pub const BytecodeGen = struct {
     intrinsic_by_uid: std.AutoHashMap(usize, native.Intrinsic),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    site_closures: std.AutoHashMapUnmanaged(usize, u16) = .empty,
     cell_type_by_uid: std.AutoHashMapUnmanaged(usize, tt.TypeId) = .empty,
 
     chunk_heap_maps: std.ArrayList(bc.HeapMap),
@@ -125,7 +127,9 @@ pub const BytecodeGen = struct {
             try self.addFunction(&funcs, func);
         }
 
+        const main_index = funcs.items.len;
         try funcs.append(self.allocator, main_func);
+        const serialization_plans = try self.buildSerializationPlans(program.serialization_plans, &funcs);
 
         const functions = try funcs.toOwnedSlice(self.allocator);
         const static_closures = try self.allocator.alloc(v.Closure, functions.len);
@@ -139,12 +143,13 @@ pub const BytecodeGen = struct {
 
         return bc.Program{
             .string_pool = string_pool,
-            .main_func_index = functions.len - 1,
+            .main_func_index = main_index,
             .functions = functions,
             .static_closures = static_closures,
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
             .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
-            .error_names = try self.copyErrorNames(program.error_names),
+            .error_names = try self.copyNames(program.error_names),
+            .serialization_plans = serialization_plans,
         };
     }
 
@@ -156,6 +161,7 @@ pub const BytecodeGen = struct {
                 try self.intrinsic_by_uid.put(ext.uid, intrinsic);
                 break :blk .{ .intrinsic = intrinsic };
             },
+            .serialization => @panic("bindExtern: serialization externs are replaced by sema"),
         };
         return .{ .uid = ext.uid, .name = try self.allocator.dupe(u8, ext.identifier), .kind = kind };
     }
@@ -494,6 +500,18 @@ pub const BytecodeGen = struct {
     }
 
     fn genLoadString(self: *Self, s: []const u8, target_reg: u8) !void {
+        const string_id = try self.internString(s);
+
+        var load_string = bc.Instruction{
+            .op = .LOAD_STRING,
+            .a = target_reg,
+        };
+
+        load_string.putBEx(string_id);
+        try self.chunk_instructions.append(self.allocator, load_string);
+    }
+
+    fn internString(self: *Self, s: []const u8) !u16 {
         const result = try self.string_id_by_text.getOrPut(s);
         if (!result.found_existing) {
             if (self.string_texts.items.len > std.math.maxInt(u16)) {
@@ -503,16 +521,7 @@ pub const BytecodeGen = struct {
             result.value_ptr.* = @intCast(self.string_texts.items.len);
             try self.string_texts.append(self.allocator, s);
         }
-
-        const string_id = result.value_ptr.*;
-
-        var load_string = bc.Instruction{
-            .op = .LOAD_STRING,
-            .a = target_reg,
-        };
-
-        load_string.putBEx(string_id);
-        try self.chunk_instructions.append(self.allocator, load_string);
+        return result.value_ptr.*;
     }
 
     fn genStringBuild(self: *Self, parts: []const *ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
@@ -1809,14 +1818,210 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn copyErrorNames(self: *Self, error_names: []const []const u8) ![]const []const u8 {
-        const names = try self.allocator.alloc([]const u8, error_names.len);
-        for (error_names, 0..) |name, i| {
+    fn copyNames(self: *Self, source_names: []const []const u8) ![]const []const u8 {
+        const names = try self.allocator.alloc([]const u8, source_names.len);
+        for (source_names, 0..) |name, i| {
             names[i] = try self.allocator.dupe(u8, name);
         }
         return names;
     }
 
+    fn buildSerializationPlans(self: *Self, plans: []const ir.Plan, funcs: *std.ArrayList(bc.Function)) ![]const serialization_plan.Plan {
+        const runtime_plans = try self.allocator.alloc(serialization_plan.Plan, plans.len);
+        for (plans, runtime_plans) |plan, *runtime_plan| {
+            runtime_plan.* = .{
+                .kind = valueTypeFromTypeId(self.type_table, plan.type_id),
+                .shape = try self.runtimePlanShape(plan, funcs),
+                .root_site = try self.runtimeSite(plan.root_site, funcs),
+            };
+        }
+        return runtime_plans;
+    }
+
+    fn runtimePlanShape(self: *Self, plan: ir.Plan, funcs: *std.ArrayList(bc.Function)) !serialization_plan.Shape {
+        const type_ptr = self.type_table.getTypePtrById(plan.type_id);
+        return switch (plan.shape) {
+            .nullable => |child| .{ .nullable = @intCast(child) },
+            .array => |child| .{ .array = .{ .item = @intCast(child), .proxy = try self.runtimeSite(plan.item_site, funcs) } },
+            .map => |child| .{ .map = .{ .item = @intCast(child), .proxy = try self.runtimeSite(plan.item_site, funcs) } },
+            .proxy => .{ .proxy = (try self.runtimeSite(plan.root_site, funcs)).? },
+            .scalar => switch (type_ptr.kind) {
+                .int => .int,
+                .byte => .byte,
+                .float => .float,
+                .boolean => .boolean,
+                .string => .string,
+                else => @panic("runtimePlanShape: scalar plan for a type that isn't a scalar"),
+            },
+            .structure => |structure| .{ .structure = .{
+                .descriptor = try self.structDescriptorOf(plan.type_id),
+                .fields = try self.runtimePlanFields(plan.type_id, structure.fields, funcs),
+                .skipped = try self.runtimeSkippedFields(plan.type_id, structure.skipped, funcs),
+            } },
+            .enumeration => |variants| blk: {
+                const enumeration = type_ptr.kind.@"enum";
+                const runtime_variants = try self.allocator.alloc(serialization_plan.EnumVariant, variants.len);
+                for (variants, runtime_variants) |variant, *runtime_variant| {
+                    runtime_variant.* = .{ .name = try self.allocator.dupe(u8, variant.name), .aliases = try self.copyNames(variant.aliases), .value = enumeration.variants.get(variant.declared_name).? };
+                }
+                break :blk .{ .enumeration = runtime_variants };
+            },
+            .tagged_union => |variants| blk: {
+                const runtime_variants = try self.allocator.alloc(serialization_plan.Variant, variants.len);
+                for (variants, runtime_variants) |variant, *runtime_variant| {
+                    runtime_variant.* = .{
+                        .name = try self.allocator.dupe(u8, variant.name),
+                        .aliases = try self.copyNames(variant.aliases),
+                        .plan = @intCast(variant.plan.?),
+                        .tag = try self.unionTagIndex(plan.type_id, variant.declared_name),
+                        .proxy = try self.runtimeSite(variant.site, funcs),
+                    };
+                }
+                break :blk .{ .tagged_union = .{ .descriptor = try self.getOrCreateUnionDescriptor(plan.type_id), .variants = runtime_variants } };
+            },
+        };
+    }
+
+    fn runtimePlanFields(self: *Self, owner_type: tt.TypeId, fields: []const ir.PlanField, funcs: *std.ArrayList(bc.Function)) ![]const serialization_plan.Field {
+        const struct_fields = self.type_table.getTypePtrById(owner_type).kind.@"struct".fields_in_order;
+        const runtime_fields = try self.allocator.alloc(serialization_plan.Field, fields.len);
+        for (fields, runtime_fields) |field, *runtime_field| {
+            const struct_field = struct_fields[field.field_index];
+            runtime_field.* = .{
+                .name = try self.allocator.dupe(u8, field.name),
+                .aliases = try self.copyNames(field.aliases),
+                .omits_null = field.omits_null,
+                .slot = field.field_index,
+                .plan = @intCast(field.plan),
+                .default = if (field.default_value) |value| try self.planDefault(owner_type, struct_field, value, funcs) else null,
+                .proxy = try self.runtimeSite(field.site, funcs),
+            };
+        }
+        return runtime_fields;
+    }
+
+    fn runtimeSkippedFields(self: *Self, owner_type: tt.TypeId, skipped: []const ir.PlanSkip, funcs: *std.ArrayList(bc.Function)) ![]const serialization_plan.SkippedField {
+        const struct_fields = self.type_table.getTypePtrById(owner_type).kind.@"struct".fields_in_order;
+        const runtime_skipped = try self.allocator.alloc(serialization_plan.SkippedField, skipped.len);
+        for (skipped, runtime_skipped) |skip, *runtime_skip| {
+            runtime_skip.* = .{
+                .slot = skip.field_index,
+                .default = try self.planDefault(owner_type, struct_fields[skip.field_index], skip.default_value, funcs),
+            };
+        }
+        return runtime_skipped;
+    }
+
+    fn runtimeSite(self: *Self, site: ?ir.PlanSite, funcs: *std.ArrayList(bc.Function)) !?serialization_plan.ProxySite {
+        const found = site orelse return null;
+        return .{
+            .plan = @intCast(found.proxy_plan),
+            .decode_function = try self.siteClosure(found.decode, funcs),
+            .encode_function = try self.siteClosure(found.encode, funcs),
+            .is_nullable_target = found.is_nullable_target,
+        };
+    }
+
+    fn siteClosure(self: *Self, function: ir.SiteFunction, funcs: *std.ArrayList(bc.Function)) !u16 {
+        if (self.site_closures.get(function.uid)) |index| {
+            return index;
+        }
+        const captures = try self.allocator.alloc(ir.Capture, function.captures.len);
+        const args = try self.allocator.alloc(*ir.Value, function.arg_count);
+        for (function.captures, captures, 0..) |type_id, *capture, i| {
+            capture.* = .{ .type_id = type_id, .is_cell = false };
+            if (i >= function.arg_count) continue;
+            args[i] = try ir.Value.init(self.allocator, .{ .type_id = type_id, .data = .{ .capture_ref = .{ .index = @intCast(i), .is_cell = false } } });
+        }
+        const call = try ir.Value.init(self.allocator, .{ .type_id = function.return_type, .data = .{ .fn_call = .{ .fn_uid = function.uid, .identifier = "proxy", .args = args } } });
+        const is_void = self.type_table.getTypePtrById(function.return_type).kind == .void;
+        const body = try self.allocator.alloc(ir.Instruction, if (is_void) 2 else 1);
+        if (is_void) {
+            body[0] = .{ .expression_stmt = .{ .value = call } };
+            body[1] = .{ .return_stmt = .{ .value = null } };
+        } else {
+            body[0] = .{ .return_stmt = .{ .value = call } };
+        }
+        const function_index: u16 = @intCast(funcs.items.len);
+        try funcs.append(self.allocator, try self.genFunction(.{
+            .uid = 0,
+            .identifier = "$proxy-site",
+            .params = &.{},
+            .return_type = function.return_type,
+            .captures = captures,
+            .body = body,
+        }));
+        try self.site_closures.put(self.allocator, function.uid, function_index);
+        return function_index;
+    }
+
+    fn structDescriptorOf(self: *Self, type_id: tt.TypeId) !u16 {
+        const fields = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order;
+        const keys = try self.allocator.alloc([]const u8, fields.len);
+        for (fields, keys) |field, *key| {
+            key.* = field.identifier;
+        }
+        return self.getOrCreateStructDescriptor(&.{ .type_id = type_id, .data = .{ .struct_init = .{ .keys = keys, .values = &.{} } } });
+    }
+
+    fn planDefault(self: *Self, owner_type: tt.TypeId, field: tt.TypedIdentifier, value: *ir.Value, funcs: *std.ArrayList(bc.Function)) !serialization_plan.Default {
+        const field_type = self.type_table.getTypePtrById(field.type_id);
+        const value_type = if (field_type.is_nullable) self.type_table.typeIdByNullableTypeId.get(field.type_id) orelse field.type_id else field.type_id;
+        const constant = try self.constantValue(value, value_type) orelse return .{ .function = try self.addPlanDefault(owner_type, field, value, funcs) };
+        const value_kind = valueTypeFromTypeId(self.type_table, value_type);
+        const needs_box = field_type.is_nullable and constant != .null and !value_kind.isHeapType();
+        return .{ .constant = .{ .value = constant, .box_kind = if (needs_box) value_kind else null } };
+    }
+
+    fn constantValue(self: *Self, value: *ir.Value, type_id: tt.TypeId) !?serialization_plan.ConstantValue {
+        const target = self.type_table.getTypePtrById(type_id);
+        return switch (value.data) {
+            .i_int => |number| if (target.kind == .float) .{ .float = @floatFromInt(number) } else .{ .int = number },
+            .i_float => |number| .{ .float = number },
+            .i_bool => |flag| .{ .boolean = flag },
+            .i_null => .null,
+            .i_string => |text| .{ .string = try self.internString(text) },
+            .i_array => |array| blk: {
+                if (target.kind != .array) {
+                    break :blk null;
+                }
+                const item_type = target.kind.array;
+                const is_nullable_item = self.type_table.getTypePtrById(item_type).is_nullable;
+                const items = try self.allocator.alloc(serialization_plan.ConstantValue, array.values.len);
+                for (array.values, items) |item, *constant| {
+                    if (is_nullable_item) {
+                        return null;
+                    }
+                    constant.* = try self.constantValue(item, item_type) orelse return null;
+                }
+                break :blk .{ .array = .{ .kind = valueTypeFromTypeId(self.type_table, item_type), .items = items } };
+            },
+            else => null,
+        };
+    }
+
+    fn addPlanDefault(self: *Self, owner_type: tt.TypeId, field: tt.TypedIdentifier, value: *ir.Value, funcs: *std.ArrayList(bc.Function)) !u16 {
+        const owner = try ir.Value.init(self.allocator, .{ .type_id = owner_type, .data = .{ .capture_ref = .{ .index = 0, .is_cell = false } } });
+        const name = try ir.Value.init(self.allocator, .{ .type_id = self.type_table.getPrimitive(.string), .data = .{ .i_string = field.identifier } });
+        const target = try ir.Value.init(self.allocator, .{ .type_id = field.type_id, .data = .{ .indexed = .{ .target = owner, .index = name } } });
+        const boolean = self.type_table.getPrimitive(.boolean);
+        const done = try ir.Value.init(self.allocator, .{ .type_id = boolean, .data = .{ .i_bool = true } });
+        const body = try self.allocator.alloc(ir.Instruction, 2);
+        body[0] = .{ .update_indexed = .{ .target = target, .value = value } };
+        body[1] = .{ .return_stmt = .{ .value = done } };
+        const captures = try self.allocator.alloc(ir.Capture, 1);
+        captures[0] = .{ .type_id = owner_type, .is_cell = false };
+        const function_index: u16 = @intCast(funcs.items.len);
+        try funcs.append(self.allocator, try self.genFunction(.{
+            .uid = 0,
+            .identifier = "$field-default",
+            .params = &.{},
+            .return_type = boolean,
+            .captures = captures,
+            .body = body,
+        }));
+        return function_index;
+    }
 };
 
 const TypedValue = struct {

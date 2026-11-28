@@ -6,6 +6,7 @@ import "std/io"
 import "std/net"
 import "std/string"
 import "std/task"
+import "std/time"
 
 struct Progress
     seen: int = 0
@@ -72,7 +73,7 @@ func route(req: http::Request, progress: Progress, random: buffer) -> !http::Res
                     try writer.flush()
                     let mut waited = 0
                     for progress.seen <= n and waited < 3000 do
-                        task::sleep(1)
+                        task::sleep(time::milliseconds(1))
                         waited = waited + 1
                     end
                     if waited >= 3000 then

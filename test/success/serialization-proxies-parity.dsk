@@ -1,0 +1,369 @@
+import "std/serialization"
+import "std/json"
+import "std/time"
+import "std/array"
+import "std/map"
+import "std/string"
+
+struct Span
+    label: string
+    starts: time::Timestamp
+end
+
+struct Window
+    ~from_ms: int
+    ~to_ms: int
+
+    func first(self: @) -> int
+        return self.from_ms
+    end
+end
+
+func window_to_span(window: Window) -> Span
+    return Span(label = "w${window.to_ms - window.from_ms}", starts = time::from_unix_ms(window.from_ms))
+end
+
+func span_to_window(span: Span) -> Window
+    return Window(from_ms = time::to_unix_ms(span.starts), to_ms = time::to_unix_ms(span.starts) + label_width(span.label))
+end
+
+func label_width(label: string) -> int
+    let digits = string::slice(label, 1, string::len(label)) catch e then
+        return 0
+    end
+    let width = string::to_int(digits) catch e then
+        return 0
+    end
+    return width
+end
+
+func ms_to_seconds(milliseconds: int) -> int
+    return milliseconds // 1000
+end
+
+func seconds_to_ms(seconds: int) -> int
+    return seconds * 1000
+end
+
+func counter() -> int
+    return 99
+end
+
+struct Wire
+    base: int
+    extra: int = counter()
+end
+
+struct Total
+    value: int
+end
+
+func total_to_wire(total: Total) -> Wire
+    return Wire(base = total.value, extra = 0)
+end
+
+func wire_to_total(wire: Wire) -> Total
+    return Total(value = wire.base + wire.extra)
+end
+
+schema Api(case = "snake")
+    time::Timestamp: via(time::to_utc_iso_string, time::from_iso_string)
+    Window: via(window_to_span, span_to_window)
+    Total: via(total_to_wire, wire_to_total)
+end
+
+struct Totals
+    one: Total
+    many: []Total
+    named: map[string, Total]
+end
+
+struct Event
+    title: string
+    startsAt: time::Timestamp
+    endsAt: ?time::Timestamp = null
+    durationMs: int
+    marks: []time::Timestamp = []
+    maybeMarks: []?time::Timestamp = []
+    byName: map[string, time::Timestamp] = {}
+    window: ?Window = null
+    order: int = counter()
+
+    schema Api
+        durationMs: "duration_s", via(ms_to_seconds, seconds_to_ms)
+    end
+end
+
+struct Batch
+    events: []Event
+    labels: map[string, string]
+end
+
+union Moment
+    at: time::Timestamp
+    never: int
+end
+
+struct BatchBox
+    value: Batch
+end
+
+func batch_box_to_value(box: BatchBox) -> Batch
+    return box.value
+end
+
+func batch_value_to_box(value: Batch) -> BatchBox
+    return BatchBox(value = value)
+end
+
+struct EventBox
+    value: Event
+end
+
+func event_box_to_value(box: EventBox) -> Event
+    return box.value
+end
+
+func event_value_to_box(value: Event) -> EventBox
+    return EventBox(value = value)
+end
+
+struct EventsBox
+    value: []Event
+end
+
+func events_box_to_value(box: EventsBox) -> []Event
+    return box.value
+end
+
+func events_value_to_box(value: []Event) -> EventsBox
+    return EventsBox(value = value)
+end
+
+struct TotalsBox
+    value: Totals
+end
+
+func totals_box_to_value(box: TotalsBox) -> Totals
+    return box.value
+end
+
+func totals_value_to_box(value: Totals) -> TotalsBox
+    return TotalsBox(value = value)
+end
+
+schema Boxed(case = "snake")
+    time::Timestamp: via(time::to_utc_iso_string, time::from_iso_string)
+    Window: via(window_to_span, span_to_window)
+    Total: via(total_to_wire, wire_to_total)
+    BatchBox: via(batch_box_to_value, batch_value_to_box)
+    EventBox: via(event_box_to_value, event_value_to_box)
+    EventsBox: via(events_box_to_value, events_value_to_box)
+    TotalsBox: via(totals_box_to_value, totals_value_to_box)
+
+    struct Event
+        durationMs: "duration_s", via(ms_to_seconds, seconds_to_ms)
+    end
+end
+
+struct TextWriter
+    parts: []string = []
+    firsts: []bool = []
+
+    func open(mut self: @, text: string) -> void
+        array::append(self.parts, text)
+        array::append(self.firsts, true)
+    end
+
+    func close(mut self: @, text: string) -> void
+        array::append(self.parts, text)
+        let closed = array::pop(self.firsts) catch true
+    end
+
+    func separate(mut self: @) -> void
+        let last = array::len(self.firsts) - 1
+        if self.firsts[last] then
+            self.firsts[last] = false
+            return
+        end
+        array::append(self.parts, ",")
+    end
+
+    func write_int(mut self: @, value: int) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_float(mut self: @, value: float) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_bool(mut self: @, value: bool) -> serialization::SerializationError!void
+        array::append(self.parts, if value then "true" else "false" end)
+    end
+
+    func write_string(mut self: @, value: string) -> serialization::SerializationError!void
+        array::append(self.parts, "\"${value}\"")
+    end
+
+    func write_null(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "null")
+    end
+
+    func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
+        self.open("{")
+    end
+
+    func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        self.separate()
+        array::append(self.parts, "\"${serialization::field_name(fields, index)}\":")
+    end
+
+    func end_struct(mut self: @) -> serialization::SerializationError!void
+        self.close("}")
+    end
+
+    func begin_array(mut self: @, length: int) -> serialization::SerializationError!void
+        self.open("[")
+    end
+
+    func item(mut self: @, index: int) -> serialization::SerializationError!void
+        self.separate()
+    end
+
+    func end_array(mut self: @) -> serialization::SerializationError!void
+        self.close("]")
+    end
+
+    func begin_map(mut self: @, length: int) -> serialization::SerializationError!void
+        self.open("{")
+    end
+
+    func key(mut self: @, name: string) -> serialization::SerializationError!void
+        self.separate()
+        array::append(self.parts, "\"${name}\":")
+    end
+
+    func end_map(mut self: @) -> serialization::SerializationError!void
+        self.close("}")
+    end
+
+    func begin_union(mut self: @, variants: int, index: int) -> serialization::SerializationError!void
+        array::append(self.parts, "{\"${serialization::variant_name(variants, index)}\":")
+    end
+
+    func end_union(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "}")
+    end
+end
+
+func derived_text[T](value: T) -> serialization::SerializationError!string
+    let mut writer = TextWriter()
+    try serialization::encode[T, TextWriter, Api](value, writer)
+    return string::join(writer.parts)
+end
+
+func native_text[T](value: T) -> json::JsonError!string
+    return try json::encode[T, Api](value)
+end
+
+func boxed_text[B](box: B) -> json::JsonError!string
+    assert(serialization::is_proxied[B, Boxed]())
+    return try json::encode[B, Boxed](box)
+end
+
+func native_error(text: string) -> ?json::JsonError
+    let event = json::decode[Event, Api](text) catch e then
+        return e
+    end
+    return null
+end
+
+func boxed_error(text: string) -> ?json::JsonError
+    let event = json::decode[EventBox, Boxed](text) catch e then
+        return e
+    end
+    return null
+end
+
+func at(milliseconds: int) -> time::Timestamp
+    return time::from_unix_ms(milliseconds)
+end
+
+func main() -> !void
+    let mut names: map[string, time::Timestamp] = {"a": at(1000), "b": at(2000), "c": at(3000)}
+    map::remove(names, "b")
+    names["d"] = at(4000)
+    let full = Event(title = "full", startsAt = at(86400000), endsAt = at(90000000), durationMs = 61000, marks = [at(0), at(5)], maybeMarks = [at(7), null, at(9)], byName = names, window = Window(from_ms = 500, to_ms = 2500), order = 1)
+    let bare = Event(title = "bare", startsAt = at(0), durationMs = 0)
+    let batch = Batch(events = [full, bare, full], labels = {"x": "y"})
+
+    let text = try native_text(batch)
+    assert(text == (try boxed_text(BatchBox(value = batch))))
+    assert(text == (try derived_text(batch)))
+    assert(string::contains(text, "\"by_name\":{\"a\":\"1970-01-01T00:00:01.000Z\",\"c\":\"1970-01-01T00:00:03.000Z\",\"d\":\"1970-01-01T00:00:04.000Z\"}"))
+    assert(string::contains(text, "\"window\":{\"label\":\"w2000\",\"starts\":\"1970-01-01T00:00:00.500Z\"}"))
+    assert(string::contains(text, "\"maybe_marks\":[\"1970-01-01T00:00:00.007Z\",null,\"1970-01-01T00:00:00.009Z\"]"))
+    assert(string::contains(text, "\"duration_s\":61"))
+
+    let native = try json::decode[Batch, Api](text)
+    let boxed_batch = try json::decode[BatchBox, Boxed](text)
+    let boxed = boxed_batch.value
+    assert((try native_text(native)) == text)
+    assert((try native_text(boxed)) == text)
+    assert(native.events[0].durationMs == 61000)
+    if native.events[0].byName["d"]: d then
+        assert(time::to_unix_ms(d) == 4000)
+    else
+        assert(false)
+    end
+    if native.events[0].window: window then
+        assert(window.first() == 500)
+    else
+        assert(false)
+    end
+    assert(native.events[1].endsAt == null and native.events[1].window == null)
+
+    let partial = "{\"title\":\"p\",\"starts_at\":\"2024-02-29T12:30:00Z\",\"duration_s\":2,\"maybe_marks\":[null]}"
+    let from_native = try json::decode[Event, Api](partial)
+    let partial_box = try json::decode[EventBox, Boxed](partial)
+    let from_boxed = partial_box.value
+    assert(from_native.order == 99 and from_boxed.order == 99)
+    assert(from_native.durationMs == 2000 and from_native.maybeMarks[0] == null)
+    assert((try native_text(from_native)) == (try native_text(from_boxed)))
+
+    let broken = "{\"title\":\"p\",\"starts_at\":\"soon\",\"duration_s\":2}"
+    assert(native_error(broken) == json::JsonError.InvalidValue)
+    assert(boxed_error(broken) == json::JsonError.InvalidValue)
+    let broken_item = "{\"title\":\"p\",\"starts_at\":\"2024-01-01T00:00:00Z\",\"duration_s\":2,\"marks\":[\"2024-01-01T00:00:00Z\",\"later\"]}"
+    assert(native_error(broken_item) == json::JsonError.InvalidValue)
+
+    let mut many: []Event = []
+    for 0..1999: i do
+        array::append(many, Event(title = "e${i}", startsAt = at(i * 1000), durationMs = i * 1000, marks = [at(i)], byName = {"k": at(i)}))
+    end
+    let many_text = try native_text(many)
+    assert(many_text == (try boxed_text(EventsBox(value = many))))
+    assert(many_text == (try derived_text(many)))
+    let many_back = try json::decode[[]Event, Api](many_text)
+    assert(array::len(many_back) == 2000 and time::to_unix_ms(many_back[1999].marks[0]) == 1999)
+    assert((try native_text(many_back)) == many_text)
+
+    let totals_text = "{\"one\":{\"base\":1},\"many\":[{\"base\":2},{\"base\":3,\"extra\":0}],\"named\":{\"k\":{\"base\":4}}}"
+    let native_totals = try json::decode[Totals, Api](totals_text)
+    let totals_box = try json::decode[TotalsBox, Boxed](totals_text)
+    let boxed_totals = totals_box.value
+    assert(native_totals.one.value == 100 and boxed_totals.one.value == 100)
+    assert(native_totals.many[0].value == 101 and native_totals.many[1].value == 3)
+    assert(boxed_totals.many[0].value == 101 and boxed_totals.many[1].value == 3)
+    if native_totals.named["k"]: named then
+        assert(named.value == 103)
+    else
+        assert(false)
+    end
+    assert((try native_text(native_totals)) == (try boxed_text(TotalsBox(value = boxed_totals))))
+    assert((try native_text(native_totals)) == (try derived_text(native_totals)))
+
+    assert((try json::encode[time::Timestamp, Api](at(0))) == "\"1970-01-01T00:00:00.000Z\"")
+    let moment = try json::decode[Moment, Api]("{\"at\":\"1970-01-01T00:00:01.000Z\"}")
+    assert((try json::encode[Moment, Api](moment)) == "{\"at\":\"1970-01-01T00:00:01.000Z\"}")
+end

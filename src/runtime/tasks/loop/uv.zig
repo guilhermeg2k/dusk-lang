@@ -9,7 +9,7 @@ pub const Handle = opaque {};
 pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
-pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, tcp = 12, timer = 13, tty = 14, file = 17, _ };
+pub const HandleType = enum(c_int) { unknown = 0, async = 1, named_pipe = 7, process = 10, tcp = 12, timer = 13, tty = 14, signal = 16, file = 17, _ };
 pub const RequestType = enum(c_int) { connect = 2, write = 3, fs = 6, work = 7, getaddrinfo = 8 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 pub const OsFile = if (@import("builtin").os.tag == .windows) ?*anyopaque else c_int;
@@ -77,6 +77,7 @@ pub const Stat = extern struct {
 // ---- Callbacks ----
 
 pub const TimerCallback = *const fn (timer: *Handle) callconv(.c) void;
+pub const AsyncCallback = *const fn (handle: *Handle) callconv(.c) void;
 pub const CloseCallback = *const fn (handle: *Handle) callconv(.c) void;
 pub const WalkCallback = *const fn (handle: *Handle, arg: ?*anyopaque) callconv(.c) void;
 pub const WorkCallback = *const fn (request: *Request) callconv(.c) void;
@@ -108,6 +109,24 @@ pub extern fn uv_is_closing(handle: *const Handle) c_int;
 pub extern fn uv_close(handle: *Handle, callback: ?CloseCallback) void;
 pub extern fn uv_guess_handle(file: c_int) HandleType;
 pub extern fn uv_fileno(handle: *const Handle, file: *OsFile) c_int;
+pub extern fn uv_ref(handle: *Handle) void;
+pub extern fn uv_unref(handle: *Handle) void;
+
+// ---- Processes ----
+
+pub extern fn dusk_process_spawn(loop: *Loop, process: *Handle, file: [*:0]const u8, args: [*:null]const ?[*:0]const u8, env: [*:null]const ?[*:0]const u8, cwd: [*:0]const u8, pipes: *const [3]?*Handle, modes: *const [3]c_int, callback: *const fn (*Handle, i64, c_int) callconv(.c) void) c_int;
+pub extern fn dusk_process_kill(process: *Handle) c_int;
+
+// ---- Signals ----
+
+pub extern fn uv_signal_init(loop: *Loop, signal: *Handle) c_int;
+pub extern fn uv_signal_start(signal: *Handle, callback: *const fn (*Handle, c_int) callconv(.c) void, number: c_int) c_int;
+pub extern fn uv_signal_stop(signal: *Handle) c_int;
+
+// ---- Async handles (wake the loop from another thread) ----
+
+pub extern fn uv_async_init(loop: *Loop, handle: *Handle, callback: AsyncCallback) c_int;
+pub extern fn uv_async_send(handle: *Handle) c_int;
 
 // ---- Timers ----
 
@@ -115,9 +134,17 @@ pub extern fn uv_timer_init(loop: *Loop, timer: *Handle) c_int;
 pub extern fn uv_timer_start(timer: *Handle, callback: TimerCallback, timeout: u64, repeat: u64) c_int;
 pub extern fn uv_timer_stop(timer: *Handle) c_int;
 
-// ---- Streams (terminals, pipes and sockets) ----
+// ---- Terminals ----
+
+pub const TtyMode = enum(c_int) { normal = 0, raw = 1, io = 2, raw_vt = 3 };
 
 pub extern fn uv_tty_init(loop: *Loop, tty: *Handle, file: c_int, readable: c_int) c_int;
+pub extern fn uv_tty_set_mode(tty: *Handle, mode: TtyMode) c_int;
+pub extern fn uv_tty_reset_mode() c_int;
+pub extern fn uv_tty_get_winsize(tty: *Handle, width: *c_int, height: *c_int) c_int;
+
+// ---- Streams (terminals, pipes and sockets) ----
+
 pub extern fn uv_pipe_init(loop: *Loop, pipe: *Handle, ipc: c_int) c_int;
 pub extern fn uv_pipe_open(pipe: *Handle, file: c_int) c_int;
 pub extern fn uv_read_start(stream: *Handle, alloc: AllocCallback, read: ReadCallback) c_int;
@@ -126,6 +153,8 @@ pub extern fn uv_try_write(stream: *Handle, buffers: [*]const Buffer, buffer_cou
 pub extern fn uv_write(request: *Request, stream: *Handle, buffers: [*]const Buffer, buffer_count: c_uint, callback: WriteCallback) c_int;
 
 // ---- TCP ----
+
+pub const tcp_reuseport: c_uint = 2;
 
 pub extern fn uv_tcp_init(loop: *Loop, tcp: *Handle) c_int;
 pub extern fn uv_tcp_open(tcp: *Handle, socket: OsSocket) c_int;
@@ -147,6 +176,12 @@ pub extern fn uv_freeaddrinfo(result: ?*AddressInfo) void;
 pub extern fn uv_ip4_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
 pub extern fn uv_ip6_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
 pub extern fn uv_ip_name(address: *const SocketAddress, text: [*]u8, size: usize) c_int;
+
+// ---- Environment ----
+
+pub extern fn uv_os_getenv(name: [*:0]const u8, buffer: [*]u8, size: *usize) c_int;
+pub extern fn uv_os_setenv(name: [*:0]const u8, value: [*:0]const u8) c_int;
+pub extern fn uv_os_unsetenv(name: [*:0]const u8) c_int;
 
 // ---- Requests (shared by every request type) ----
 
@@ -175,6 +210,8 @@ pub extern fn uv_fs_fstat(loop: *Loop, request: *Request, file: c_int, callback:
 // ---- File system: paths ----
 
 pub extern fn uv_fs_stat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_access(loop: *Loop, request: *Request, path: [*:0]const u8, mode: c_int, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_readlink(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_lstat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_rename(loop: *Loop, request: *Request, path: [*:0]const u8, new_path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_unlink(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;

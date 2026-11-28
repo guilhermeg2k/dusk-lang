@@ -11,6 +11,7 @@ error IoError
     UnexpectedEnd
     HandshakeFailed
     TooLarge
+    NotTerminal
     Other
 end
 
@@ -26,10 +27,17 @@ extern func ~stream_read_all(stream_id: int, max_bytes: int, timeout_ms: int) ->
 extern func ~stream_read_all_bytes(stream_id: int, max_bytes: int, timeout_ms: int) -> IoError!buffer
 extern func ~stream_set_read_timeout(stream_id: int, timeout_ms: int) -> void
 extern func ~is_terminal_fd(fd: int) -> bool
+extern func ~stdin_set_raw(stream_id: int, is_raw: bool) -> IoError!void
+extern func ~terminal_size_numbers(fd: int) -> ?[]int
 extern func ~stream_close(stream_id: int) -> void
 extern func ~stdio_write(fd: int, text: string) -> IoError!void
 extern func ~stdio_write_bytes(fd: int, data: buffer) -> IoError!void
 extern func ~stdio_flush(fd: int) -> IoError!void
+
+struct TerminalSize
+    columns: int
+    rows: int
+end
 
 trait Reader
     func read_bytes(mut self: @, max: int) -> IoError!?buffer
@@ -72,6 +80,10 @@ struct Stdin
         return is_terminal_fd(0)
     end
 
+    func set_raw(self: @, is_raw: bool) -> IoError!void
+        try stdin_set_raw(self.stream_id, is_raw)
+    end
+
     func close(self: @) -> void
         stream_close(self.stream_id)
     end
@@ -95,6 +107,10 @@ struct Stdout
     func is_terminal(self: @) -> bool
         return is_terminal_fd(self.fd)
     end
+
+    func size(self: @) -> ?TerminalSize
+        return terminal_size_of(self.fd)
+    end
 end
 
 struct Stderr
@@ -115,6 +131,17 @@ struct Stderr
     func is_terminal(self: @) -> bool
         return is_terminal_fd(self.fd)
     end
+
+    func size(self: @) -> ?TerminalSize
+        return terminal_size_of(self.fd)
+    end
+end
+
+func ~terminal_size_of(fd: int) -> ?TerminalSize
+    if terminal_size_numbers(fd): numbers then
+        return TerminalSize(columns = numbers[0], rows = numbers[1])
+    end
+    return null
 end
 
 func stdin() -> Stdin

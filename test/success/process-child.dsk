@@ -1,0 +1,91 @@
+import "std/process"
+import "std/os"
+import "std/task"
+import "std/string"
+import "std/buffer"
+import "std/io"
+import "std/time"
+
+func main() -> !void
+    let helper = (try os::args())[0]
+    let child = try process::start([helper, "copy"], stdin_mode = process::Stdio.Pipe, stdout_mode = process::Stdio.Pipe, stderr_mode = process::Stdio.Pipe)
+    let input = try child.stdin()
+    let output = try child.stdout()
+    let errors = try child.stderr()
+    let writer = spawn(func()
+        try input.write("hello\n")
+        try input.write_bytes(buffer::from_string("world"))
+        input.close()
+    end)
+    let received = try output.read_all()
+    assert(received == "hello\nworld")
+    assert(try errors.read_all() == "eof")
+    try await(writer)
+    when try child.wait()
+        Exited: code then assert(code == 0) end
+        else then assert(false) end
+    end
+    when try child.wait()
+        Exited: code then assert(code == 0) end
+        else then assert(false) end
+    end
+    try child.kill()
+    try child.close()
+    try child.close()
+    let mut has_closed = false
+    child.wait() catch e then
+        assert(e == process::ProcessError.Closed)
+        has_closed = true
+    end
+    assert(has_closed)
+    let sleeping = try process::start([helper, "ignore_term"], stdout_mode = process::Stdio.Pipe, stderr_mode = process::Stdio.Ignore)
+    let reader = try sleeping.stdout()
+    assert(try reader.read_line() == "ready")
+    let mut has_timeout = false
+    sleeping.wait(timeout_ms = 1) catch e then
+        assert(e == process::ProcessError.TimedOut)
+        has_timeout = true
+    end
+    assert(has_timeout)
+    let mut has_busy = false
+    sleeping.close() catch e then
+        assert(e == process::ProcessError.Busy)
+        has_busy = true
+    end
+    assert(has_busy)
+    let waiter = spawn(func() -> return try sleeping.wait())
+    task::sleep(time::milliseconds(0))
+    let mut has_waiter = false
+    sleeping.wait() catch e then
+        assert(e == process::ProcessError.Busy)
+        has_waiter = true
+    end
+    assert(has_waiter)
+    let mut has_not_piped = false
+    sleeping.stdin() catch e then
+        assert(e == process::ProcessError.NotPiped)
+        has_not_piped = true
+    end
+    assert(has_not_piped)
+    try sleeping.kill()
+    let term = try await(waiter)
+    if os::platform() != os::Platform.Windows then
+        when term
+            Signaled: number then assert(number == 9) end
+            else then assert(false) end
+        end
+    end
+    try sleeping.close()
+    let producer = try process::start([helper, "args", "x"], stdout_mode = process::Stdio.Pipe, stderr_mode = process::Stdio.Ignore)
+    let consumer = try process::start([helper, "copy"], stdin_mode = process::Stdio.Pipe, stdout_mode = process::Stdio.Pipe, stderr_mode = process::Stdio.Ignore)
+    let mut source = try producer.stdout()
+    let mut destination = try consumer.stdin()
+    assert(try io::copy(source, destination) == 4)
+    destination.close()
+    let copied = try consumer.stdout()
+    assert(try copied.read_all() == "1:x\n")
+    let producer_term = try producer.wait()
+    let consumer_term = try consumer.wait()
+    try producer.close()
+    try consumer.close()
+end

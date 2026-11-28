@@ -1,0 +1,12 @@
+struct Point
+    x: int
+end
+
+error A
+    Foo
+end
+
+error Bad = Point | A
+
+func main() -> void
+end

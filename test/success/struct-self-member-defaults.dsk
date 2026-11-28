@@ -1,0 +1,64 @@
+struct Command
+    handler: func(Bot) -> string
+end
+
+struct Bot
+    let PREFIX = "/"
+    let DEFAULT_LIMIT = 10
+
+    prefix: string = Bot.PREFIX
+    limit: int = Bot.DEFAULT_LIMIT
+    commands: map[string, Command] = {
+        "/start": @(handler = Bot.list_commands),
+        "/help": @(handler = Bot.help_text),
+    }
+    ping_fn: func(Bot) -> int = func(b: Bot) -> int
+        return b.ping()
+    end
+
+    func list_commands(self: @) -> string
+        return "${self.prefix}start,${self.prefix}help"
+    end
+
+    func help_text(self: @) -> string
+        return "limit=${self.limit}"
+    end
+
+    func ping(self: @) -> int
+        return self.limit * 2
+    end
+end
+
+struct InferredBot
+    commands = {
+        "/start": @(handler = InferredBot.list_commands),
+    }
+
+    func list_commands(self: @) -> string
+        return "ok"
+    end
+end
+
+func main() -> void
+    let bot = Bot()
+    assert(bot.prefix == "/")
+    assert(bot.limit == 10)
+    if bot.commands["/start"]: cmd then
+        assert(cmd.handler(bot) == "/start,/help")
+    else
+        assert(false)
+    end
+    if bot.commands["/help"]: cmd then
+        assert(cmd.handler(bot) == "limit=10")
+    else
+        assert(false)
+    end
+    assert(bot.ping_fn(bot) == 20)
+
+    let ibot = InferredBot()
+    if ibot.commands["/start"]: cmd then
+        assert(cmd.handler(ibot) == "ok")
+    else
+        assert(false)
+    end
+end

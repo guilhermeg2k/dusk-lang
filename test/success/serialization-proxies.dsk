@@ -1,0 +1,471 @@
+import "std/serialization"
+import "std/json"
+import "std/time"
+import "std/string"
+import "std/buffer"
+import "std/array"
+import "std/task"
+
+struct JsonReader
+    text: string
+    data: buffer
+    pos: int = 0
+
+    func skip_spaces(mut self: @) -> void
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            let is_space = c == ' ' or c == '\n' or c == '\t' or c == '\r'
+            if !is_space then
+                break
+            end
+            self.pos = self.pos + 1
+        end
+    end
+
+    func peek(mut self: @) -> byte
+        self.skip_spaces()
+        if self.pos >= buffer::len(self.data) then
+            return 0
+        end
+        return self.data[self.pos]
+    end
+
+    func expect(mut self: @, c: byte) -> serialization::SerializationError!void
+        if self.peek() != c then
+            return serialization::SerializationError.InvalidInput
+        end
+        self.pos = self.pos + 1
+    end
+
+    func read_int(mut self: @) -> serialization::SerializationError!int
+        let mut is_negative = false
+        if self.peek() == '-' then
+            is_negative = true
+            self.pos = self.pos + 1
+        end
+        let start = self.pos
+        let mut number = 0
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            let is_digit = c >= '0' and c <= '9'
+            if !is_digit then
+                break
+            end
+            number = number * 10 + (c - '0')
+            self.pos = self.pos + 1
+        end
+        if self.pos == start then
+            return serialization::SerializationError.InvalidInput
+        end
+        if is_negative then
+            return 0 - number
+        end
+        return number
+    end
+
+    func read_float(mut self: @) -> serialization::SerializationError!float
+        self.skip_spaces()
+        let start = self.pos
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            let is_number_part = (c >= '0' and c <= '9') or c == '.' or c == '-' or c == 'e' or c == 'E' or c == '+'
+            if !is_number_part then
+                break
+            end
+            self.pos = self.pos + 1
+        end
+        let text = string::slice(self.text, start, self.pos) catch "x"
+        let number = string::to_float(text) catch e then
+            return serialization::SerializationError.InvalidInput
+        end
+        return number
+    end
+
+    func read_bool(mut self: @) -> serialization::SerializationError!bool
+        let c = self.peek()
+        if c == 't' then
+            self.pos = self.pos + 4
+            return true
+        end
+        if c == 'f' then
+            self.pos = self.pos + 5
+            return false
+        end
+        return serialization::SerializationError.TypeMismatch
+    end
+
+    func read_string(mut self: @) -> serialization::SerializationError!string
+        try self.expect('"')
+        let start = self.pos
+        for self.pos < buffer::len(self.data) and self.data[self.pos] != '"' do
+            self.pos = self.pos + 1
+        end
+        let text = string::slice(self.text, start, self.pos) catch ""
+        self.pos = self.pos + 1
+        return text
+    end
+
+    func read_null(mut self: @) -> serialization::SerializationError!bool
+        if self.peek() != 'n' then
+            return false
+        end
+        self.pos = self.pos + 4
+        return true
+    end
+
+    func begin_struct(mut self: @, fields: int) -> serialization::SerializationError!void
+        try self.expect('{')
+    end
+
+    func next_field(mut self: @, fields: int) -> serialization::SerializationError!int
+        for true do
+            let c = self.peek()
+            if c == '}' then
+                self.pos = self.pos + 1
+                return -1
+            end
+            if c == ',' then
+                self.pos = self.pos + 1
+            end
+            try self.expect('"')
+            let start = self.pos
+            for self.pos < buffer::len(self.data) and self.data[self.pos] != '"' do
+                self.pos = self.pos + 1
+            end
+            let stop = self.pos
+            self.pos = self.pos + 1
+            try self.expect(':')
+            let index = serialization::find_field_in(fields, self.text, start, stop)
+            if index >= 0 then
+                return index
+            end
+            self.skip_value()
+        end
+        return -1
+    end
+
+    func missing_field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        return serialization::SerializationError.MissingField
+    end
+
+    func begin_array(mut self: @) -> serialization::SerializationError!void
+        try self.expect('[')
+    end
+
+    func has_item(mut self: @) -> serialization::SerializationError!bool
+        let c = self.peek()
+        if c == ']' then
+            self.pos = self.pos + 1
+            return false
+        end
+        if c == ',' then
+            self.pos = self.pos + 1
+        end
+        return true
+    end
+
+    func skip_value(mut self: @) -> void
+        self.skip_spaces()
+        let mut depth = 0
+        let mut is_in_string = false
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            if is_in_string then
+                if c == '"' then
+                    is_in_string = false
+                end
+                self.pos = self.pos + 1
+                continue
+            end
+            let is_open = c == '{' or c == '['
+            let is_close = c == '}' or c == ']'
+            if c == '"' then
+                is_in_string = true
+            elif is_open then
+                depth = depth + 1
+            elif is_close then
+                if depth == 0 then
+                    return
+                end
+                depth = depth - 1
+            elif c == ',' and depth == 0 then
+                return
+            end
+            self.pos = self.pos + 1
+        end
+    end
+    func begin_map(mut self: @) -> serialization::SerializationError!void
+        try self.expect('{')
+    end
+
+    func next_key(mut self: @) -> serialization::SerializationError!?string
+        let c = self.peek()
+        if c == '}' then
+            self.pos = self.pos + 1
+            return null
+        end
+        if c == ',' then
+            self.pos = self.pos + 1
+        end
+        let name = try self.read_string()
+        try self.expect(':')
+        return name
+    end
+
+    func read_variant(mut self: @, variants: int) -> serialization::SerializationError!int
+        try self.expect('"')
+        let start = self.pos
+        for self.pos < buffer::len(self.data) and self.data[self.pos] != '"' do
+            self.pos = self.pos + 1
+        end
+        let index = serialization::find_variant_in(variants, self.text, start, self.pos)
+        self.pos = self.pos + 1
+        if index < 0 then
+            return serialization::SerializationError.UnknownVariant
+        end
+        return index
+    end
+
+    func begin_union(mut self: @, variants: int) -> serialization::SerializationError!int
+        try self.expect('{')
+        let index = try self.read_variant(variants)
+        try self.expect(':')
+        return index
+    end
+
+    func end_union(mut self: @) -> serialization::SerializationError!void
+        try self.expect('}')
+    end
+end
+func reader_for(text: string) -> JsonReader
+    return JsonReader(text = text, data = buffer::from_string(text))
+end
+
+struct JsonWriter
+    parts: []string = []
+    map_counts: []int = []
+
+    func write_int(mut self: @, value: int) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_float(mut self: @, value: float) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_bool(mut self: @, value: bool) -> serialization::SerializationError!void
+        array::append(self.parts, if value then "true" else "false" end)
+    end
+
+    func write_string(mut self: @, value: string) -> serialization::SerializationError!void
+        array::append(self.parts, "\"${value}\"")
+    end
+
+    func write_null(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "null")
+    end
+
+    func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
+        array::append(self.parts, "{")
+    end
+
+    func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        if index > 0 then
+            array::append(self.parts, ",")
+        end
+        array::append(self.parts, "\"${serialization::field_name(fields, index)}\":")
+    end
+
+    func end_struct(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "}")
+    end
+
+    func begin_array(mut self: @, length: int) -> serialization::SerializationError!void
+        array::append(self.parts, "[")
+    end
+
+    func item(mut self: @, index: int) -> serialization::SerializationError!void
+        if index > 0 then
+            array::append(self.parts, ",")
+        end
+    end
+
+    func end_array(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "]")
+    end
+    func begin_map(mut self: @, length: int) -> serialization::SerializationError!void
+        array::append(self.parts, "{")
+        array::append(self.map_counts, 0)
+    end
+
+    func key(mut self: @, name: string) -> serialization::SerializationError!void
+        let last = array::len(self.map_counts) - 1
+        if self.map_counts[last] > 0 then
+            array::append(self.parts, ",")
+        end
+        self.map_counts[last] = self.map_counts[last] + 1
+        array::append(self.parts, "\"${name}\":")
+    end
+
+    func end_map(mut self: @) -> serialization::SerializationError!void
+        let count = array::pop(self.map_counts) catch 0
+        array::append(self.parts, "}")
+    end
+
+    func write_variant(mut self: @, variants: int, index: int) -> serialization::SerializationError!void
+        array::append(self.parts, "\"${serialization::variant_name(variants, index)}\"")
+    end
+
+    func begin_union(mut self: @, variants: int, index: int) -> serialization::SerializationError!void
+        array::append(self.parts, "{\"${serialization::variant_name(variants, index)}\":")
+    end
+
+    func end_union(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "}")
+    end
+end
+
+func text_of(writer: JsonWriter) -> string
+    return string::join(writer.parts)
+end
+
+error MoneyError
+    Negative
+end
+
+struct Money
+    ~cents: int
+
+    func amount(self: @) -> int
+        return self.cents
+    end
+end
+
+struct MoneyParts
+    units: int
+    cents: int
+
+    schema Api
+        units: "whole"
+    end
+end
+
+func money_to_parts(money: Money) -> MoneyParts
+    return MoneyParts(units = money.amount() // 100, cents = money.amount() % 100)
+end
+
+func parts_to_money(parts: MoneyParts) -> MoneyError!Money
+    if parts.units < 0 or parts.cents < 0 then
+        return MoneyError.Negative
+    end
+    return Money(cents = parts.units * 100 + parts.cents)
+end
+
+func ms_to_seconds(milliseconds: int) -> int
+    return milliseconds // 1000
+end
+
+func seconds_to_ms(seconds: int) -> int
+    return seconds * 1000
+end
+
+schema Api(case = "snake")
+    time::Timestamp: via(time::to_utc_iso_string, time::from_iso_string)
+    Money: via(money_to_parts, parts_to_money)
+end
+
+struct Event
+    title: string
+    startsAt: time::Timestamp
+    endsAt: ?time::Timestamp = null
+    durationMs: int
+    price: Money
+
+    schema Api
+        durationMs: "duration_s", via(ms_to_seconds, seconds_to_ms)
+    end
+end
+
+union Moment
+    at: time::Timestamp
+    never: int
+end
+
+struct Nested
+    events: []Event
+    level: map[string, int] = {}
+end
+
+func json_error(text: string, options: json::DecodeOptions = @()) -> ?json::JsonError
+    let event = json::decode[Event, Api](text, options = options) catch e then
+        return e
+    end
+    return null
+end
+
+func is_invalid_iso_timestamp(text: string) -> bool
+    let parsed = time::from_iso_string(text) catch e then
+        return true
+    end
+    return false
+end
+
+func check_diagnostic() -> void
+    let mut diagnostic = json::Diagnostic()
+    let event = json::decode[Event, Api]("{\n\"title\":\"x\",\"starts_at\":\"1970-01-01T00:00:00Z\",\"duration_s\":1,\"price\":{\"whole\":0}}", diagnostic) catch e then
+        assert(e == json::JsonError.MissingField)
+        assert(diagnostic.path == "price.cents")
+        assert(diagnostic.line == 2)
+        return
+    end
+    assert(false)
+end
+
+func main() -> !void
+    assert(!serialization::is_proxied[Event, Api]())
+    assert(serialization::has_proxies[Event, Api]())
+    assert(!serialization::has_proxies[MoneyParts, Api]())
+    assert(serialization::is_proxied[time::Timestamp, Api]())
+    assert(serialization::is_proxied[?time::Timestamp, Api]())
+    assert(!serialization::is_proxied[Moment, Api]())
+    assert(serialization::has_proxies[Moment, Api]())
+    let event = Event(title = "Launch", startsAt = time::from_unix_ms(86400000), durationMs = 90000, price = Money(cents = 1999))
+    let expected = "{\"title\":\"Launch\",\"starts_at\":\"1970-01-02T00:00:00.000Z\",\"ends_at\":null,\"duration_s\":90,\"price\":{\"whole\":19,\"cents\":99}}"
+    assert((try json::encode[Event, Api](event)) == expected)
+    let mut writer = JsonWriter()
+    try serialization::encode[Event, JsonWriter, Api](event, writer)
+    assert(text_of(writer) == expected)
+
+    let back = try json::decode[Event, Api]("{\"title\":\"Launch\",\"starts_at\":\"1970-01-02T00:00:01.500Z\",\"ends_at\":\"2024-02-29T12:30:00Z\",\"duration_s\":90,\"price\":{\"whole\":5,\"cents\":1}}")
+    assert(time::to_unix_ms(back.startsAt) == 86401500)
+    assert(back.durationMs == 90000)
+    assert(back.price.amount() == 501)
+    if back.endsAt: ends then
+        assert(time::to_utc_iso_string(ends) == "2024-02-29T12:30:00.000Z")
+    else
+        assert(false)
+    end
+    let mut reader = reader_for("{\"title\":\"x\",\"starts_at\":\"1970-01-01T00:00:00.000Z\",\"duration_s\":1,\"price\":{\"whole\":0,\"cents\":5}}")
+    let derived = try serialization::decode[Event, JsonReader, Api](reader)
+    assert(derived.durationMs == 1000 and derived.price.amount() == 5 and derived.endsAt == null)
+
+    assert(json_error("{\"title\":\"x\",\"starts_at\":\"yesterday\",\"duration_s\":1,\"price\":{\"whole\":0,\"cents\":5}}") == json::JsonError.InvalidValue)
+    assert(json_error("{\"title\":\"x\",\"starts_at\":\"1970-01-01T00:00:00Z\",\"duration_s\":1,\"price\":{\"whole\":-1,\"cents\":5}}") == json::JsonError.InvalidValue)
+    assert(json_error("{\"title\":\"x\",\"extra\":{\"a\":1,\"a\":2},\"starts_at\":\"1970-01-01T00:00:00Z\",\"duration_s\":1,\"price\":{\"whole\":0,\"cents\":5}}") == json::JsonError.DuplicateKey)
+    assert(json_error("{\"title\":\"x\",\"extra\":1}", json::DecodeOptions(should_reject_unknown_fields = true)) == json::JsonError.UnknownField)
+    assert(json_error("{\"title\":\"x\",\"starts_at\":\"1970-01-01T00:00:00Z\",\"duration_s\":1,\"price\":{\"whole\":0,\"cents\":5}} x") == json::JsonError.InvalidJson)
+    assert(json_error("{\"title\": 5}") == json::JsonError.TypeMismatch)
+    assert(json_error("{\"title\":\"x\",\"price\":{\"whole\":1}}", json::DecodeOptions(max_depth = 1)) == json::JsonError.DepthExceeded)
+
+    check_diagnostic()
+
+    assert(time::to_unix_ms(try time::from_iso_string("2000-01-01T00:00:00Z")) == 946684800000)
+    assert(time::to_utc_iso_string(try time::from_iso_string("1999-12-31T23:59:59.9Z")) == "1999-12-31T23:59:59.900Z")
+    assert(is_invalid_iso_timestamp("2023-02-29T00:00:00Z") and is_invalid_iso_timestamp("2024-13-01T00:00:00Z") and is_invalid_iso_timestamp("2024-01-01 00:00:00Z") and is_invalid_iso_timestamp("2024-01-01T00:00:00"))
+
+    let nested = Nested(events = [event, back])
+    let nested_text = try json::encode[Nested, Api](nested)
+    let nested_back = try json::decode[Nested, Api](nested_text)
+    assert(array::len(nested_back.events) == 2 and nested_back.events[1].price.amount() == 501)
+    assert((try json::encode[Nested, Api](nested_back)) == nested_text)
+end

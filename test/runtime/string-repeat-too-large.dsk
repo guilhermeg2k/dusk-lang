@@ -1,0 +1,5 @@
+import "std/string"
+
+func main() -> !void
+    let text = try string::repeat("ab", 9223372036854775807)
+end

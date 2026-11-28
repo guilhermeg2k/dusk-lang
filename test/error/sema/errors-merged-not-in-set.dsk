@@ -1,0 +1,24 @@
+error A
+    Foo
+end
+
+error B
+    Bar
+end
+
+error C
+    Baz
+end
+
+error Combined = A | B
+
+func fail_c() -> C!int
+    return C.Baz
+end
+
+func run() -> Combined!int
+    return try fail_c()
+end
+
+func main() -> void
+end

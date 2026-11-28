@@ -1,0 +1,4 @@
+import "std/json"
+func main() -> !void
+    let text = try json::encode({1: "a"})
+end

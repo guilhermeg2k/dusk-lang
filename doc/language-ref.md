@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.16 - Shigeo**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.17 - Fujiwara** (in development). Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -71,6 +71,18 @@ Variables are declared with `let`. The type is inferred from the value, or writt
 ```nim
 let name = "Dusk"
 let count: int = 100
+```
+
+A local variable with a type annotation can also be declared without an initial value and assigned later. The compiler checks that every path reaching a read has assigned it; an immutable `let` can be assigned once per path (and not inside a loop when declared outside it), while `let mut` can be reassigned freely afterward.
+
+```nim
+let user: User
+if is_admin then
+    user = load_admin()
+else
+    user = load_guest()
+end
+io::println(user.name)
 ```
 
 Variables are immutable by default. Add `mut` to allow reassignment.
@@ -242,7 +254,7 @@ let text = string::from_bytes(bytes) catch "not UTF-8"
 - The type is written `buffer`: `let mut data: buffer = try buffer::new(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
 - Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer stops the program with a runtime error.
 - `buffer::from_string(s)` copies a string's UTF-8 bytes into a new buffer. `string::from_bytes(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
-- `==` on buffers compares identity: a buffer is only equal to itself.
+- `==` on buffers compares identity: a buffer is only equal to itself. `buffer::equal(a, b)` compares their bytes.
 
 ### Multiline strings
 
@@ -1102,9 +1114,11 @@ A call through a value passes every argument, in order: default values and named
 
 A struct field that holds a function is called like a method: `button.on_click()`. A struct can't have a field and a method with the same name, so `x.name()` always has one meaning.
 
+A type's method without parentheses (`Type.method` or `mod::Type.method`, on structs, enums and unions) is also a function value with the method's full signature — taking the receiver first when the method has `self: @` or `mut self: @` (`Counter.add` has type `func(mut Counter, int) -> void`), or just its parameters when it has no `self`. File-only `~` methods stay `NotVisible` outside their file. Generic types and methods take their slots from the expected function type (`let push: func(mut Stack[int], int) -> void = Stack.push`) or explicit type arguments (`Stack[int].push`, `Stack[int].map_first[string]`). Bound methods on an instance (`counter.add`) still can't be used as values: use `Type.method` or wrap the call in a lambda.
+
 A generic function becomes a value when a function type fills its slots: `let same: func(int) -> int = id` makes `id[int]`. Without one, `let f = id` is an error. Builtins can't be used as values: call the builtin from a lambda or a function and use that instead.
 
-Functions can't be compared with `==` or `!=`. Interpolating a named function gives `<func add>`, and a lambda gives `<func>`.
+Functions can't be compared with `==` or `!=`. Interpolating a named function gives `<func add>`, a type method gives `<func Counter.get>`, and a lambda gives `<func>`.
 
 ### Function types
 
@@ -1257,7 +1271,7 @@ io::println("${first(["a", "b"])}")     # first[string]
 
 ### Filling slots
 
-A call can name its type arguments explicitly, in declaration order: `first[int]([1, 2])`, `empty[string]()`. When a list is written, it must fill every slot, including error slots; the usual constraints apply, and value arguments must convert to the selected types. For example, `first[float]([1.0, 2.0])` selects `float` directly. Explicit type arguments work on module-qualified calls too (`util::empty[int]()`).
+A call can name its type arguments explicitly, in declaration order: `first[int]([1, 2])`, `empty[string]()`. A list fills the first slots and can stop early: the slots after it are worked out from the arguments and the expected type as usual (`pair[int](1, "a")` picks `int` for the first slot and takes the second from `"a"`), so a call can name the type it wants back while the others come from its arguments, even an anonymous struct's type that has no name to write. The usual constraints apply, and value arguments must convert to the selected types. For example, `first[float]([1.0, 2.0])` selects `float` directly. Explicit type arguments work on module-qualified calls too (`util::empty[int]()`).
 
 Without an explicit type list, a call fills its slots from the arguments. The first argument that mentions a slot fills it, and the others must convert to that type: `both(2.5, 1)` makes `T` a `float`, while `both(1, 2.5)` is an error at `2.5`.
 
@@ -1418,6 +1432,21 @@ let ready: Job[int, none] = @(run = func() -> return 1)
 io::println("${ready.go()}")                                    # 1
 ```
 
+### Schema slots
+
+A slot marked `: schema` holds a [schema](std-ref.md#stdserialization): a named set of outside names for a type, used by `std/serialization` and `std/json`. Only schema names fill it, and a schema can't be used as an ordinary type (`let x: Api` is an error).
+
+```nim
+func load[T, S: schema](text: string) -> json::JsonError!T
+    return try json::decode[T, S](text)
+end
+
+let user = try load[User, Api](text)
+let plain = try load[User](text)
+```
+
+A schema slot that nothing fills means the names as declared, so `json::decode[User](text)` needs no schema. It's the only kind of slot with a default, and an explicit type list may leave trailing schema slots out.
+
 ### Traits
 
 A trait lists methods a type must have. Its methods are signatures without a body, take `self: @` or `mut self: @` first, and `@` stands for the type that fits the trait anywhere in the signature (other parameters, return types, and compound types like `?@`, `[]@`, or `SomeError!@`). `[T: Shape]` lets the generic code call them.
@@ -1494,6 +1523,19 @@ end
 ```
 
 An error is written like an enum variant (`ParseError.Empty`). It can be stored in variables, fields, arrays and nullables (`?ParseError`), passed around, and compared with `==` and `!=`, also against errors from other sets. Interpolating an error gives its number.
+
+An error set can also be declared as the union of existing error sets with `= ... | ...` (no `end`), including module-qualified names and other merged error sets:
+
+```nim
+error AppError =
+    ParseError
+    | fs::FsError
+    | http::HttpError
+
+error ~InternalError = AppError | SecretError
+```
+
+A merged error set contains every variant from its members, flattened and deduplicated. It works anywhere an error set is expected: return types (`AppError!void`), function types (`func(Request) -> AppError!void`), `Task[T, AppError]`, error slots (`[E: error]`), variables, fields and `when`. Inside a `-> AppError!T` function, `try` accepts any call whose errors are a subset of `AppError`, and `return ParseError.Empty` succeeds directly. An error value from a constituent set can be assigned or passed where `AppError` is expected. In an exhaustive `when` on a merged error, each case names its defining set (`fs::FsError.NotFound`, `ParseError.Empty`). A public merged error set can't include a file-only (`~`) error set, and merged error sets can't refer to themselves directly or indirectly.
 
 ### Functions that can fail
 
@@ -1618,7 +1660,7 @@ There are no line numbers yet.
 
 ## 13. Tasks
 
-A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `task::sleep` (from `import "std/task"`) pauses the running task:
+A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `task::sleep` (from `import "std/task"`) pauses the running task for a `time::Duration` (from `import "std/time"`):
 
 ```nim
 func main() -> void
@@ -1632,17 +1674,17 @@ end
 | :------- | :-------- | :---------- |
 | `spawn` | `spawn(body: func() -> E!T) -> Task[T, E]` | Starts a task that runs `body`. |
 | `await` | `await(task: Task[T, E]) -> E!T` | Waits until the task is done and returns its result, or fails with its error. |
-| `task::sleep` | `sleep(ms: int) -> void` | Pauses the running task for `ms` milliseconds; `0` or a negative time (a deadline already passed) just gives other ready tasks a turn. In `std/task`. |
+| `task::sleep` | `sleep(duration: time::Duration) -> void` | Pauses the running task for `duration`, rounded up to whole milliseconds; zero or a negative duration (a deadline already passed) just gives other ready tasks a turn. In `std/task`. |
 
 ### Running order
 
-All tasks run on one thread, one at a time. A task keeps running until it waits (`await` on a task that isn't done, `sleep`) or ends; then the next ready task runs. A new task starts the first time the task that spawned it waits or ends, and ready tasks take turns in the order they became ready. `task::sleep(0)` gives the other ready tasks a turn:
+All tasks run on one thread, one at a time. A task keeps running until it waits (`await` on a task that isn't done, `sleep`) or ends; then the next ready task runs. A new task starts the first time the task that spawned it waits or ends, and ready tasks take turns in the order they became ready. `task::sleep(time::milliseconds(0))` gives the other ready tasks a turn:
 
 ```nim
 func step(name: string) -> void
     for 1..2: i do
         io::println("$name $i")
-        task::sleep(0)
+        task::sleep(time::milliseconds(0))
     end
 end
 
@@ -1659,7 +1701,7 @@ Waiting doesn't change a function's type: `step` above is a plain `-> void` func
 
 ```nim
 func slow_double(x: int) -> int
-    task::sleep(100)
+    task::sleep(time::milliseconds(100))
     return x * 2
 end
 
@@ -1670,7 +1712,7 @@ func main() -> void
 end
 ```
 
-A task that never waits keeps the others from running until it ends: put a `task::sleep(0)` in long loops that should share time.
+A task that never waits keeps the others from running until it ends: put a `task::sleep(time::milliseconds(0))` in long loops that should share time.
 
 Lambdas given to `spawn` share the variables they use with the function around them, as any closure does. Values that tasks share change only while the task changing them runs, but any call that waits lets other tasks run in between:
 
@@ -1680,7 +1722,7 @@ func main() -> void
     let counter = spawn(func()
         for 1..3: _ do
             count = count + 1
-            task::sleep(0)
+            task::sleep(time::milliseconds(0))
         end
     end)
     await(counter)
@@ -1725,7 +1767,7 @@ The program ends when every task is done, so a task spawned near the end still f
 ```nim
 func main() -> void
     spawn(func()
-        task::sleep(50)
+        task::sleep(time::milliseconds(50))
         io::println("background work done")
     end)
     io::println("top level done")
@@ -1758,7 +1800,7 @@ import "std/string": split as split_text,
 
 - Import paths are plain double-quoted string literals without interpolation. Paths use `/` without a `.dsk` extension, and cannot be empty, contain empty segments (`"@/a//b"`), end with `/`, or use `..`.
 - `"@/"` is the project: the folder of the file passed to `dusk`. `"@/ui/button"` is the file `ui/button.dsk` in that folder.
-- `"std/"` is the [standard library](#15-prelude): `"std/array"`, `"std/string"`, `"std/buffer"`, `"std/compression"`, `"std/math"`, `"std/task"`, `"std/io"`, `"std/fs"`, `"std/net"`, `"std/time"`.
+- `"std/"` is the [standard library](std-ref.md): `"std/array"`, `"std/map"`, `"std/string"`, `"std/buffer"`, `"std/compression"`, `"std/math"`, `"std/task"`, `"std/io"`, `"std/fs"`, `"std/net"`, `"std/url"`, `"std/http"`, `"std/time"`, `"std/os"`, `"std/path"`, `"std/random"`, `"std/process"`, `"std/serialization"`, `"std/json"`.
 - Any other first part (`import "jsonc"`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -1850,7 +1892,7 @@ The prelude also declares the error set `ConversionError` (`Invalid`, `Overflow`
 
 ### Errors from the prelude
 
-Functions that can fail return an error union, handled with `try` or `catch` like any failing call. The standard library's error sets are listed in [std-ref.md](std-ref.md#errors).
+Functions that can fail return an error union, handled with `try` or `catch` like any failing call. The standard library's error sets are listed in [std-ref.md](std-ref.md#shared-error-sets).
 
 | Error | When |
 | :---- | :--- |
@@ -1871,7 +1913,7 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 
 ## 17. Known Limitations
 
-These are known gaps in v0.16. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.17. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
 - **Function size**: a function can compile to at most 65,535 bytecode instructions. Going over is a compile error; split the code into smaller functions.
@@ -1883,7 +1925,7 @@ These are known gaps in v0.16. Most are planned in the [roadmap](roadmap.md).
 - **Maps**: keys can't be floats, nullables, arrays, maps, buffers, unions or functions, and struct keys match by identity only. There's no content comparison for maps (`==` is identity).
 - **Prelude names**: a top-level declaration can't use the name of a prelude builtin (`assert`, `copy`, `to_int`, ...). Standard library functions don't have this problem: they're only visible after an import, and `as` renames them.
 - **Modules**: libraries (`import "jsonc"`) and package manifests aren't supported yet, a folder can't be a module, and a module can't re-export what it imports.
-- **Function values**: builtins and methods can't be used as values (`let f = string::len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
+- **Function values**: builtins and bound instance methods can't be used as values (`let f = string::len`, `let f = point.length`): use `Type.method` for unbound methods or wrap the call in a lambda. A lambda can use at most 255 variables from the functions around it.
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
-- **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Traits can't require static methods, methods with their own slots or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
+- **Generics**: traits can't require static methods, methods with their own slots or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.

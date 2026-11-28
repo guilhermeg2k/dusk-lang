@@ -21,10 +21,14 @@ pub const RuntimeError = error{
     ClockOutOfRange,
     TlsAlreadyStarted,
     HttpInvalidCompressionLevel,
+    DurationOutOfRange,
+    SqliteDatabaseInTransaction,
+    SqliteTransactionClosed,
 };
 
 pub const RuntimeErrorReporter = struct {
     pub var stdout_to_flush_first: ?*std.Io.Writer = null;
+    pub var has_reported_error: bool = false;
 
     pub noinline fn arrayOutOfBounds(index: i64, len: usize) RuntimeError {
         @branchHint(.cold);
@@ -44,6 +48,16 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn httpInvalidCompressionLevel(level: i64) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.HttpInvalidCompressionLevel, "http server compression_level must be from 0 to 9: {d}", .{level});
+    }
+
+    pub noinline fn sqliteDatabaseInTransaction() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.SqliteDatabaseInTransaction, "can't use Database directly inside its own transaction; use the Tx argument", .{});
+    }
+
+    pub noinline fn sqliteTransactionClosed() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.SqliteTransactionClosed, "can't use a Tx after its transaction has ended", .{});
     }
 
     pub noinline fn invalidReadSize(max: i64) RuntimeError {
@@ -84,6 +98,11 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn negationOverflow(operand: i64) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.IntegerOverflow, "integer overflow: -({d}) doesn't fit in an int", .{operand});
+    }
+
+    pub noinline fn durationOutOfRange(value: i64, unit: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.DurationOutOfRange, "{d} {s} doesn't fit in a Duration (at most about 292 years)", .{ value, unit });
     }
 
     pub noinline fn floatOutOfIntRange(value: f64) RuntimeError {
@@ -149,6 +168,7 @@ pub const RuntimeErrorReporter = struct {
 
     fn print(comptime fmt: []const u8, args: anytype) void {
         if (@import("builtin").is_test) return;
+        has_reported_error = true;
         if (stdout_to_flush_first) |stdout| {
             stdout.flush() catch {};
         }

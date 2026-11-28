@@ -230,6 +230,7 @@ pub const TypeTable = struct {
             .@"enum" => |e| e.identifier,
             .@"union" => |u| u.identifier,
             .slot => |s| s.identifier,
+            .schema => |s| s.identifier,
             .error_union => |eu| std.fmt.allocPrint(allocator, "{s}!{s}", .{ self.errorSetSyntaxName(eu.error_set), try self.syntaxName(eu.payload, allocator) }),
         };
     }
@@ -250,6 +251,7 @@ pub const TypeTable = struct {
             .unknown => if (t.is_nullable) "null" else "unknown",
             .meta => "Meta Symbol",
             .cell => "cell",
+            .schema => |s| s.identifier,
             .resource => if (t.is_nullable) "nullable resource" else "resource",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
@@ -501,6 +503,11 @@ pub const Struct = struct {
     methods: std.StringHashMap(TypeId),
 };
 
+pub const Schema = struct {
+    identifier: []const u8,
+    index: ?usize,
+};
+
 pub const Func = struct {
     identifier: []const u8,
     uid: usize,
@@ -626,6 +633,7 @@ pub const Type = struct {
         @"union": Union,
         error_union: ErrorUnion,
         slot: Slot,
+        schema: Schema,
     },
 
     is_nullable: bool,

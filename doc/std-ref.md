@@ -1,6 +1,6 @@
 # Standard Library Reference
 
-This is the reference for the standard library of **v0.16 - Shigeo**. The language itself, including the prelude (the builtins every program has without an import), is in [language-ref.md](language-ref.md).
+This is the reference for the standard library of **v0.17 - Fujiwara** (in development). The language itself, including the prelude (the builtins every program has without an import), is in [language-ref.md](language-ref.md).
 
 Each module is imported with `import "std/<name>"` and used through its name (`io::println`, `fs::read`), or with the names it exports listed in the import (`import "std/array": append, len`). See [Modules](language-ref.md#14-modules).
 
@@ -11,6 +11,10 @@ Each module is imported with `import "std/<name>"` and used through its name (`i
 - [std/string](#stdstring)
 - [std/buffer](#stdbuffer)
 - [std/compression](#stdcompression)
+- [std/process](#stdprocess)
+- [std/random](#stdrandom)
+- [std/path](#stdpath)
+- [std/os](#stdos)
 - [std/time](#stdtime)
 - [std/math](#stdmath)
 - [std/task](#stdtask)
@@ -19,7 +23,10 @@ Each module is imported with `import "std/<name>"` and used through its name (`i
 - [std/net](#stdnet)
 - [std/url](#stdurl)
 - [std/http](#stdhttp)
-- [Errors](#errors)
+- [std/serialization](#stdserialization)
+- [std/json](#stdjson)
+- [std/sqlite](#stdsqlite)
+- [Shared error sets](#shared-error-sets)
 - [Known limitations](#known-limitations)
 
 ## std/array
@@ -173,8 +180,14 @@ end
 | `put(mut data: buffer, at: int, text: string)` | `BufferError!int` | Writes the text's bytes into `data` starting at `at` and returns the position after them. |
 | `put_bytes(mut data: buffer, at: int, source: buffer)` | `BufferError!int` | Same, copying another buffer. |
 | `slice(data: buffer, start: int, stop: int)` | `BufferError!buffer` | A new buffer with a copy of bytes `start` to `stop` (not included). |
+| `equal(a: buffer, b: buffer)` | `bool` | Whether both buffers hold the same bytes. |
+| `starts_with(data: buffer, prefix: buffer)` | `bool` | Whether `data` begins with the bytes of `prefix`. |
+| `index_of(data: buffer, needle: buffer, from: int = 0)` | `?int` | Position of the first copy of `needle` at or after `from`, or `null` for no match, an empty needle, or a `from` outside the buffer. |
+| `fill(mut data: buffer, value: byte, start: int, stop: int)` | `BufferError!void` | Sets bytes `start` to `stop` (not included) to `value`. |
+| `copy_within(mut data: buffer, from: int, to: int, count: int)` | `BufferError!void` | Copies `count` bytes from position `from` to position `to` of the same buffer; the two parts may overlap. |
+| `parse_int(data: buffer, start: int, stop: int)` | `BufferError!int` | Reads the decimal number written in bytes `start` to `stop`, without making a string. |
 
-`put` and `put_bytes` take `data` as `mut` and change it in place. When what they write doesn't fit between `at` and the end of the buffer, or `at` is outside it, they fail with `BufferError.OutOfRange` and write nothing; `slice` fails the same way for bounds outside the buffer or `start > stop`. A buffer never grows: size it with `buffer::new(n)` and reuse it, writing frames, lines or messages into it and sending the part used with `slice`:
+`put`, `put_bytes`, `fill` and `copy_within` take `data` as `mut` and change it in place. When what they write doesn't fit between `at` and the end of the buffer, or a position is outside it, they fail with `BufferError.OutOfRange` and write nothing; `slice` and `parse_int` fail the same way for bounds outside the buffer or `start > stop`. A buffer never grows: size it with `buffer::new(n)` and reuse it, writing frames, lines or messages into it and sending the part used with `slice`. Numbers go in as text through interpolation:
 
 ```nim
 let mut frame = try buffer::new(4096)
@@ -183,7 +196,45 @@ used = try buffer::put(frame, used, "$done%\n")
 try out.write_bytes(try buffer::slice(frame, 0, used))
 ```
 
-The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`). See [Buffers](language-ref.md#buffers).
+`==` on buffers checks whether both sides are the same buffer; `buffer::equal` compares their bytes. `copy_within` moves bytes inside one buffer, for example to drop the part of a reused buffer that was already handled:
+
+```nim
+try buffer::copy_within(pending, handled, 0, used - handled)
+used = used - handled
+```
+
+`parse_int` takes an optional `-` followed by digits, nothing else (no `+`, spaces or `_`). Other text fails with `InvalidNumber`, and a number outside the `int` range with `ValueOutOfRange`.
+
+### Binary numbers
+
+File formats and network protocols store numbers in a fixed number of bytes rather than as text. `read_*` reads one at a position, and `write_*` writes one and returns the position after it, so writes chain:
+
+| Type | Bytes | Values | Read | Write |
+| :--- | :---- | :----- | :--- | :---- |
+| `u8` / `i8` | 1 | `0..255` / `-128..127` | `read_u8(data, at)`, `read_i8` | `write_u8(data, at, value)`, `write_i8` |
+| `u16` / `i16` | 2 | `0..65535` / `-32768..32767` | `read_u16(data, at, order)`, `read_i16` | `write_u16(data, at, value, order)`, `write_i16` |
+| `u32` / `i32` | 4 | `0..4294967295` / `-2147483648..2147483647` | `read_u32`, `read_i32` | `write_u32`, `write_i32` |
+| `i64` | 8 | any `int` | `read_i64` | `write_i64` |
+| `f32` / `f64` | 4 / 8 | `float` | `read_f32`, `read_f64` (return `float`) | `write_f32`, `write_f64` (take `float`) |
+
+Every number wider than one byte takes a `buffer::Order`, the order of its bytes: `Little` puts the smallest byte first (most file formats, like WAV and ZIP), and `Big` puts the largest first (network protocols, PNG). 513 as a `u16` is the bytes `1, 2` in `Little` and `2, 1` in `Big`.
+
+```nim
+let data = try fs::read_bytes("photo.png")
+let width = try buffer::read_u32(data, 16, buffer::Order.Big)
+let height = try buffer::read_u32(data, 20, buffer::Order.Big)
+
+let body = buffer::from_string("hello")
+let mut message = try buffer::new(4 + buffer::len(body))
+let at = try buffer::write_u32(message, 0, buffer::len(body), buffer::Order.Big)
+try buffer::put_bytes(message, at, body)
+```
+
+- A read or write that doesn't fit between `at` and the end of the buffer fails with `OutOfRange`.
+- A value outside its type's range (`300` as a `u8`, `-1` as a `u16`) fails with `ValueOutOfRange` and writes nothing. So does a `float` too large for an `f32`; other values are rounded to the nearest `f32`, and infinities and NaN are kept.
+- There is no `u64`, since an `int` can't hold values above `9223372036854775807`; read 8 unsigned bytes with `read_i64` when the value is known to be smaller.
+
+The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`, `ValueOutOfRange`, `InvalidNumber`). See [Buffers](language-ref.md#buffers).
 
 ## std/compression
 
@@ -249,58 +300,350 @@ A `Writer` has `write(text: string)`, `write_bytes(data: buffer)`, `flush()` (al
 
 The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`, `InvalidLevel`, `Finished`, `Other`). It uses a bundled zlib-ng.
 
-## std/time
+## std/process
 
-Clocks and timestamp values. Import with `import "std/time"`.
+Runs other programs. `run` starts one, collects its output and waits for it to finish; `start` gives back a `Child` to talk to while it runs. Waiting parks only the running task: other tasks, timers and I/O keep going (see [Tasks](language-ref.md#13-tasks)).
 
-| Function | Returns | Description |
-| :------- | :------ | :---------- |
-| `now()` | `Timestamp` | A timestamp from the current wall-clock reading. |
-| `from_unix_ms(milliseconds: int)` | `Timestamp` | A timestamp from any `int` epoch-millisecond value, including negative values. |
-| `now_ms()` | `int` | Milliseconds since 1970-01-01T00:00:00Z (the Unix epoch), matching filesystem timestamp units. |
-| `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
-
-`now_ms` is wall-clock time: system clock adjustments can move it forward or backward. It is independent of the local time zone. Fractions are rounded down to milliseconds, including before the epoch.
-
-`monotonic_ns` ignores jumps in the system wall clock. Consecutive readings may be equal; nanosecond units do not guarantee nanosecond resolution. Elapsed time includes waiting for tasks or I/O, rather than only time spent executing. Inclusion of time while the whole system is suspended is platform-dependent. Use differences within a program run; do not persist monotonic readings as timestamps or compare them across runs or machines.
-
-The raw clock calls return immediately, without allocating or yielding to another task. Neither needs `try`. A platform clock failure or a reading outside `int` range is a runtime error. Waiting remains `task::sleep` in `std/task`.
-
-```dusk
-import "std/time"
-import "std/array"
+```nim
+import "std/process"
 import "std/io"
 
-func main() -> void
-    let mut numbers = [3, 1, 2]
-    let start = time::monotonic_ns()
-    array::sort(numbers)
-    let elapsed_ns = time::monotonic_ns() - start
-    let elapsed_ms = to_float(elapsed_ns) / 1000000.0
-    io::println("Sorted in $elapsed_ms ms")
+func main() -> !void
+    let result = try process::run(["git", "--version"])
+    io::print(try result.stdout_text())
+    assert(result.is_success())
 end
 ```
 
-A `Timestamp` stores epoch milliseconds in a private field and has no mutating methods. Create one with `now` or `from_unix_ms`. It exposes:
+Functions that can fail return an error union with the module's error set `ProcessError`:
+
+| Variant | When |
+| :------ | :--- |
+| `InvalidArgument` | An empty argument list or program name, a zero byte in an argument, path or variable, a bad variable name, or a negative `timeout_ms` (other than `-1`) or `max_output` |
+| `NotFound` | The program isn't on `PATH`, the path doesn't exist, or `cwd` doesn't exist |
+| `PermissionDenied` | The program exists but can't be run |
+| `InvalidExecutable` | The file can't be run as a program (on Windows, a `.bat` or `.cmd` file: run it through its interpreter) |
+| `ResourceLimit` | The system won't start another process |
+| `TimedOut` | `timeout_ms` ran out |
+| `OutputTooLarge` | `run` received more than `max_output` bytes |
+| `InvalidUtf8` | An argument, path or variable isn't valid UTF-8, or `stdout_text` / `stderr_text` on output that isn't text |
+| `Unsupported` | Not available here (a program embedding Dusk without a host, or inheriting an output that the embedding program redirected) |
+| `Busy` | Another task is already waiting for the child, or `close` while it's still running |
+| `Closed` | The child was closed |
+| `NotPiped` | `stdin()`, `stdout()` or `stderr()` on a stream that wasn't set to `Stdio.Pipe` |
+| `Other` | Any other failure |
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `run(args, cwd = null, env = null, timeout_ms = -1, max_output = 16777216)` | `ProcessError!Result` | Runs a program and waits for it, collecting its stdout and stderr. |
+| `start(args, cwd = null, env = null, stdin_mode = Stdio.Ignore, stdout_mode = Stdio.Inherit, stderr_mode = Stdio.Inherit)` | `ProcessError!Child` | Starts a program and returns right away. |
+
+**Arguments.** `args[0]` is the program and the rest are passed exactly as written: spaces, quotes and empty strings stay as they are. Nothing goes through a shell, so `*`, `>` and `|` are plain characters. A program name with a `/` (or on Windows a `\` or `:`) is a path, relative to the child's folder; a bare name is looked up in the folders of `PATH`, from the program's own environment even when `env` gives the child a different one. Empty or relative `PATH` entries are relative to the child's folder. On Windows the lookup also tries the `.exe` and `.com` endings.
+
+**Folder and environment.** `cwd` is the child's folder; a relative one is relative to the program's current folder. `env = null` gives the child the program's environment (the same one `os::env` reads); a map replaces it entirely (on Windows the system may add a few variables it needs). Names can't be empty or contain `=`. The child's stdin is empty: it reads the end of input right away.
+
+**Results.** `Result` holds `stdout: buffer`, `stderr: buffer` and `termination: Termination`, a union of `Exited: int` (the exit code) and `Signaled: int` (the signal number, which differs between systems). A program that exits with a code other than 0 isn't an error: check `is_success()`, true only for `Exited = 0`. `stdout_text()` and `stderr_text()` give the output as a string, failing with `InvalidUtf8` when it isn't text; the buffers stay available either way.
+
+**Limits.** `max_output` caps the bytes of stdout and stderr together (16 MiB by default; `0` allows no output at all). Going over kills the child and fails with `OutputTooLarge`: the output is never cut short quietly. `timeout_ms = -1` waits forever and `0` fails at once. The time covers starting the program, reading its output and its exit, so it still runs while a child that closed its output keeps going, or while a program it started keeps the output open. When it runs out, the child is killed and `run` fails with `TimedOut` once the child is really gone, which can take a moment past the deadline. Programs the child started itself aren't killed.
+
+### Children
+
+`start` takes the same arguments, folder and environment as `run`. Each standard stream is `Stdio.Inherit` (shared with the program), `Stdio.Ignore` or `Stdio.Pipe` (read or written through the `Child`). Before a child that inherits stdout or stderr starts, the program's own pending output is written, so the two don't mix out of order. When a child inherits stdin, the program stops reading stdin ahead (unless a task is reading it right then), so input that arrives while the child runs goes to the child. Input the program already received stays with the program, and its next read of stdin picks up again.
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `unix_ms()` | `int` | The stored epoch milliseconds, unchanged. |
-| `to_string()` | `string` | ISO 8601-style UTC text with exactly three fractional millisecond digits. |
+| `wait(timeout_ms = -1)` | `ProcessError!Termination` | Waits for the child to exit. Calling it again gives the same answer. Running out of time fails with `TimedOut` and leaves the child running. |
+| `kill()` | `ProcessError!void` | Asks the system to stop the child, without waiting; `wait` tells when it's gone. Does nothing once it has exited. |
+| `stdin()` | `ProcessError!PipeWriter` | Writes to the child's stdin. |
+| `stdout()` / `stderr()` | `ProcessError!PipeReader` | Reads the child's output. |
+| `close()` | `ProcessError!void` | Frees the child once it has exited, closing its pipes and dropping unread output. Fails with `Busy` while it runs; closing again does nothing. |
 
-Formatting works for every `int` timestamp, without `try` or a date-range error. Years `0000–9999` use four digits. Larger years have a leading `+` and all digits; negative years have a leading `-` and at least four digits. The Gregorian calendar extends backward through year zero. Unix milliseconds do not represent leap seconds. Expanded-year output is not strict RFC 3339.
+Only one task at a time can wait for a child. Copies of a `Child` (including `copy`) all refer to the same process, so closing one closes them all.
 
-```dusk
-let epoch = time::from_unix_ms(0)
-io::println(epoch.to_string())
-let before_epoch = time::from_unix_ms(-1)
-io::println(before_epoch.to_string())
-let modified = time::from_unix_ms(info.modified_ms)
+`PipeReader` has `read_line(max = -1, timeout_ms = -1)`, `read_bytes(max, timeout_ms = -1)`, `read_exact(count, timeout_ms = -1)`, `read_all(timeout_ms = -1)`, `read_all_bytes(timeout_ms = -1)` and `close()`; `PipeWriter` has `write(text)`, `write_bytes(data)`, `flush()` and `close()`. They fail with `io::IoError`, read and write like the other streams (see [std/io](#stdio)), and fit the `io::Reader` and `io::Writer` traits, so `io::copy` works with them.
+
+Closing the stdin writer sends the end of input; closing a pipe doesn't stop the child, and output the child wrote before exiting can still be read. Read stdout and stderr in their own tasks while waiting (a child blocks once a pipe it writes to is full), or let `run` collect them.
+
+**Lifetime.** The program doesn't end while a child it started is still running, even if nothing waits for it: like a task, a child runs to the end. Once all of the program's tasks have finished, nothing can use the children's pipes anymore, so they're closed: a child waiting for input sees the end of it, and one writing gets a broken pipe. When the program stops on an error instead, its remaining children are killed. Close children when done with them. A `Child` the program no longer reaches (no variable, field or copy holds it or one of its pipes) is cleaned up after a garbage collection finds it: one that has exited is freed, and one still running has its pipes closed, so it sees the end of its input, and is freed when it exits.
+
+## std/random
+
+Random numbers and bytes, plus seeded generators that repeat the same sequence. Functions that can fail return an error union with the module's error set `RandomError`:
+
+| Variant | When |
+| :------ | :--- |
+| `InvalidBounds` | `integer` with `min > max` |
+| `NegativeSize` | `bytes` or `secure_bytes` with a negative size |
+| `EntropyUnavailable` | The system's secure random source failed |
+| `Unsupported` | No random source here (a program embedding Dusk without a host) |
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `integer(min, max)` | `RandomError!int` | A random `int` from `min` to `max`, both included. Any range works, up to the whole `int` range. |
+| `decimal()` | `RandomError!float` | A random `float` from `0.0` (included) to `1.0` (not included). |
+| `bytes(size)` | `RandomError!buffer` | A new buffer of `size` random bytes. |
+| `secure_bytes(size)` | `RandomError!buffer` | A new buffer of `size` bytes from the system's secure random source. Use it for keys, tokens and anything secret. |
+| `seeded(seed)` | `Generator` | A generator that gives the same sequence for the same seed. |
+
+`integer`, `decimal` and `bytes` share one sequence per program, started from the system's random source on first use; tasks draw from it in the order they run. They're fast but not secure: for secrets, use `secure_bytes`, which reads the system source on every call, never falls back to anything weaker, and fails with `EntropyUnavailable` instead of returning a partial buffer. Equal bounds (`integer(5, 5)`) and zero sizes don't use the sequence at all, and neither do calls that fail.
+
+A `Generator` holds its own state, so it needs `let mut`, and draws from it don't touch the shared sequence:
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `integer(min, max)` | `RandomError!int` | Like `random::integer`. |
+| `decimal()` | `float` | Like `random::decimal`, but can't fail. |
+| `bytes(size)` | `RandomError!buffer` | Like `random::bytes`. |
+
+Any `int` is a valid seed. The same seed and the same calls (with the same arguments, in the same order) give the same results; a different Dusk version may give different ones. Two `bytes(4)` calls don't have to match one `bytes(8)`. Generators are structs: two variables holding the same generator share its state, and `copy(rng)` makes one that continues on its own from the same point.
+
+```nim
+let die = try random::integer(1, 6)
+let mut rng = random::seeded(42)
+let mut replay = copy(rng)
+assert(try rng.integer(-10, 10) == try replay.integer(-10, 10))
+let token = try random::secure_bytes(32)
 ```
 
-The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC; local time zone settings do not affect the output. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
+## std/path
 
-The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior. Parsing, date arithmetic and timestamp comparison methods are not provided. Like other structs, `==` compares identity; use `unix_ms()` values when chronological equality or ordering is needed.
+Works with paths as text: joining, splitting and cleaning them up. Nothing here touches the disk: these functions don't check that a path exists, don't follow symbolic links and don't read the current folder. Paths use the system's rules: `/` on Linux and macOS; on Windows, drive letters and network shares with `\` or `/`.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `join(parts)` | `string` | Joins the parts with the system's separator, without doubling one where two parts meet. `join([])` is `""`. |
+| `normalize(text)` | `string` | Removes repeated separators, `.` parts, and `..` parts with a folder before them. An empty result is `"."`. |
+| `basename(text)` | `string` | The last part (`"logo.png"` for `"assets/logo.png"`), ignoring a separator at the end. `""` for an empty path or a root. |
+| `dirname(text)` | `?string` | Everything before the last part, or `null` for an empty path, a bare name or a root. |
+| `extension(text)` | `string` | The last part's extension with its dot (`".gz"` for `"a.tar.gz"`), or `""`. |
+| `stem(text)` | `string` | The last part without its extension (`"a.tar"`). |
+| `is_absolute(text)` | `bool` | Whether the path starts from a root. |
+| `resolve(base, text)` | `PathError!string` | `text` taken from the absolute folder `base`, normalized. An absolute `text` stays as it is (normalized). |
+| `relative(from, to)` | `PathError!string` | The path that leads from the absolute folder `from` to the absolute path `to`; `"."` when they're the same. |
+
+`resolve` and `relative` fail with `PathError.NotAbsolute` when a path that must be absolute isn't; there's no implicit current folder, so pass `os::cwd()` when that's what you mean.
+
+- `join` doesn't clean up: `join(["a", "/b"])` is `"a/b"` and `.` or `..` parts stay. `normalize` and `resolve` clean up.
+- `normalize` keeps the `..` parts a relative path starts with (`"a/../../b"` is `"../b"`), stops `..` at the root of an absolute path (`"/../etc"` is `"/etc"`), and drops a separator at the end unless the path is a root.
+- A name that only starts with a dot has no extension: `extension(".env")` is `""` and its stem is `".env"`. `extension(".env.local")` is `".local"` and `extension("name.")` is `"."`. `.` and `..` have none.
+- `basename`, `dirname`, `extension` and `stem` return the text as written, without normalizing it.
+
+On Windows, `is_absolute` is true for a drive with a root (`C:\x`), a network share or a device path; `\x` (no drive) and `C:x` (no root) aren't absolute. `resolve` can complete `\x` from a base with a drive, and fails with `NotAbsolute` when the result still has no root. Normalized paths use `\` and uppercase drive letters. `relative` between different drives or shares returns the destination itself. Names compare by the system's path rules, not by asking the disk.
+
+These functions don't check that a name is allowed on the disk, and don't expand `~`, variables, wildcards or URL escapes. `..` is handled as text, so through a symbolic link it can lead somewhere else than on the disk, and resolving against a folder doesn't guarantee the result stays inside it.
+
+```nim
+let base = try os::cwd()
+let file = try path::resolve(base, "assets/./images/../logo.png")
+assert(path::basename(file) == "logo.png")
+assert(path::stem(file) == "logo")
+assert(path::extension(file) == ".png")
+assert(try path::relative(base, file) == path::join(["assets", "logo.png"]))
+```
+
+## std/os
+
+The program's surroundings: its arguments, environment, current folder and exit code, and signals asking it to stop. Functions that can fail return an error union with the module's error set `OsError`:
+
+| Variant | When |
+| :------ | :--- |
+| `InvalidArgument` | `env` with an empty name or one containing `=`, or `set_exit_code` outside `0..255` |
+| `InvalidUtf8` | An argument, environment value or the current folder isn't valid UTF-8 |
+| `NotFound` | The current folder no longer exists |
+| `Unsupported` | Not available on this system (`Signal.Terminate` on Windows, or a program embedding Dusk without a host) |
+| `Busy` | Another task is already waiting on the signal stream |
+| `Closed` | The signal stream was closed |
+| `Other` | Any other failure |
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `platform()` | `Platform` | The system the program runs on: `Linux`, `MacOS`, `Windows` or `Other`. |
+| `args()` | `OsError![]string` | The program's arguments. |
+| `env(name)` | `OsError!?string` | An environment variable's value, or `null` when it isn't set (a variable set to nothing is `""`). |
+| `cwd()` | `OsError!string` | The current folder, as an absolute path. |
+| `set_exit_code(code)` | `OsError!void` | The code the program exits with when it ends normally. The program keeps running. |
+| `watch_signal(signal)` | `OsError!SignalStream` | Starts listening for a signal. |
+
+**Arguments and environment.** For `dusk app.dsk first --flag`, `args()` is `["first", "--flag"]`: everything after the script belongs to the program, `--version` included. The environment is the one the program started with; names follow the system's rules for case. This module doesn't change variables or the current folder. The current folder is the one the program was started from, not necessarily the script's folder.
+
+**Exit code.** The exit code starts at `0`. `set_exit_code` takes `0` to `255`; a bad code fails and keeps the previous one. The last successful call wins, from any task. Setting it doesn't end anything: the program still ends when all its tasks are done, and output is written out first. A runtime error or a task error nobody handled still exits with a failure, whatever the code.
+
+When a program embeds Dusk, it passes the arguments and environment in (both empty by default) and reads the code from `Dusk.exit_code` afterwards.
+
+### Signals
+
+`Signal` is `Interrupt` (usually Ctrl+C), `Terminate` (a request to stop, like the one a service manager sends) or `WindowChange` (the terminal window was resized; see [Terminal programs](#terminal-programs)). All three work on Linux and macOS; on Windows, `Interrupt` and `WindowChange` come from the console and `Terminate` fails with `Unsupported`. Ctrl+C doesn't send `Interrupt` while the terminal is in raw mode. `WindowChange` never stops a program, whether it listens or not.
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `wait()` | `OsError!void` | Waits for the signal (or returns at once if it already arrived). Other tasks keep running. |
+| `close()` | `void` | Stops listening. Closing again does nothing. |
+
+While a program listens for a signal, the signal no longer stops it: it's delivered to the stream instead, and the program decides what to do (finish its work, close connections) and ends on its own. Closing the last stream for a signal brings back the default, so the next one stops the program.
+
+- Listen before starting the work, so a signal that arrives early isn't missed.
+- A stream remembers at most one signal that arrived while nobody was waiting; several in a row count as one. Each stream gets its own copy.
+- Only one task at a time can wait on a stream. Closing it wakes that task with `Closed`, and waiting on a closed stream fails with `Closed`.
+- A stream nobody waits on doesn't keep the program running; a task waiting on one does. Streams still open when the program ends are closed. A `SignalStream` the program no longer reaches is closed after a garbage collection finds it.
+- Signals don't cancel tasks or run cleanup on their own: the task that waits does the cleanup.
+
+```nim
+let shutdown = try os::watch_signal(os::Signal.Interrupt)
+io::println("Press Ctrl+C to stop.")
+try shutdown.wait()
+shutdown.close()
+io::println("Shutting down...")
+```
+
+## std/time
+
+Clocks, timestamps, durations and time zones. Functions that can fail return an error union with the module's error set `TimeError`:
+
+| Variant | When |
+| :------ | :--- |
+| `InvalidTimestamp` | `from_iso_string` with text that isn't a valid timestamp |
+| `Overflow` | A result outside the range a `Timestamp` or `Duration` can hold |
+| `PrecisionLoss` | Adding a duration with a fraction of a millisecond to a timestamp, or writing an offset with seconds in it as ISO text or with the `Z` token |
+| `UnknownTimeZone` | `load_timezone` with a name the bundled database doesn't have |
+| `InvalidOffset` | `fixed_timezone` with an offset of a day or more |
+| `LocalTimeUnavailable` | `local_timezone` can't find or read the system's zone |
+| `InvalidFormat` | `format` with a pattern it doesn't understand |
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `now()` | `Timestamp` | The current date and time. |
+| `from_unix_ms(milliseconds)` | `Timestamp` | The timestamp `milliseconds` after 1970-01-01T00:00:00Z (negative for earlier). Any `int` works. |
+| `to_unix_ms(timestamp)` | `int` | The other way around. |
+| `from_iso_string(text)` | `TimeError!Timestamp` | Reads ISO text such as `2024-07-15T09:30:00Z` (below). |
+| `to_iso_string(timestamp, zone = utc_timezone())` | `TimeError!string` | Writes ISO text in a time zone, UTC by default. |
+| `to_utc_iso_string(timestamp)` | `string` | Writes ISO text in UTC. Never fails. |
+| `nanoseconds(value)` | `Duration` | A duration of `value` nanoseconds (negative is fine). |
+| `microseconds(value)`, `milliseconds(value)`, `seconds(value)`, `minutes(value)`, `hours(value)` | `Duration` | A duration of `value` of that unit. |
+| `instant()` | `Instant` | A reading of the monotonic clock, for measuring how long something takes. |
+| `utc_timezone()` | `TimeZone` | UTC. |
+| `fixed_timezone(offset_seconds)` | `TimeError!TimeZone` | A zone always `offset_seconds` ahead of UTC (behind when negative), less than a day either way. |
+| `load_timezone(name)` | `TimeError!TimeZone` | A named zone such as `"America/Sao_Paulo"`. |
+| `local_timezone()` | `TimeError!TimeZone` | The system's zone. |
+| `now_ms()` | `int` | The current time as Unix milliseconds, without making a `Timestamp`. |
+| `monotonic_ns()` | `int` | The monotonic clock as nanoseconds, without making an `Instant`. |
+
+### Timestamps
+
+A `Timestamp` is a moment, stored as milliseconds since 1970-01-01T00:00:00Z. It doesn't change: its methods return new values. `==` on two timestamps compares identity, like any struct, so compare moments with these methods:
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `is_equal(other)` / `is_before(other)` / `is_after(other)` | `bool` | Compares two moments. |
+| `add(duration)` / `subtract(duration)` | `TimeError!Timestamp` | The moment `duration` later or earlier. The duration must be whole milliseconds (`PrecisionLoss` otherwise). |
+| `since(other)` | `TimeError!Duration` | How long after `other` this moment is (negative when before). `Overflow` when that's more than a `Duration` holds. |
+| `format(pattern, zone = utc_timezone())` | `TimeError!string` | Writes the date and time with a pattern (see [Custom formats](#custom-formats)). |
+
+Durations measure elapsed time, so there's no adding "a month": months and years aren't a fixed length.
+
+**ISO text.** `to_iso_string` writes `2024-07-15T09:30:00.000Z`: always three digits of milliseconds, and `Z` for UTC or the offset (`-03:00`) in another zone. The date and time are the ones on the clock in that zone, so the same moment reads `2024-07-14T20:00:00.000-04:00` in New York. Years 0000 to 9999 have four digits; later years start with `+` (`+10000-01-01T00:00:00.000Z`) and years before 1 with `-`. The calendar is the Gregorian one, extended back past year 1 through year 0, and there are no leap seconds. Every `int` timestamp can be written, and what `to_iso_string` writes always reads back as the same moment. An offset that isn't a whole number of minutes can't be written as ISO text: `to_iso_string` fails with `PrecisionLoss` instead of rounding (`to_utc_iso_string` always works).
+
+`from_iso_string` reads the same form: a date, an uppercase `T`, a time, and then `Z` or an offset like `+05:30`, with nothing before or after. Seconds can have a fraction of one or more digits; past milliseconds, digits are checked and dropped. It rejects leap seconds, `24:00`, a date or time on its own, week and ordinal dates, and ranges. The offset only places the moment and isn't kept: `1970-01-01T05:30:00+05:30` is the same timestamp as `from_unix_ms(0)`.
+
+`to_utc_iso_string` with `from_iso_string`, and `to_unix_ms` with `from_unix_ms`, are pairs of one-argument functions, so a schema's `via` can store timestamps as text or as numbers: `via(time::to_utc_iso_string, time::from_iso_string)` (see [std/serialization](#stdserialization)). `to_iso_string` doesn't fit there, since it takes a zone and can fail.
+
+```nim
+let epoch = time::from_unix_ms(0)
+io::println(try time::to_iso_string(epoch))                       # 1970-01-01T00:00:00.000Z
+io::println(try time::to_iso_string(time::from_unix_ms(-1)))      # 1969-12-31T23:59:59.999Z
+let later = try epoch.add(time::seconds(2))
+assert(later.is_after(epoch))
+assert((try later.since(epoch)).milliseconds() == 2000)
+```
+
+### Durations
+
+A `Duration` is a length of time in nanoseconds, positive or negative, up to about 292 years either way. A factory given more (`time::hours(2562048)`) stops the program with a runtime error, since no correct program asks for that; adding durations is checked and fails with `Overflow` instead.
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `nanoseconds()` | `int` | The exact length. |
+| `microseconds()` / `milliseconds()` | `int` | Whole units, dropping the rest (toward zero: `-1.5` ms is `-1`). |
+| `seconds()` | `float` | Seconds with a fraction (very long durations lose some precision). |
+| `add(other)` / `subtract(other)` | `TimeError!Duration` | The sum or difference. |
+| `is_equal(other)` / `is_less_than(other)` / `is_greater_than(other)` | `bool` | Compares two lengths. |
+
+`task::sleep` takes a `Duration`: `task::sleep(time::milliseconds(250))`.
+
+### Measuring elapsed time
+
+`now()` follows the system clock, which can jump when someone sets it or it syncs. To measure how long something takes, use an `Instant`, a reading of the monotonic clock, which only moves forward:
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `elapsed()` | `TimeError!Duration` | How long ago the instant was taken. |
+| `since(other)` | `TimeError!Duration` | How long after `other` this instant was taken (negative when before). |
+
+```nim
+let started = time::instant()
+work()
+io::println("took ${(try started.elapsed()).seconds()} s")
+```
+
+Two readings in a row can be equal, and nanosecond units don't promise nanosecond precision. Elapsed time includes time spent waiting (for other tasks or I/O); whether it includes time the computer sleeps depends on the system. An instant only means something within one run of the program: don't store it or compare it across runs or machines. `now_ms()` and `monotonic_ns()` read the same two clocks as plain `int`s. Reading a clock never fails or waits; if the system clock itself fails, that's a runtime error.
+
+### Time zones
+
+A `TimeZone` turns a moment into the date and time on a clock somewhere. Dusk carries its own copy of the IANA time zone database (release 2026f, 597 names and aliases), so named zones work the same everywhere, with nothing to install and no network.
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `name()` | `string` | The zone's name: the name it was loaded with (an alias keeps its own name), `UTC`, `UTC+05:30` for a fixed offset, or `Local` for system rules without a name. |
+| `offset_seconds(timestamp)` | `int` | How far ahead of UTC the zone's clocks are at that moment, in seconds (negative when behind). |
+
+- `load_timezone` takes the exact, case-sensitive name (`America/New_York`, `Asia/Kathmandu`). It doesn't take file paths or offsets like `+03:00`; use `fixed_timezone` for an offset.
+- A named zone follows its full history of changes (summer time, governments moving the offset) and its current rules into the future. Rules can change after this release of the database. Two zones with the same offset today can differ on other dates.
+- A fixed zone never changes. `fixed_timezone(0)` is UTC; others are named like `UTC+05:30` and `UTC-00:00:30`.
+- Summer time can skip or repeat an hour on the clock; ISO text tells repeated times apart by their offset.
+
+```nim
+let new_york = try time::load_timezone("America/New_York")
+let summer = try time::from_iso_string("2024-07-15T00:00:00Z")
+assert(new_york.offset_seconds(summer) == -14400)
+assert((try time::to_iso_string(summer, new_york)) == "2024-07-14T20:00:00.000-04:00")
+assert((try time::fixed_timezone(19800)).name() == "UTC+05:30")
+```
+
+**The system's zone.** `local_timezone()` finds the zone the system is set to. The first time, it reads the settings in the background while other tasks run; after it succeeds, later calls return the same zone at once, even if the settings change. If it fails, it returns `LocalTimeUnavailable` (never UTC as a guess), and a later call tries again. Nothing else in the module uses the system's zone: without a zone argument, everything is UTC.
+
+When the `TZ` environment variable is set, it decides, on every system:
+
+- empty: UTC;
+- a zone name (`America/New_York`, or `:America/New_York`): that zone from the bundled database;
+- an absolute path to a zone file (optionally after `:`): the rules in that file, named `Local`;
+- a rule string such as `STD-5:30` or one with summer time rules: those rules, named `Local`. In these strings the sign is reversed: `-5:30` means 5 hours 30 minutes ahead of UTC;
+- anything else, or anything after `:` that isn't a name or a path: `LocalTimeUnavailable`, without trying other sources.
+
+Without `TZ`, Linux and macOS read `/etc/localtime`: when it links to a known zone, that zone is used from the bundled database; otherwise its rules are read and named `Local`. Windows reads the system's zone setting and maps it to a named zone. A zone file must be a regular file of at most 4 MiB holding complete, supported rules; files with leap seconds, version 4 files and broken data aren't accepted. On Windows, customized settings (such as automatic summer time turned off) aren't supported.
+
+### Custom formats
+
+`timestamp.format(pattern, zone = utc_timezone())` writes the date and time in a zone, following a pattern:
+
+| Token | Writes | Example |
+| :---- | :----- | :------ |
+| `YYYY` | Year, at least four digits (signs like ISO text) | `2026` |
+| `MM` | Month | `11` |
+| `DD` | Day | `18` |
+| `HH` | Hour, `00` to `23` | `14` |
+| `mm` | Minute | `30` |
+| `ss` | Second | `45` |
+| `SSS` | Millisecond | `123` |
+| `Z` | Offset: `Z` for UTC, otherwise `+HH:MM` or `-HH:MM` | `-03:00` |
+
+Tokens are case-sensitive and can touch (`YYYYMMDD`). Every run of the same letter must be a whole token, so `MMMM`, `YYYYY`, `SS` and `ZZ` are errors, and so is any other letter outside brackets; digits, punctuation, spaces and other characters are written as they are. Text in brackets is written as is (`[at]`, `[Z]` for a literal Z); `[[` and `]]` write `[` and `]`. An unclosed bracket or a lone `]` is `InvalidFormat`. `Z` fails with `PrecisionLoss` for an offset with seconds, which old local times have: midnight UTC on 1800-01-01 is `00:09:21` in `Europe/Paris`. Without `Z`, those times are written exactly.
+
+```nim
+let timestamp = try time::from_iso_string("2026-11-18T14:30:45.123Z")
+assert((try timestamp.format("DD/MM/YYYY")) == "18/11/2026")
+assert((try timestamp.format("[Created on] DD/MM/YYYY [at] HH:mm")) == "Created on 18/11/2026 at 14:30")
+assert((try timestamp.format("[[YYYY]]")) == "[2026]")
+assert((try timestamp.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ")) == (try time::to_iso_string(timestamp)))
+```
 
 ## std/math
 
@@ -327,7 +670,7 @@ The module declares the error set `MathError` (`InvalidBounds`, `Empty`).
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `sleep(ms: int)` | `void` | Pauses the running task for `ms` milliseconds; `0` or a negative time (a deadline already passed) just gives other ready tasks a turn (see [Tasks](language-ref.md#13-tasks)). |
+| `sleep(duration: time::Duration)` | `void` | Pauses the running task for `duration`, rounded up to whole milliseconds; zero or a negative duration (a deadline already passed) just gives other ready tasks a turn (see [Tasks](language-ref.md#13-tasks)). |
 
 ## std/io
 
@@ -372,6 +715,7 @@ Interpolation formats primitives, arrays and nullables as their values. It forma
 | `read_all_bytes(max_bytes: int = -1, timeout_ms: int = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes (fails with `TooLarge` past `max_bytes`). |
 | `set_read_timeout(timeout_ms: int)` | `void` | Sets the default timeout in milliseconds for `read_bytes` (`-1`, the default: wait forever). |
 | `is_terminal()` | `bool` | Whether the input is a terminal (a person typing) rather than a pipe or a file. |
+| `set_raw(is_raw)` | `IoError!void` | Turns the terminal's raw mode on or off (see [Terminal programs](#terminal-programs)). |
 | `close()` | `void` | Stops reading. Reading afterwards fails with `Closed`; closing twice does nothing. |
 
 ```nim
@@ -414,8 +758,64 @@ end
 | `write_bytes(data: buffer)` | `IoError!void` | Writes the bytes of a `buffer`. |
 | `flush()` | `IoError!void` | Sends what's buffered now. |
 | `is_terminal()` | `bool` | Whether the output is a terminal. |
+| `size()` | `?io::TerminalSize` | The terminal's size in characters (`columns`, `rows`), or `null` when the output isn't a terminal or its size is unknown. |
 
 When the program reading the output stopped (`dusk app.dsk | head -1`), they fail with `BrokenPipe` and the program keeps running; the output that couldn't be sent is dropped. Writes follow the same buffering rules as `io::print`, so a failure can show up at the next `write` or `flush` rather than at the write that caused it.
+
+#### Terminal programs
+
+Programs that take over the terminal, like a text editor or a game, read every key as it's pressed and draw the whole screen themselves. `std/io` gives them what only the runtime can do; the rest (escape sequences for colors and the cursor, decoding keys) is ordinary Dusk code that writes and reads bytes.
+
+**Raw mode.** `io::stdin().set_raw(true)` puts the terminal in raw mode: each key arrives as soon as it's pressed, without waiting for Enter, and nothing typed shows on the screen. Ctrl+C, Ctrl+Z and Ctrl+S arrive as bytes (`3`, `26`, `19`) instead of stopping or pausing the program, and Enter arrives as `\r`. Output still turns `\n` into a new line at the start of the row. `set_raw(false)` brings back the normal mode. On a pipe or a file `set_raw` fails with `NotTerminal`, and after `close()` with `Closed`.
+
+The terminal goes back to how it was when the program ends, even if it ends with a runtime error or a task error nobody handled, and the error message shows in the normal mode. A program killed from outside (by `kill` or a crash of the runtime) can leave the terminal in raw mode; the `reset` command fixes it.
+
+**Keys.** In raw mode, read keys with `read_bytes`: a letter is one byte, and keys like the arrows or Home come as escape sequences that start with byte `27` (Esc), such as `27 91 65` for the up arrow. To tell the Esc key from the start of a sequence, read the rest with a short timeout: when nothing follows within a few milliseconds, it was Esc (`is_escape_key` below returns `false` when more bytes came; a real key decoder keeps them).
+
+```nim
+func is_escape_key(input: io::Stdin) -> io::IoError!bool
+    input.read_bytes(8, timeout_ms = 50) catch e then
+        if e == io::IoError.TimedOut then
+            return true
+        end
+        return e
+    end
+    return false
+end
+```
+
+**Size.** `io::stdout().size()` gives the terminal's size, and the `os::Signal.WindowChange` signal (see [Signals](#signals)) tells the program when the window was resized, so it can read the size again and redraw.
+
+**Output.** Terminal output shows at the end of each line, so call `io::stdout().flush()` after drawing a screen. On Windows, escape sequences in the output are turned on when the program starts.
+
+```nim
+import "std/io"
+import "std/os"
+
+func main() -> !void
+    let input = io::stdin()
+    let mut out = io::stdout()
+    let resize = try os::watch_signal(os::Signal.WindowChange)
+    let size = out.size() orelse io::TerminalSize(columns = 80, rows = 24)
+    try input.set_raw(true)
+    try out.write("\u{1b}[2J\u{1b}[H${size.columns}x${size.rows}, press q to quit\r\n")
+    try out.flush()
+    for true do
+        let next = try input.read_bytes(16)
+        if next: key then
+            if key[0] == 'q' then
+                break
+            end
+            try out.write("byte ${key[0]}\r\n")
+            try out.flush()
+        else
+            break
+        end
+    end
+    try input.set_raw(false)
+    resize.close()
+end
+```
 
 #### Errors
 
@@ -431,6 +831,7 @@ When the program reading the output stopped (`dusk app.dsk | head -1`), they fai
 | `UnexpectedEnd` | `read_exact` reached the end of the input before `count` bytes |
 | `HandshakeFailed` | Reading or writing a TLS connection whose handshake failed |
 | `TooLarge` | `read_all` / `read_all_bytes` exceeded `max_bytes` |
+| `NotTerminal` | `set_raw` on an input that isn't a terminal |
 | `Other` | Any other failure |
 
 #### Readers, writers and `io::copy`
@@ -621,9 +1022,9 @@ TCP connections over the network, plain or encrypted with TLS (see [TLS](#tls) b
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
 | `tcp_connect(host: string, port: int, timeout_ms: int = -1)` | `NetError!TcpConn` | Connects to `host` (a name like `"example.com"` or `"localhost"`, or an IP address like `"127.0.0.1"` or `"::1"`) on `port`. |
-| `tcp_listen(host: string, port: int, backlog: int = 128)` | `NetError!TcpListener` | Listens on a local address: `"0.0.0.0"` for every IPv4 interface, `"::"` for IPv6, `"127.0.0.1"` or `"localhost"` for this machine only. Port `0` picks a free port. `backlog` is how many connections can wait for `accept`. |
+| `tcp_listen(host: string, port: int, backlog: int = 128, reuse_port: bool = false)` | `NetError!TcpListener` | Listens on a local address: `"0.0.0.0"` for every IPv4 interface, `"::"` for IPv6, `"127.0.0.1"` or `"localhost"` for this machine only. Port `0` picks a free port. `backlog` is how many connections can wait for `accept`. With `reuse_port = true`, several listeners or processes can bind the same address and port (supported on Linux and FreeBSD; fails with `Other` on unsupported systems). |
 | `tls_connect(host: string, port: int, timeout_ms: int = -1, ca: ?string = null, verify: bool = true)` | `NetError!TcpConn` | Like `tcp_connect`, then a TLS handshake that checks the server's certificate against `host`. `timeout_ms` covers both. |
-| `tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128)` | `NetError!TcpListener` | Like `tcp_listen`, but every accepted connection uses TLS with the `Certificate` `cert`. |
+| `tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128, reuse_port: bool = false)` | `NetError!TcpListener` | Like `tcp_listen`, but every accepted connection uses TLS with the `Certificate` `cert`. |
 | `certificate(cert_pem: string, key_pem: string)` | `NetError!Certificate` | A server certificate and its private key, from PEM text. |
 
 A name is looked up first, and each of its addresses is tried in order until one works (`"localhost"` is usually `::1` and then `127.0.0.1`); IP addresses skip the lookup. `timeout_ms` on `tcp_connect` covers the lookup and every attempt.
@@ -1013,17 +1414,38 @@ end
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. |
+| `listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000, reuse_port: bool = false)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one; `reuse_port = true` allows several processes to share the port on Linux and FreeBSD). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. `stop_on_signal` and `shutdown_timeout_ms` control how the server stops (see Stopping). |
 
 **`Server`**
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `serve(handler: func(Request) -> E!Response, on_error: ?func(Request, Failure[E]) -> void = null)` | `void` | Accepts connections until `close()`, calls `handler` for each request, and returns once every connection is done. `on_error` receives each failure instead of the line on stderr (see below). |
+| `serve(handler: func(Request) -> E!Response, on_error: ?func(Request, Failure[E]) -> void = null)` | `void` | Accepts connections until `close()` or a stop signal, calls `handler` for each request, and returns once every connection is done (see Stopping). `on_error` receives each failure instead of the line on stderr (see below). |
 | `port()` | `int` | The port it listens on. |
 | `close()` | `void` | Stops the server (see below). |
 
 `close()` stops accepting and closes the connections that are waiting for their next request; requests already being handled finish, and their responses close the connection. Calling it again does nothing.
+
+**Stopping.** While `serve` runs, Ctrl+C (`os::Signal.Interrupt`) or a stop request (`os::Signal.Terminate`, what a service manager sends before a restart) calls `close()` instead of ending the program. `serve` then waits for the requests being handled, up to `shutdown_timeout_ms` (`-1` waits as long as they take); past that it closes the connections still open and returns. The code after `serve`, and the `defer`s of the function that called it, run as usual. `shutdown_timeout_ms` applies to a `close()` called by the program too.
+
+- A second signal stops the program at once: the server stops listening for signals after the first one, so a stuck program can still be stopped.
+- The program ends when every task is done. A handler still computing past the time limit, or another task the program started, keeps it running; a second signal ends it.
+- `stop_on_signal = false` leaves signals alone: they stop the program right away, unless it listens itself with `os::watch_signal`. A program can also listen itself while `stop_on_signal` is on, since each `SignalStream` gets its own copy of a signal.
+- On Windows only Ctrl+C is handled, since `Terminate` isn't available there.
+
+```nim
+func main() -> !void
+    let server = try http::listen("0.0.0.0", 8080)
+    let log = try fs::open("access.log", fs::Mode.Append)
+    defer log.close()
+    server.serve(func(req: http::Request) -> !http::Response
+        try log.write("${req.method} ${req.path}\n")
+        return http::text("hello")
+    end)
+end
+```
+
+Here Ctrl+C lets the requests in flight finish, then `log.close()` writes what's left in the file's buffer.
 
 **`Request`**
 
@@ -1061,14 +1483,14 @@ The body is read only when the handler asks for it. `text` and `bytes` fail with
 ```nim
 "/logo" then return try http::file("assets/logo.svg", http::ContentType.SVG) end
 else then
-    let path = "public${req.path}"
-    return http::file(path, http::content_type_of(path)) catch e then
+    let file = path::join(["public", path::normalize(req.path)])
+    return http::file(file, http::content_type_of(file)) catch e then
         return http::status(404)
     end
 end
 ```
 
-A static file server like this must check `req.path` first: a path with `..` reaches files outside `public`.
+`http::file` opens the path it's given, like `fs::open`. `req.path` always starts with `/`, so `path::normalize` can't take `..` above that root (`/../secret.env` becomes `/secret.env`), and joining the result to `public` keeps the file inside it. Gluing `req.path` to the folder directly (`"public${req.path}"`) would let `/../secret.env` read a file outside it.
 
 Headers change through `Headers` methods on a `let mut` response: `set(name: string, value: string)` replaces every value of that header, `add(name: string, value: string)` adds one more, and `remove(name: string)` drops them all.
 
@@ -1095,7 +1517,7 @@ A `reason` left empty is filled from the status code (`"Not Found"`). The server
             try events.write("data: tick $n\n\n")
             try events.flush()
             n = n + 1
-            task::sleep(1000)
+            task::sleep(time::milliseconds(1000))
         end
     end, content_type = "text/event-stream")
 end
@@ -1168,7 +1590,394 @@ Every response that could be compressed gets `Vary: Accept-Encoding` (added to a
 | `ProxyRefused` | The client's proxy refused to open a tunnel (any status other than `2xx` to `CONNECT`) |
 | `Other` | Any other failure |
 
-## Errors
+## std/serialization
+
+Turns values into an outside format and back, through code the compiler writes for each type. A format (JSON, rows from a database, a config file syntax) is an ordinary struct with methods; `std/json` is one, and any module can add its own. Import with `import "std/serialization"`.
+
+```nim
+let mut writer = QueryWriter()
+try serialization::encode(user, writer)
+let mut reader = RowReader(row)
+let user: User = try serialization::decode(reader)
+```
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `encode[T, W, S: schema](value, mut writer)` | `SerializationError!void` | Writes `value` through `writer`. |
+| `decode[T, R, S: schema](mut reader)` | `SerializationError!T` | Reads a `T` from `reader`. |
+| `decode_document[T, R, S: schema](mut reader)` | `SerializationError!T` | Like `decode`, then calls `reader.end_document()` before any default runs, so a format can reject trailing input first. |
+| `plan_of[T, S: schema]()` | `int` | The id of `T`'s plan, the description formats read field and variant names from. Known when compiling. |
+| `has_proxies[T, S: schema]()` | `bool` | Whether `T`'s plan uses `via` anywhere. Known when compiling: an `if` on it only compiles the branch taken. |
+| `is_proxied[T, S: schema]()` | `bool` | Whether `T` itself (or the type inside a nullable `T`) is written through a whole-type `via`. Known when compiling, like `has_proxies`. |
+
+For each type, the compiler writes one decode and one encode function that read and fill fields directly, and checks at compile time that the format has every method the type needs. Types must have public instance fields only; functions, tasks, buffers, error values and maps with keys other than `string` can't be written, anywhere inside the type (`InvalidType`, naming the path, such as `Hidden at 'inner[].value'`). Enums are written by variant name; aliases decode by their own names and encode as the first variant with that value.
+
+**Defaults.** A field missing from the input takes its declared default. Defaults made of literals (`0`, `""`, `[]`, `null`) are set right away; defaults that call functions run after the whole input has been read, children before their parents, so they never run for input that turns out to be invalid. Inside a value read through a proxy, they run before its `from` sees it. They can allocate and make the task wait. A field without a default is required, even when it's nullable (`MissingField`). A field given twice is `DuplicateField`.
+
+Values nested deeper than 512 levels fail with `DepthExceeded`, when reading or writing. Writing a value that contains itself also ends in `DepthExceeded`.
+
+`SerializationError` contains `InvalidInput`, `TypeMismatch`, `MissingField`, `UnknownField`, `DuplicateField`, `OutOfRange`, `InvalidValue`, `UnknownVariant`, `DepthExceeded` and `CycleDetected`. Formats map their own failures to these and can keep details (a position, a message) in their own fields.
+
+#### Schemas
+
+A schema is a named set of outside names for one consumer: an API, a database table, a config file. The same type can have several. Without a schema, fields and variants use their declared names.
+
+```nim
+schema Api(case = "snake")
+    time::Timestamp: via(time::to_utc_iso_string, time::from_iso_string)
+
+    struct models::Address
+        zipCode: "postcode"
+    end
+end
+
+schema Db end
+
+struct User
+    userId: int
+    displayName: string
+    password: string = ""
+    nickname: ?string = null
+    createdAt: time::Timestamp
+
+    schema Api
+        userId: "user_id", "legacy_id"
+        password: skip
+        nickname: omit_null
+    end
+
+    schema Db
+        userId: "id"
+    end
+end
+
+let text = try json::encode[User, Api](user)
+let row = try serialization::decode[User, RowReader, Db](reader)
+let plain = try json::encode(user)
+```
+
+- `schema Name(case = "...") ... end` declares a schema at the top of a file. `case` is `"snake"` (`user_id`), `"camel"` (`userId`), `"kebab"` (`user-id`), `"pascal"` (`UserId`) or `"exact"`, the default. An empty schema is `schema Db end`.
+- Inside a struct, enum or union, `schema Name ... end` (after the fields or variants, before the methods) sets that type's names for that schema.
+- Inside a schema, a `struct`, `enum` or `union` block does the same for a type declared elsewhere, such as in another module. The keyword must match the type. A generic type is written without its slots, and the rules apply to every version of it.
+- A member can have rules in only one place for a given schema. Schemas reach public fields only.
+- Nested values follow the same schema: encoding a `User` with `Api` uses `Api`'s names for the `Address` inside it.
+
+| Rule | Meaning |
+| :--- | :------ |
+| `userId: "user_id"` | The outside name. |
+| `userId: "user_id", "legacy_id"` | The first name is written; every name is accepted when reading. Getting two of them is a duplicate. |
+| `password: skip` | Never read or written; the field takes its default, so it must have one. |
+| `nickname: omit_null` | Not written when `null`. Only for nullable fields. |
+| `createdAt: "created", via(to, from)` | The field is written as another type (see Proxies). Rules combine with commas. |
+| `OnHold: "on-hold"` | A variant's outside name, in an enum or union. Variants only take names. |
+| `time::Timestamp: via(to, from)` | Directly inside a schema: every value of that type is written as another type. |
+
+Names are worked out when compiling, never by changing incoming text. `case` applies first, then explicit names. It splits a name at `_`, `-`, a capital after a lowercase letter or digit, and the last capital of a run of capitals before a lowercase letter: `userID` becomes `user_id`, `HTTPServer` becomes `http_server`, `line2` stays one word. Letters outside ASCII don't change case. Two members ending up with the same name, an unknown member, `skip` without a default and `omit_null` on a field that can't be null are compile errors (`InvalidSchema`).
+
+#### Proxies
+
+`via(to, from)` writes a value as another type through two functions: `to` takes the value and returns the other type, and `from` takes it back, returning the value or failing. The other type can be anything serializable, including a struct with its own schema sections. A `from` that fails makes reading fail with `InvalidValue`.
+
+```nim
+func ms_to_seconds(milliseconds: int) -> int
+    return milliseconds // 1000
+end
+
+func seconds_to_ms(seconds: int) -> int
+    return seconds * 1000
+end
+
+struct Job
+    timeoutMs: int
+
+    schema Api
+        timeoutMs: "timeout_s", via(ms_to_seconds, seconds_to_ms)
+    end
+end
+```
+
+Proxies are how a type with private fields, such as `time::Timestamp`, gets written. Both functions must be named functions, not lambdas or generic functions. A whole-type proxy can't return its own type, since it would apply again. Proxies can chain (a `Stamp` written as a `time::Timestamp`, itself written as text), but not through a nullable: a `via` whose other type is nullable and has its own `via` is `InvalidSchema`.
+
+#### Writing a format
+
+A format is a struct whose methods match traits in `std/serialization`. A type only needs the traits for what it contains: a format without `write_null` can't write a type with nullable fields, and that's a compile error naming the field (`'QueryWriter' can't encode 'User': 'User.nickname' is nullable and it has no method 'write_null'`).
+
+| Writer trait | Methods |
+| :----------- | :------ |
+| `ScalarWriter` | `write_int(int)`, `write_float(float)`, `write_bool(bool)`, `write_string(string)` |
+| `NullWriter` | `write_null()` |
+| `StructWriter` | `begin_struct(fields, count)`, `field(fields, index)`, `end_struct()` |
+| `ArrayWriter` | `begin_array(length)`, `item(index)`, `end_array()` |
+| `MapWriter` | `begin_map(length)`, `key(name)`, `end_map()` |
+| `EnumWriter` | `write_variant(variants, index)` |
+| `UnionWriter` | `begin_union(variants, index)`, `end_union()` |
+
+| Reader trait | Methods |
+| :----------- | :------ |
+| `ScalarReader` | `read_int()`, `read_float()`, `read_bool()`, `read_string()` |
+| `NullReader` | `read_null() -> bool`: `true` when the next value is null, which it consumes |
+| `StructReader` | `begin_struct(fields)`, `next_field(fields) -> int`, `missing_field(fields, index)` |
+| `ArrayReader` | `begin_array()`, `has_item() -> bool` |
+| `MapReader` | `begin_map()`, `next_key() -> ?string` |
+| `EnumReader` | `read_variant(variants) -> int` |
+| `UnionReader` | `begin_union(variants) -> int`, `end_union()` |
+| `DocumentReader` | `end_document()`, for `decode_document` |
+
+Every method takes `mut self: @` and returns `SerializationError!` its result. `byte` values go through `read_int` / `write_int` and are checked against `0..255` (`OutOfRange`).
+
+`fields` and `variants` are plan ids. Read names with `field_count(fields)`, `field_name(fields, index)`, `variant_count(variants)` and `variant_name(variants, index)`, and match input with `find_field(fields, name)` and `find_variant(variants, name)`, which accept every outside name, aliases included, and return an index or `-1`. `find_field_in(fields, text, start, stop)` and `find_variant_in` match a slice of the input without copying it. `next_field` returns the index of the next known field, or `-1` when the struct ends; unknown names are the format's choice to skip or reject. A format reading rows can match column names once per result and then answer `next_field` by position.
+
+```nim
+import "std/serialization"
+import "std/array"
+import "std/string"
+import "std/url"
+
+struct QueryWriter
+    parts: []string = []
+
+    func write_int(mut self: @, value: int) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_float(mut self: @, value: float) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_bool(mut self: @, value: bool) -> serialization::SerializationError!void
+        array::append(self.parts, if value then "1" else "0" end)
+    end
+
+    func write_string(mut self: @, value: string) -> serialization::SerializationError!void
+        array::append(self.parts, url::encode(value))
+    end
+
+    func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
+    end
+
+    func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        if index > 0 then
+            array::append(self.parts, "&")
+        end
+        array::append(self.parts, "${serialization::field_name(fields, index)}=")
+    end
+
+    func end_struct(mut self: @) -> serialization::SerializationError!void
+    end
+end
+
+struct Search
+    term: string
+    page: int = 1
+end
+
+func main() -> !void
+    let mut writer = QueryWriter()
+    try serialization::encode(Search(term = "dusk lang"), writer)
+    assert(string::join(writer.parts) == "term=dusk%20lang&page=1")
+end
+```
+
+## std/json
+
+`json::encode[T, S: schema](value, options = @()) -> JsonError!string` writes compact JSON. `json::decode[T, S: schema](text, mut diagnostic = null, options = @()) -> JsonError!T` reads one complete JSON value; trailing whitespace is allowed. The target type can be explicit or come from the expected result type, and the schema is optional (see [Schemas](#schemas)):
+
+```dusk
+import "std/json"
+
+struct User
+    name: string
+    age: int
+    email: ?string = null
+end
+
+func main() -> !void
+    let text = "{\"name\":\"Ada\",\"age\":42}"
+    let user: User = try json::decode(text)
+    let another = try json::decode[User](text)
+    assert(user.name == another.name)
+    assert(user.email == null)
+    assert((try json::encode(user)) == "{\"name\":\"Ada\",\"age\":42,\"email\":null}")
+end
+```
+
+Supported types, at the root and inside other values, are the ones `std/serialization` supports:
+
+| Dusk type | JSON representation |
+| :--- | :--- |
+| `int`, `byte`, `float` | Number |
+| `bool` | Boolean |
+| `string` | String |
+| `?T` | Null or the representation of `T` |
+| `[]T` | Array |
+| `map[string, T]` | Object |
+| Struct | Object with the field names (or the schema's names) |
+| Enum | Variant name as a string |
+| Union | Object with exactly one variant-named member and its payload |
+
+Concrete generic and recursive types work. A union built as `Response(success = value)` uses `{"success": ...}`. Static fields and methods do not participate.
+
+**Fields and numbers.** Missing fields and defaults follow `std/serialization`: an absent field uses its declared default or fails with `MissingField`, and defaults that call functions run only after the whole document passed. Explicit JSON null is accepted only for nullable fields, regardless of defaults.
+
+Unknown fields are ignored by default, but their values must still be valid JSON. Duplicate keys fail everywhere, including ignored objects; escaped spellings of the same key, and two accepted names of the same field, count as duplicates. String input must be valid UTF-8, with valid escape sequences and paired surrogate escapes. Encoding also rejects invalid UTF-8.
+
+`int` and `byte` accept integer-form tokens only: `42` works, while `42.0`, `42e0` and `"42"` fail with `TypeMismatch`. Integers preserve their full range; `byte` is checked against `0..255`. Floats accept integer, decimal and exponent forms and round to their representable precision; overflow fails, and sufficiently small values can underflow to signed zero. Encoding NaN or infinity fails with `NonFiniteNumber`.
+
+Encoding includes null fields (unless the schema says `omit_null`) and fields equal to their defaults. Struct fields appear in declaration order, and map entries in insertion order. Shared objects are written independently wherever they occur; cycles fail with `CycleDetected`. Decoding does not restore sharing between separate JSON objects.
+
+**Schemas and proxies.** `json::encode[User, Api](user)` and `json::decode[User, Api](text)` use a schema's names. A fast built-in engine handles every type, proxies included: it reads or writes the other type, and only the `to` and `from` functions themselves run as Dusk code. A `from` that fails makes decoding fail with `InvalidValue`, and a `json::Diagnostic` then points at that value (its path and position).
+
+**Options.** `DecodeOptions` has `should_reject_unknown_fields: bool = false` and `max_depth: int = 128`. `EncodeOptions` has `max_depth: int = 128`. A depth limit must be between 1 and 512, otherwise the operation fails with `InvalidOptions`. Each array or object adds one level; nullable wrappers and scalar values do not. Ignored values use the same limit.
+
+```dusk
+let user = try json::decode[User](text,
+    options = json::DecodeOptions(should_reject_unknown_fields = true))
+let encoded = try json::encode(user, json::EncodeOptions(max_depth = 64))
+```
+
+**Diagnostics.** Pass a mutable `json::Diagnostic()` as the second decode argument when the error's field path or location is needed. It contains `path: string`, `byte_offset: ?int`, `line: ?int` and `column: ?int`. The object is cleared before each call; a successful call leaves an empty path and null positions. Each caller owns its diagnostic object.
+
+```dusk
+let mut diagnostic = json::Diagnostic()
+let user: User = json::decode(text, diagnostic) catch e then
+    io::eprintln("invalid user at ${diagnostic.path}, byte ${diagnostic.byte_offset}")
+    return e
+end
+```
+
+Paths use forms such as `users[2].age`; map keys and field names containing punctuation are quoted, as in `["a.b"][0]`. The root path is empty. Byte offsets start at zero; lines and byte columns start at one. Missing fields point to the closing object; lexical errors report where the invalid input was detected.
+
+`JsonError` contains `InvalidJson`, `TypeMismatch`, `MissingField`, `UnknownField`, `DuplicateKey`, `NumberOutOfRange`, `UnknownVariant`, `InvalidUnion`, `NonFiniteNumber`, `DepthExceeded`, `CycleDetected`, `InvalidOptions` and `InvalidValue`. Errors have no payload; diagnostics are separate. Pretty printing and streaming are not supported.
+
+## std/sqlite
+
+Embedded SQL databases using a bundled SQLite. Import with `import "std/sqlite"`. Database work runs on a dedicated worker pool so a slow query or busy wait pauses only the calling task, while other tasks keep running.
+
+### Opening and closing
+
+| Function / method | Returns | Description |
+| :---------------- | :------ | :---------- |
+| `open(path, journal = Journal.Wal, foreign_keys = true, busy_timeout_ms = 5000, read_only = false, create = true, mut diagnostic = null)` | `SqliteError!Database` | Opens a database file or `":memory:"`. |
+| `db.close()` | `void` | Closes the connection after pending operations finish. Safe to call more than once. |
+| `version()` | `string` | The bundled SQLite version string. |
+
+By default, `open` enables WAL journaling (`Journal.Wal`, ignored for `":memory:"` and read-only connections), turns foreign-key checks on, sets a 5-second busy timeout (`busy_timeout_ms`), and creates missing files. Pass `journal = sqlite::Journal.Delete` for classic rollback journaling, `read_only = true` to prevent writes, or `create = false` to fail with `CantOpen` when the file does not exist.
+
+Close connections with `defer db.close()` when finished. A `Database` dropped without closing is closed after a garbage collection and when the program ends.
+
+### Executing statements and parameters
+
+| Method (`Database` and `Tx`) | Returns | Description |
+| :--------------------------- | :------ | :---------- |
+| `execute(sql, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one or more statements separated by `;` (no parameters). |
+| `execute_with[P, S: schema](sql, params, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one statement, binding `:name` parameters from a struct. |
+| `execute_many[P, S: schema](sql, rows, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one statement once for each struct in `rows`, in a single worker job. |
+
+`Changes` has `rows: int` (total rows changed) and `last_id: int` (the last inserted rowid). `execute_with` and `execute_many` take exactly one statement and cache prepared statements per connection. Wrap `execute_many` in `db.transaction` when inserting many rows so all rows commit atomically.
+
+**Always pass values through `_with` parameters rather than string interpolation.** Interpolating user input into SQL strings (`"where name = '$name'"`) allows SQL injection; use `:name` placeholders and pass a named or anonymous struct instead:
+
+```nim
+try db.execute("create table users (id integer primary key, name text not null, age integer)")
+let added = try db.execute_with(
+    "insert into users (name, age) values (:name, :age)",
+    @(name = "Ana", age = 30),
+)
+```
+
+Parameters are encoded through `std/serialization`, so schema renames (`S: schema`) and proxies (`via`) apply. Every `:name` in the SQL must have a field in `params` (`MissingParameter` otherwise), and every field in `params` must appear in the SQL (`UnknownParameter` otherwise). Unnamed `?` placeholders fail with `MissingParameter`.
+
+### Queries
+
+| Method (`Database` and `Tx`) | Returns | Description |
+| :--------------------------- | :------ | :---------- |
+| `query[T, S: schema](sql, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError![]T` | Returns every row decoded into `T`. |
+| `query_with[T, S: schema, P](sql, params, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError![]T` | Same, with `:name` parameters from `params`. |
+| `query_one[T, S: schema](sql, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError!?T` | Returns the first row, or `null` when no rows match. |
+| `query_one_with[T, S: schema, P](sql, params, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError!?T` | Same, with `:name` parameters from `params`. |
+
+For `_with` queries, name the row type (and optional schema) in brackets and let the compiler infer the parameter struct's type:
+
+```nim
+struct User
+    id: int
+    name: string
+    email: ?string
+end
+
+let users = try db.query_with[User](
+    "select id, name, email from users where age >= :min order by id",
+    @(min = 18),
+)
+let count = try db.query_one[int]("select count(*) from users")
+```
+
+Rows decode through `std/serialization`: column names match struct field names (or a schema's renamed names), extra columns are ignored, missing required columns fail with `MissingColumn`, and duplicate column names for the same field fail with `TypeMismatch`. Scalar root types such as `query_one[int]` read the first column. `query_one` returns the first row when a query yields several; add `LIMIT 1` in SQL when only one row is needed.
+
+`max_bytes` caps the raw result size collected before decoding (64 MiB by default; `-1` disables the limit) and fails with `TooLarge` when exceeded.
+
+### Type mapping
+
+| Dusk type | Bound as | Read back from |
+| :-------- | :------- | :------------- |
+| `int` | `INTEGER` | `INTEGER` |
+| `float` | `REAL` | `REAL` or `INTEGER` |
+| `bool` | `INTEGER` (`0` or `1`) | `INTEGER` (`0` or `1`) |
+| `string` | `TEXT` | Valid UTF-8 `TEXT` |
+| `?T` | `NULL` or `T` | `NULL` or `T` |
+| Enum | `TEXT` (variant name) | `TEXT` (variant name or schema alias) |
+| Proxied type (`via`) | The proxy's target type | The proxy's target type |
+
+A column whose storage class does not match the field fails with `TypeMismatch`. Arrays, maps, unions and nested structs cannot be bound as parameters or decoded as columns.
+
+### Transactions
+
+```nim
+let total = try db.transaction(func(tx)
+    try tx.execute_with("update accounts set balance = balance - :n where holder = :h", @(n = 30, h = "Ana"))
+    try tx.execute_with("update accounts set balance = balance + :n where holder = :h", @(n = 30, h = "Bo"))
+    return (try tx.query_one[int]("select sum(balance) from accounts")) orelse 0
+end)
+```
+
+`db.transaction[T](body: func(Tx) -> SqliteError!T, mut diagnostic: ?Diagnostic = null) -> SqliteError!T` starts a `BEGIN IMMEDIATE` transaction, runs `body` with a `sqlite::Tx` handle (which has the same six execute and query methods as `Database`), commits when `body` returns, and rolls back if `body` or `COMMIT` fails.
+
+While a transaction is open, operations from other tasks on the same `Database` wait in order until it ends. Inside `body`, always use `tx`: calling `db` methods, `db.close()` or a nested `db.transaction` from the task that owns the transaction is a runtime error, and using a `Tx` after its transaction has ended (or from another task) is also a runtime error.
+
+### Timeouts and diagnostics
+
+Every execute and query method accepts `timeout_ms` (default `-1`, no timeout). When a non-negative timeout expires, a running statement is interrupted and fails with `TimedOut`, and an operation waiting in the connection's queue is removed and fails with `TimedOut` immediately. The connection remains usable afterward. `busy_timeout_ms` on `open` controls how long SQLite waits for another connection's lock before failing with `Busy`.
+
+Pass a mutable `sqlite::Diagnostic()` to any call to inspect SQLite's error text (`message: string`) and statement byte offset (`offset: ?int`, `null` when SQLite does not report one):
+
+```nim
+let mut diagnostic = sqlite::Diagnostic()
+db.execute("select * frm users", diagnostic = diagnostic) catch e then
+    io::eprintln("${diagnostic.message} (offset ${diagnostic.offset})")
+end
+```
+
+### Errors
+
+| `SqliteError` | When |
+| :------------ | :--- |
+| `CantOpen` | The database file could not be opened or created. |
+| `ReadOnly` | A write was attempted on a read-only connection or file. |
+| `Busy` | Another connection held a lock past `busy_timeout_ms`. |
+| `Constraint` | A `UNIQUE`, `NOT NULL`, `CHECK` or `FOREIGN KEY` constraint failed. |
+| `InvalidSql` | Syntax error, unknown table or column, empty SQL, or multiple statements in a single-statement call. |
+| `MissingParameter` | A `:name` parameter was missing from `params`, or an unnamed `?` placeholder was used. |
+| `UnknownParameter` | `params` contained a field not present in the SQL statement. |
+| `TypeMismatch` | A column's value did not match the target Dusk type, or `params` had an unsupported shape. |
+| `MissingColumn` | A required struct field had no matching column in the query result. |
+| `TooLarge` | A query result exceeded `max_bytes`. |
+| `TimedOut` | The call exceeded `timeout_ms`. |
+| `Full` | The disk or database is full. |
+| `Corrupt` | The database file is corrupt or not a SQLite database. |
+| `Closed` | The connection was already closed. |
+| `Other` | Any other SQLite error (check `Diagnostic.message`). |
+
+## Shared error sets
 
 Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Error sets from the standard library are written with their module (`string::StringError.OutOfRange`) unless they're imported by name. Each module's section lists its own error set; these are the small ones shared by the collection modules:
 
@@ -1184,10 +1993,12 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 
 ## Known limitations
 
-These are known gaps in v0.16. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.17. Most are planned in the [roadmap](roadmap.md).
 
 - **Strings**: Positions are byte offsets; only `string::char_count` and `string::char_at` count characters (`char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only. There's no case-insensitive comparison: compare `string::lower(a) == string::lower(b)`.
 - **Building strings in a loop**: `s = string::concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `string::join` once.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, and no revocation checks.
-- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client uses only `http://` and `https://` proxies (no SOCKS, and `HTTP_PROXY` and similar variables aren't read on their own), doesn't store cookies between requests, has no client certificates, and decompresses only gzip and deflate (not `br` or `zstd`). The server has no router (handlers match `req.path` themselves) and compresses only with gzip. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
+- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client uses only `http://` and `https://` proxies (no SOCKS, and `HTTP_PROXY` and similar variables aren't read on their own), doesn't store cookies between requests, has no client certificates, and decompresses only gzip and deflate (not `br` or `zstd`). The server has no router (handlers match `req.path` themselves) and compresses only with gzip.
+- **Serialization**: map keys must be strings, and schemas have no flattening of nested structs and no unions written without their variant name. `via` takes named, non-generic functions. Values written through `std/serialization` are read field by field into the type, never into a general tree of values.
+- **SQLite**: `buffer` parameters and `BLOB` columns are not supported yet, and queries load their rows (up to `max_bytes`) rather than streaming a cursor.

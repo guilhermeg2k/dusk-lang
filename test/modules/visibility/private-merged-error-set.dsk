@@ -1,0 +1,12 @@
+error ~Secret
+    Hidden
+end
+
+error Other
+    Oops
+end
+
+error Public = Secret | Other
+
+func main() -> void
+end

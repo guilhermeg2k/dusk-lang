@@ -1,0 +1,11 @@
+import "std/sqlite"
+
+struct Tagged
+    id: int
+    tags: []string
+end
+
+func main() -> !void
+    let db = try sqlite::open(":memory:")
+    let rows = try db.query[Tagged]("select 1 as id")
+end

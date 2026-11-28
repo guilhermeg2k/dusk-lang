@@ -1,0 +1,87 @@
+import "std/random"
+import "std/buffer"
+
+func assert_bytes(left: buffer, right: buffer) -> void
+    assert(buffer::len(left) == buffer::len(right))
+    for left: value, index do
+        assert(value == right[index])
+    end
+end
+
+func verify_seed(seed: int) -> !void
+    let mut left = random::seeded(seed)
+    let mut right = random::seeded(seed)
+    for 0..127: i do
+        assert(try left.integer(-100, 100) == try right.integer(-100, 100))
+        let fraction = left.decimal()
+        assert(fraction >= 0.0 and fraction < 1.0)
+        assert(fraction == right.decimal())
+        assert_bytes(try left.bytes(i % 10), try right.bytes(i % 10))
+    end
+    let mut snapshot = copy(left)
+    let mut alias = left
+    let mut expected = copy(left)
+    assert(try alias.integer(1, 100) == try expected.integer(1, 100))
+    assert(left.decimal() == expected.decimal())
+    let mut saved = random::seeded(seed)
+    for 0..127: i do
+        let integer = try saved.integer(-100, 100)
+        let fraction = saved.decimal()
+        let data = try saved.bytes(i % 10)
+    end
+    assert(snapshot.decimal() == saved.decimal())
+    let mut has_bounds_error = false
+    left.integer(2, 1) catch e then
+        assert(e == random::RandomError.InvalidBounds)
+        has_bounds_error = true
+    end
+    assert(has_bounds_error)
+    let mut has_size_error = false
+    left.bytes(-1) catch e then
+        assert(e == random::RandomError.NegativeSize)
+        has_size_error = true
+    end
+    assert(has_size_error)
+    assert(try left.integer(7, 7) == 7)
+    assert(buffer::len(try left.bytes(0)) == 0)
+    assert(left.decimal() == expected.decimal())
+end
+
+func main() -> !void
+    let mut golden = random::seeded(0)
+    let prefix = try golden.bytes(9)
+    assert(prefix[0] == 223 and prefix[1] == 35 and prefix[2] == 11)
+    assert(prefix[3] == 73 and prefix[4] == 97 and prefix[5] == 93)
+    assert(prefix[6] == 23 and prefix[7] == 83 and prefix[8] == 7)
+    assert(try golden.integer(1, 6) == 3)
+    assert(golden.decimal() == 0.015013785908919042)
+    let mut first_float = random::seeded(0)
+    assert(first_float.decimal() == 0.3650744641604983)
+    try verify_seed(0)
+    try verify_seed(42)
+    try verify_seed(-1)
+    try verify_seed(-9223372036854775807 - 1)
+    try verify_seed(9223372036854775807)
+    let minimum = -9223372036854775807 - 1
+    let maximum = 9223372036854775807
+    let mut rng = random::seeded(1)
+    assert(try rng.integer(minimum, minimum) == minimum)
+    assert(try rng.integer(maximum, maximum) == maximum)
+    let wide = try rng.integer(minimum, maximum)
+    let negative = try rng.integer(minimum, -1)
+    assert(negative < 0)
+    let nonnegative = try rng.integer(0, maximum)
+    assert(nonnegative >= 0)
+    for 0..31: i do
+        let integer = try random::integer(-5, 5)
+        assert(integer >= -5 and integer <= 5)
+        let fraction = try random::decimal()
+        assert(fraction >= 0.0 and fraction < 1.0)
+        assert(buffer::len(try random::bytes(i)) == i)
+    end
+    assert(buffer::len(try random::secure_bytes(0)) == 0)
+    let mut baseline = random::seeded(42)
+    let mut unchanged = random::seeded(42)
+    let unrelated = try random::integer(1, 100)
+    assert(baseline.decimal() == unchanged.decimal())
+end

@@ -1,6 +1,8 @@
 const std = @import("std");
 
 pub const CliErrorReporter = struct {
+    pub var has_reported_error: bool = false;
+
     pub fn usage() void {
         std.debug.print("usage: dusk <file.dsk>\n       dusk --version\n", .{});
     }
@@ -12,6 +14,7 @@ pub const CliErrorReporter = struct {
             error.IsDir => "it's a directory",
             else => @errorName(failure),
         };
+        has_reported_error = true;
         std.debug.print("error: can't read '{s}': {s}\n", .{ path, reason });
         return failure;
     }

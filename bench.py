@@ -31,7 +31,39 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from run_benchmarks import BENCH_DIR, BENCHMARKS, ROOT, machine_info, matches
+from run_benchmarks import BENCH_DIR, BENCHMARKS as SHARED_BENCHMARKS, ROOT, machine_info, matches
+
+
+BENCHMARKS = SHARED_BENCHMARKS + [
+    {
+        "key": "json_decode",
+        "title": "JSON Small Decode",
+        "desc": "Decode 100,000 nested records with strings, arrays, maps and nullables.",
+        "expected": "5200000",
+        "numeric": False,
+    },
+    {
+        "key": "json_decode_bulk",
+        "title": "JSON Bulk Decode",
+        "desc": "Decode a 256-record document 1,000 times.",
+        "expected": "15104000",
+        "numeric": False,
+    },
+    {
+        "key": "json_encode",
+        "title": "JSON Bulk Encode",
+        "desc": "Encode a 256-record document 1,000 times, checking every output.",
+        "expected": "1000",
+        "numeric": False,
+    },
+    {
+        "key": "json_defaults",
+        "title": "JSON Defaults Decode",
+        "desc": "Decode 100,000 records with three omitted fields and mutable defaults.",
+        "expected": "4700000",
+        "numeric": False,
+    },
+]
 
 RESULTS_DIR = BENCH_DIR / "results"
 HISTORY_DIR = BENCH_DIR / "history"

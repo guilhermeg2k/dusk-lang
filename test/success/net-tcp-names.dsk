@@ -2,6 +2,7 @@ import "std/io"
 import "std/net"
 import "std/task"
 import "std/array"
+import "std/time"
 
 func net_error_name(e: net::NetError) -> string
     return when e
@@ -60,7 +61,7 @@ func main() -> !void
     end
     assert(accept_error == "timed out")
     let after_timeout = spawn(func() -> return try read_one_line(named))
-    task::sleep(0)
+    task::sleep(time::milliseconds(0))
     let late = try net::tcp_connect("localhost", named.port())
     try late.write("still accepting\n")
     late.close()

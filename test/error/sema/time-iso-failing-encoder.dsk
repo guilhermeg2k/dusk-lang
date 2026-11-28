@@ -1,0 +1,12 @@
+import "std/time"
+
+func encode(timestamp: time::Timestamp) -> time::TimeError!string
+    return try time::to_iso_string(timestamp)
+end
+
+schema Api
+    time::Timestamp: via(encode, time::from_iso_string)
+end
+
+func main() -> void
+end

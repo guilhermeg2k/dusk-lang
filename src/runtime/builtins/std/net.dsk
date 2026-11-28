@@ -18,7 +18,7 @@ error NetError
 end
 
 extern func ~open_tcp_stream(host: string, port: int, timeout_ms: int) -> NetError!int
-extern func ~open_tcp_listener(host: string, port: int, backlog: int) -> NetError!int
+extern func ~open_tcp_listener(host: string, port: int, backlog: int, reuse_port: bool) -> NetError!int
 extern func ~listener_accept(listener_id: int, timeout_ms: int) -> io::IoError!int
 extern func ~listener_port(listener_id: int) -> int
 extern func ~listener_close(listener_id: int) -> void
@@ -149,8 +149,8 @@ func tcp_connect(host: string, port: int, timeout_ms: int = -1) -> NetError!TcpC
     return open_conn(try open_tcp_stream(host, port, timeout_ms))
 end
 
-func tcp_listen(host: string, port: int, backlog: int = 128) -> NetError!TcpListener
-    let listener_id = try open_tcp_listener(host, port, backlog)
+func tcp_listen(host: string, port: int, backlog: int = 128, reuse_port: bool = false) -> NetError!TcpListener
+    let listener_id = try open_tcp_listener(host, port, backlog, reuse_port)
     return TcpListener(listener_id = listener_id, bound_port = listener_port(listener_id), owner = own(1, listener_id))
 end
 
@@ -160,7 +160,7 @@ end
 
 func certificate(cert_pem: string, key_pem: string) -> NetError!Certificate
     let certificate_id = try load_certificate(cert_pem, key_pem)
-    return Certificate(certificate_id = certificate_id, owner = own(3, certificate_id))
+    return Certificate(certificate_id = certificate_id, owner = own(5, certificate_id))
 end
 
 func tls_connect(host: string, port: int, timeout_ms: int = -1, ca: ?string = null, verify: bool = true) -> NetError!TcpConn
@@ -173,8 +173,8 @@ func tls_connect(host: string, port: int, timeout_ms: int = -1, ca: ?string = nu
     return conn
 end
 
-func tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128) -> NetError!TcpListener
-    let listener = try tcp_listen(host, port, backlog)
+func tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128, reuse_port: bool = false) -> NetError!TcpListener
+    let listener = try tcp_listen(host, port, backlog, reuse_port)
     listener_use_tls(listener.listener_id, cert.certificate_id) catch e then
         listener.close()
         return e

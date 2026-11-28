@@ -1,0 +1,158 @@
+import "std/array"
+import "std/map"
+
+let MAX_DEPTH = 512
+
+error SerializationError
+    InvalidInput
+    TypeMismatch
+    MissingField
+    UnknownField
+    DuplicateField
+    OutOfRange
+    InvalidValue
+    UnknownVariant
+    DepthExceeded
+    CycleDetected
+end
+
+trait ScalarReader
+    func read_int(mut self: @) -> SerializationError!int
+    func read_float(mut self: @) -> SerializationError!float
+    func read_bool(mut self: @) -> SerializationError!bool
+    func read_string(mut self: @) -> SerializationError!string
+end
+
+trait NullReader
+    func read_null(mut self: @) -> SerializationError!bool
+end
+
+trait StructReader
+    func begin_struct(mut self: @, fields: int) -> SerializationError!void
+    func next_field(mut self: @, fields: int) -> SerializationError!int
+    func missing_field(mut self: @, fields: int, index: int) -> SerializationError!void
+end
+
+trait ArrayReader
+    func begin_array(mut self: @) -> SerializationError!void
+    func has_item(mut self: @) -> SerializationError!bool
+end
+
+trait MapReader
+    func begin_map(mut self: @) -> SerializationError!void
+    func next_key(mut self: @) -> SerializationError!?string
+end
+
+trait EnumReader
+    func read_variant(mut self: @, variants: int) -> SerializationError!int
+end
+
+trait UnionReader
+    func begin_union(mut self: @, variants: int) -> SerializationError!int
+    func end_union(mut self: @) -> SerializationError!void
+end
+
+trait DocumentReader
+    func end_document(mut self: @) -> SerializationError!void
+end
+
+trait ScalarWriter
+    func write_int(mut self: @, value: int) -> SerializationError!void
+    func write_float(mut self: @, value: float) -> SerializationError!void
+    func write_bool(mut self: @, value: bool) -> SerializationError!void
+    func write_string(mut self: @, value: string) -> SerializationError!void
+end
+
+trait NullWriter
+    func write_null(mut self: @) -> SerializationError!void
+end
+
+trait StructWriter
+    func begin_struct(mut self: @, fields: int, count: int) -> SerializationError!void
+    func field(mut self: @, fields: int, index: int) -> SerializationError!void
+    func end_struct(mut self: @) -> SerializationError!void
+end
+
+trait ArrayWriter
+    func begin_array(mut self: @, length: int) -> SerializationError!void
+    func item(mut self: @, index: int) -> SerializationError!void
+    func end_array(mut self: @) -> SerializationError!void
+end
+
+trait MapWriter
+    func begin_map(mut self: @, length: int) -> SerializationError!void
+    func key(mut self: @, name: string) -> SerializationError!void
+    func end_map(mut self: @) -> SerializationError!void
+end
+
+trait EnumWriter
+    func write_variant(mut self: @, variants: int, index: int) -> SerializationError!void
+end
+
+trait UnionWriter
+    func begin_union(mut self: @, variants: int, index: int) -> SerializationError!void
+    func end_union(mut self: @) -> SerializationError!void
+end
+
+extern func field_count(fields: int) -> int
+extern func field_name(fields: int, index: int) -> string
+extern func find_field(fields: int, name: string) -> int
+extern func find_field_in(fields: int, text: string, start: int, stop: int) -> int
+extern func variant_count(variants: int) -> int
+extern func variant_name(variants: int, index: int) -> string
+extern func find_variant(variants: int, name: string) -> int
+extern func find_variant_in(variants: int, text: string, start: int, stop: int) -> int
+
+extern func plan_of[T, S: schema]() -> int
+extern func is_proxied[T, S: schema]() -> bool
+extern func has_proxies[T, S: schema]() -> bool
+
+extern func ~derive_decode[T, R: ScalarReader, S: schema](mut reader: R, mut pending: []func() -> void, depth: int) -> SerializationError!T
+extern func ~derive_encode[T, W: ScalarWriter, S: schema](value: T, mut writer: W, depth: int) -> SerializationError!void
+extern func ~set_payload[U, T](mut target: U, tag: int, value: T) -> void
+extern func ~blank[T]() -> T
+extern func ~field_default[T, F](index: int) -> F
+
+func decode[T, R: ScalarReader, S: schema](mut reader: R) -> SerializationError!T
+    let mut pending: []func() -> void = []
+    let value = try derive_decode[T, R, S](reader, pending, 0)
+    for pending: apply_default do
+        apply_default()
+    end
+    return value
+end
+
+func decode_document[T, R: ScalarReader + DocumentReader, S: schema](mut reader: R) -> SerializationError!T
+    let mut pending: []func() -> void = []
+    let value = try derive_decode[T, R, S](reader, pending, 0)
+    try reader.end_document()
+    for pending: apply_default do
+        apply_default()
+    end
+    return value
+end
+
+func encode[T, W: ScalarWriter, S: schema](value: T, mut writer: W) -> SerializationError!void
+    try derive_encode[T, W, S](value, writer, 0)
+end
+
+func ~read_byte[R: ScalarReader](mut reader: R) -> SerializationError!byte
+    let number = try reader.read_int()
+    let narrowed = to_byte(number) catch e then
+        return SerializationError.OutOfRange
+    end
+    return narrowed
+end
+
+func ~apply_pending_since(mut pending: []func() -> void, base: int) -> void
+    let mut i = base
+    for i < array::len(pending) do
+        pending[i]()
+        i = i + 1
+    end
+    for array::len(pending) > base do
+        let applied = array::pop(pending) catch e then
+            return
+        end
+    end
+end

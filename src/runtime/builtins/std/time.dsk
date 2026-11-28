@@ -1,12 +1,110 @@
+error TimeError
+    InvalidTimestamp
+    Overflow
+    PrecisionLoss
+    UnknownTimeZone
+    InvalidOffset
+    LocalTimeUnavailable
+    InvalidFormat
+end
+
+func utc_timezone() -> TimeZone
+    return TimeZone(zone_id = 0)
+end
+
 struct Timestamp
     ~milliseconds: int
 
-    func unix_ms(self: @) -> int
-        return self.milliseconds
+    func format(self: @, pattern: string, zone: TimeZone = utc_timezone()) -> TimeError!string
+        return try format_timestamp_pattern(self.milliseconds, pattern, zone.zone_id)
     end
 
-    func to_string(self: @) -> string
-        return format_timestamp(self.milliseconds)
+    func is_equal(self: @, other: Timestamp) -> bool
+        return self.milliseconds == other.milliseconds
+    end
+
+    func is_before(self: @, other: Timestamp) -> bool
+        return self.milliseconds < other.milliseconds
+    end
+
+    func is_after(self: @, other: Timestamp) -> bool
+        return self.milliseconds > other.milliseconds
+    end
+
+    func add(self: @, duration: Duration) -> TimeError!Timestamp
+        return from_unix_ms(try add_timestamp_duration(self.milliseconds, duration.nanosecond_count))
+    end
+
+    func subtract(self: @, duration: Duration) -> TimeError!Timestamp
+        return from_unix_ms(try subtract_timestamp_duration(self.milliseconds, duration.nanosecond_count))
+    end
+
+    func since(self: @, other: Timestamp) -> TimeError!Duration
+        return nanoseconds(try timestamp_difference_nanoseconds(self.milliseconds, other.milliseconds))
+    end
+end
+
+struct Duration
+    ~nanosecond_count: int
+
+    func nanoseconds(self: @) -> int
+        return self.nanosecond_count
+    end
+
+    func microseconds(self: @) -> int
+        return self.nanosecond_count // 1000
+    end
+
+    func milliseconds(self: @) -> int
+        return self.nanosecond_count // 1000000
+    end
+
+    func seconds(self: @) -> float
+        return to_float(self.nanosecond_count) / 1000000000.0
+    end
+
+    func add(self: @, other: Duration) -> TimeError!Duration
+        return nanoseconds(try add_nanoseconds(self.nanosecond_count, other.nanosecond_count))
+    end
+
+    func subtract(self: @, other: Duration) -> TimeError!Duration
+        return nanoseconds(try subtract_nanoseconds(self.nanosecond_count, other.nanosecond_count))
+    end
+
+    func is_equal(self: @, other: Duration) -> bool
+        return self.nanosecond_count == other.nanosecond_count
+    end
+
+    func is_less_than(self: @, other: Duration) -> bool
+        return self.nanosecond_count < other.nanosecond_count
+    end
+
+    func is_greater_than(self: @, other: Duration) -> bool
+        return self.nanosecond_count > other.nanosecond_count
+    end
+end
+
+struct Instant
+    ~reading_ns: int
+
+    func elapsed(self: @) -> TimeError!Duration
+        return try instant().since(self)
+    end
+
+    func since(self: @, other: Instant) -> TimeError!Duration
+        return nanoseconds(try subtract_nanoseconds(self.reading_ns, other.reading_ns))
+    end
+end
+
+struct TimeZone
+    ~zone_id: int
+
+    func name(self: @) -> string
+        return timezone_name(self.zone_id)
+    end
+
+    func offset_seconds(self: @, timestamp: Timestamp) -> int
+        return timezone_offset_seconds(self.zone_id, timestamp.milliseconds)
     end
 end
 
@@ -20,4 +118,81 @@ end
 
 extern func now_ms() -> int
 extern func monotonic_ns() -> int
-extern func ~format_timestamp(milliseconds: int) -> string
+extern func ~format_timestamp(milliseconds: int, zone_id: int) -> TimeError!string
+extern func ~format_utc_timestamp(milliseconds: int) -> string
+extern func ~format_timestamp_pattern(milliseconds: int, pattern: string, zone_id: int) -> TimeError!string
+
+func to_iso_string(timestamp: Timestamp, zone: TimeZone = utc_timezone()) -> TimeError!string
+    return try format_timestamp(timestamp.milliseconds, zone.zone_id)
+end
+
+func to_utc_iso_string(timestamp: Timestamp) -> string
+    return format_utc_timestamp(timestamp.milliseconds)
+end
+
+func from_iso_string(text: string) -> TimeError!Timestamp
+    return from_unix_ms(try parse_timestamp(text))
+end
+
+func to_unix_ms(timestamp: Timestamp) -> int
+    return timestamp.milliseconds
+end
+
+extern func ~parse_timestamp(text: string) -> TimeError!int
+
+func instant() -> Instant
+    return Instant(reading_ns = monotonic_ns())
+end
+
+func nanoseconds(value: int) -> Duration
+    return Duration(nanosecond_count = value)
+end
+
+func microseconds(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 1000))
+end
+
+func milliseconds(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 1000000))
+end
+
+func seconds(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 1000000000))
+end
+
+func minutes(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 60000000000))
+end
+
+func hours(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 3600000000000))
+end
+
+extern func ~scale_nanoseconds(value: int, multiplier: int) -> int
+extern func ~add_nanoseconds(left: int, right: int) -> TimeError!int
+extern func ~subtract_nanoseconds(left: int, right: int) -> TimeError!int
+extern func ~add_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int
+extern func ~subtract_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int
+extern func ~timestamp_difference_nanoseconds(left: int, right: int) -> TimeError!int
+
+func fixed_timezone(offset_seconds: int) -> TimeError!TimeZone
+    let is_valid_offset = offset_seconds > -86400 and offset_seconds < 86400
+    if !is_valid_offset then
+        return TimeError.InvalidOffset
+    end
+    return TimeZone(zone_id = offset_seconds)
+end
+
+func load_timezone(name: string) -> TimeError!TimeZone
+    return TimeZone(zone_id = try load_timezone_id(name))
+end
+
+extern func ~load_timezone_id(name: string) -> TimeError!int
+extern func ~timezone_name(zone_id: int) -> string
+extern func ~timezone_offset_seconds(zone_id: int, milliseconds: int) -> int
+
+func local_timezone() -> TimeError!TimeZone
+    return TimeZone(zone_id = try local_timezone_id())
+end
+
+extern func ~local_timezone_id() -> TimeError!int

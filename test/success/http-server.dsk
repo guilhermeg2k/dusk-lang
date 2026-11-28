@@ -7,6 +7,7 @@ import "std/net"
 import "std/string"
 import "std/task"
 import "std/url"
+import "std/time"
 
 error AppError
     Broken
@@ -39,7 +40,7 @@ func route(req: http::Request) -> AppError!http::Response
         end
         "/peer" then return http::text("${req.remote_address.port}") end
         "/slow" then
-            task::sleep(300)
+            task::sleep(time::milliseconds(300))
             return http::text("slow done")
         end
         "/space here" then return http::text("decoded") end
@@ -393,14 +394,14 @@ func check_connection_limit() -> !void
     let running = start(server)
     let port = server.port()
     let holder = try net::tcp_connect("127.0.0.1", port)
-    task::sleep(50)
+    task::sleep(time::milliseconds(50))
     let mut is_answered = false
     let waiting = spawn(func() -> !string
         let reply = try http::request("http://127.0.0.1:$port/", timeout_ms = 3000)
         is_answered = true
         return try reply.text()
     end)
-    task::sleep(100)
+    task::sleep(time::milliseconds(100))
     assert(!is_answered)
     holder.close()
     assert(try await(waiting) == "hello world")
@@ -456,7 +457,7 @@ func check_shutdown_in_flight() -> !void
     let warm = try http::request("$base/")
     assert(warm.status == 200)
     let closer = spawn(func() -> void
-        task::sleep(100)
+        task::sleep(time::milliseconds(100))
         server.close()
     end)
     let slow = try http::request("$base/slow", timeout_ms = 3000)

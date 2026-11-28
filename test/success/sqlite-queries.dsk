@@ -1,0 +1,150 @@
+import "std/array": append, len
+import "std/sqlite"
+import "std/string"
+
+schema Db end
+
+enum Role
+    Admin
+    Member
+end
+
+struct User
+    id: int
+    name: string
+    email: ?string
+    score: float
+    is_active: bool
+    role: Role
+    note: string = "none"
+end
+
+struct Renamed
+    user_name: string
+
+    schema Db
+        user_name: "name"
+    end
+end
+
+struct OrderRow
+    id: int
+    total: float
+    customer: string
+end
+
+struct Plain
+    id: int
+end
+
+func expect_message(db: sqlite::Database, sql: string, expected: sqlite::SqliteError, needle: string) -> void
+    let mut diagnostic = sqlite::Diagnostic()
+    let mut has_failed = false
+    db.query[User](sql, diagnostic = diagnostic) catch e then
+        assert(e == expected)
+        has_failed = true
+    end
+    assert(has_failed)
+    assert(string::contains(diagnostic.message, needle))
+end
+
+func count_users(db: sqlite::Database) -> sqlite::SqliteError!int
+    let count = try db.query_one[int]("select count(*) from users")
+    return count orelse -1
+end
+
+func main() -> !void
+    let db = try sqlite::open(":memory:")
+    let setup = try db.execute("""
+        create table users (id integer primary key, name text not null, email text, score real, is_active integer, role text);
+        insert into users (name, email, score, is_active, role) values ('Ana', 'ana@example.com', 1.5, 1, 'Admin'), ('Bo', null, 2, 0, 'Member'), ('Cy', 'cy@example.com', 3.25, 1, 'Member');
+        create table customers (id integer primary key, name text, city text);
+        create table orders (id integer primary key, customer_id int, total real, created_at text);
+        insert into customers values (1, 'Ana', 'Recife'), (2, 'Bo', 'Natal');
+        insert into orders values (1, 1, 250.0, '2026-03-01'), (2, 1, 50.0, '2026-04-01'), (3, 2, 900.0, '2026-05-01'), (4, 1, 120.0, '2025-12-01'), (5, 1, 300.0, '2026-06-01');
+    """)
+
+    let users = try db.query[User]("select id, name, email, score, is_active, role, 'extra' as unused from users order by id")
+    assert(len(users) == 3)
+    assert(users[0].name == "Ana" and users[0].email == "ana@example.com" and users[0].score == 1.5 and users[0].is_active and users[0].role == Role.Admin)
+    assert(users[1].email == null and users[1].score == 2.0 and !users[1].is_active and users[1].role == Role.Member)
+    assert(users[0].note == "none")
+    let empty = try db.query[User]("select id, name, email, score, is_active, role from users where id > 100")
+    assert(len(empty) == 0)
+
+    let orders = try db.query_with[OrderRow](
+        """
+        select o.id, o.total, c.name as customer
+        from orders o join customers c on c.id = o.customer_id
+        where o.created_at >= :since and c.city = :city and o.total > :min_total
+        order by o.total desc limit :limit
+        """,
+        @(since = "2026-01-01", city = "Recife", min_total = 100.0, limit = 20))
+    assert(len(orders) == 2)
+    assert(orders[0].id == 5 and orders[0].total == 300.0 and orders[0].customer == "Ana")
+    assert(orders[1].id == 1)
+
+    let one = try db.query_one_with[User]("select id, name, email, score, is_active, role from users where name = :name", @(name = "Cy"))
+    if one: found then
+        assert(found.id == 3 and found.score == 3.25)
+    else
+        assert(false)
+    end
+    let none = try db.query_one_with[User]("select id, name, email, score, is_active, role from users where name = :name", @(name = "Zed"))
+    assert(none == null)
+    let first = try db.query_one[Plain]("select id from users order by id desc")
+    assert(first != null)
+    let count = try db.query_one[int]("select count(*) from users")
+    assert(count == 3)
+    let average = try db.query_one[float]("select avg(score) from users")
+    assert(average != null)
+    let renamed = try db.query[Renamed, Db]("select name from users order by id")
+    assert(renamed[1].user_name == "Bo")
+
+    expect_message(db, "select id, name from users", sqlite::SqliteError.MissingColumn, "no column for field 'email'")
+    expect_message(db, "select 'x' as id, name, email, score, is_active, role from users", sqlite::SqliteError.TypeMismatch, "column 'id' in row 1: expected an int, found text")
+    expect_message(db, "select id, null as name, email, score, is_active, role from users", sqlite::SqliteError.TypeMismatch, "column 'name' in row 1: expected text, found NULL")
+    expect_message(db, "select id, name, email, score, 2 as is_active, role from users", sqlite::SqliteError.TypeMismatch, "expected a bool (0 or 1)")
+    expect_message(db, "select id, name, email, score, is_active, 'Owner' as role from users", sqlite::SqliteError.TypeMismatch, "'Owner' isn't one of the enum's variants")
+    expect_message(db, "select id, id, name, email, score, is_active, role from users", sqlite::SqliteError.TypeMismatch, "two columns are named 'id'")
+    expect_message(db, "select id, cast(x'ff' as text) as name, email, score, is_active, role from users", sqlite::SqliteError.TypeMismatch, "valid UTF-8 text")
+    expect_message(db, "select * from nope", sqlite::SqliteError.InvalidSql, "no such table")
+    expect_message(db, "select 1; select 2", sqlite::SqliteError.InvalidSql, "one statement")
+
+    let big = try db.execute("create table big (n integer, label text); with recursive c(n) as (select 1 union all select n + 1 from c where n < 2000) insert into big select n, 'label number ' || n from c")
+    assert(big.rows == 2000)
+    let mut has_failed = false
+    db.query[Plain]("select n as id from big", max_bytes = 1000) catch e then
+        assert(e == sqlite::SqliteError.TooLarge)
+        has_failed = true
+    end
+    assert(has_failed)
+    let labels = try db.query_with[OrderRow]("select n as id, n * 1.5 as total, label as customer from big where n <= :limit order by n", @(limit = 2000), max_bytes = -1)
+    assert(len(labels) == 2000)
+    let mut total = 0
+    for labels: row, index do
+        assert(row.id == index + 1)
+        assert(row.customer == "label number ${index + 1}")
+        total = total + row.id
+    end
+    assert(total == 2001000)
+
+    let mut tasks: []Task[int, sqlite::SqliteError] = []
+    for 1..10: i do
+        let mut started = spawn(func() -> sqlite::SqliteError!int
+            return try count_users(db)
+        end)
+        append(tasks, started)
+    end
+    for tasks: started do
+        assert((try await(started)) == 3)
+    end
+
+    db.close()
+    has_failed = false
+    db.query[Plain]("select 1 as id") catch e then
+        assert(e == sqlite::SqliteError.Closed)
+        has_failed = true
+    end
+    assert(has_failed)
+end

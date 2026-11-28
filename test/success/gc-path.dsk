@@ -1,0 +1,26 @@
+import "std/path"
+import "std/string"
+import "std/array"
+import "std/os"
+
+func main() -> !void
+    let prefix = try string::repeat("long", 256)
+    let cwd = try os::cwd()
+    let mut saved: []string = []
+    for 0..4000: i do
+        let filename = "record$i.dsk"
+        let text = path::join([prefix, filename])
+        assert(path::basename(text) == filename)
+        assert(path::dirname(text) == prefix)
+        assert(path::extension(text) == ".dsk")
+        assert(path::stem(text) == "record$i")
+        assert(path::normalize("${text}/../.env") == path::join([prefix, ".env"]))
+        let absolute = try path::resolve(cwd, text)
+        assert(try path::relative(cwd, absolute) == text)
+        if i % 500 == 0 then
+            array::append(saved, path::stem(text))
+        end
+    end
+    assert(array::len(saved) == 9)
+    assert(saved[0] == "record0" and saved[8] == "record4000")
+end

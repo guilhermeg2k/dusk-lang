@@ -1,0 +1,120 @@
+import "std/time"
+import "std/string"
+import "std/array"
+import "std/task"
+
+func check(zone: time::TimeZone, text: string, expected: int) -> !void
+    assert(zone.offset_seconds(try time::from_iso_string(text)) == expected)
+end
+
+func check_unknown(name: string) -> void
+    let zone = time::load_timezone(name) catch e then
+        assert(e == time::TimeError.UnknownTimeZone)
+        return
+    end
+    assert(false)
+end
+
+func check_fixed() -> !void
+    let minimum = time::from_unix_ms(-9223372036854775807 - 1)
+    let maximum = time::from_unix_ms(9223372036854775807)
+    let offsets = [-86399, -12600, -30, 0, 30, 19800, 86399]
+    let names = ["UTC-23:59:59", "UTC-03:30", "UTC-00:00:30", "UTC", "UTC+00:00:30", "UTC+05:30", "UTC+23:59:59"]
+    for 0..6: i do
+        let zone = try time::fixed_timezone(offsets[i])
+        assert(zone.name() == names[i])
+        assert(zone.offset_seconds(minimum) == offsets[i])
+        assert(zone.offset_seconds(maximum) == offsets[i])
+        assert(copy(zone).name() == names[i])
+    end
+    for [-86400, 86400, -9223372036854775807 - 1, 9223372036854775807]: offset do
+        let zone = time::fixed_timezone(offset) catch e then
+            assert(e == time::TimeError.InvalidOffset)
+            continue
+        end
+        assert(false)
+    end
+    let utc = time::utc_timezone()
+    assert(utc.name() == "UTC")
+    assert(utc.offset_seconds(minimum) == 0)
+    assert(utc.offset_seconds(maximum) == 0)
+    let named_utc = try time::load_timezone("UTC")
+    assert(named_utc.name() == "UTC")
+    assert(named_utc.offset_seconds(minimum) == 0)
+    assert(named_utc.offset_seconds(maximum) == 0)
+end
+
+func check_named() -> !void
+    let new_york = try time::load_timezone("America/New_York")
+    let eastern = try time::load_timezone("US/Eastern")
+    assert(new_york.name() == "America/New_York")
+    assert(eastern.name() == "US/Eastern")
+    try check(new_york, "2024-03-10T06:59:59.999Z", -18000)
+    try check(new_york, "2024-03-10T07:00:00Z", -14400)
+    try check(new_york, "2024-03-10T07:00:00.001Z", -14400)
+    try check(new_york, "2024-11-03T05:59:59.999Z", -14400)
+    try check(new_york, "2024-11-03T06:00:00Z", -18000)
+    try check(new_york, "2400-01-15T00:00:00Z", -18000)
+    try check(new_york, "2400-07-15T00:00:00Z", -14400)
+    assert(new_york.offset_seconds(time::from_unix_ms(-9223372036854775807 - 1)) == -17762)
+    try check(eastern, "2400-07-15T00:00:00Z", -14400)
+    let paris = try time::load_timezone("Europe/Paris")
+    try check(paris, "1800-01-01T00:00:00Z", 561)
+    let kathmandu = try time::load_timezone("Asia/Kathmandu")
+    try check(kathmandu, "2024-01-15T00:00:00Z", 20700)
+    let sydney = try time::load_timezone("Australia/Sydney")
+    try check(sydney, "2400-01-15T00:00:00Z", 39600)
+    try check(sydney, "2400-07-15T00:00:00Z", 36000)
+    let lord_howe = try time::load_timezone("Australia/Lord_Howe")
+    try check(lord_howe, "2024-01-15T00:00:00Z", 39600)
+    try check(lord_howe, "2024-07-15T00:00:00Z", 37800)
+    let dublin = try time::load_timezone("Europe/Dublin")
+    try check(dublin, "2400-01-15T00:00:00Z", 0)
+    try check(dublin, "2400-07-15T00:00:00Z", 3600)
+    let sao_paulo = try time::load_timezone("America/Sao_Paulo")
+    try check(sao_paulo, "2018-01-15T00:00:00Z", -7200)
+    try check(sao_paulo, "2025-01-15T00:00:00Z", -10800)
+    try check(sao_paulo, "2400-07-15T00:00:00Z", -10800)
+    let west = try time::load_timezone("Etc/GMT+5")
+    try check(west, "2024-01-15T00:00:00Z", -18000)
+    for ["", "utc", "America/new_york", "../UTC", "/etc/localtime", "Etc/../UTC", "Etc//UTC", "Etc/UTC/", "UTC\0", "right/UTC", "posix/UTC", "NoSuch/Zone", "UTC0", "UTC+05:30"]: name do
+        check_unknown(name)
+    end
+    check_unknown(try string::repeat("A", 10000))
+end
+
+func check_gc_and_tasks() -> !void
+    let early = try time::load_timezone("Europe/Paris")
+    let minimum = time::from_unix_ms(-9223372036854775807 - 1)
+    let maximum = time::from_unix_ms(9223372036854775807)
+    let mut kept: []time::TimeZone = []
+    let aliases = ["US/Eastern", "America/New_York"]
+    for 0..19999: i do
+        let name = aliases[i % 2]
+        let zone = try time::load_timezone(name)
+        assert(zone.name() == name)
+        assert(zone.offset_seconds(minimum) == -17762)
+        let offset = zone.offset_seconds(maximum)
+        assert(offset == -14400 or offset == -18000)
+        if i % 5000 == 0 then
+            array::append(kept, copy(zone))
+        end
+    end
+    assert(kept[0].name() == "US/Eastern")
+    assert(kept[3].offset_seconds(minimum) == -17762)
+    assert(early.name() == "Europe/Paris")
+    assert(early.offset_seconds(minimum) == 561)
+    let child = spawn(func() -> time::TimeError!time::TimeZone
+        task::sleep(time::milliseconds(0))
+        return try time::load_timezone("Australia/Sydney")
+    end)
+    let zone = try await(child)
+    assert(zone.name() == "Australia/Sydney")
+    assert(early.offset_seconds(minimum) == 561)
+end
+
+func main() -> !void
+    try check_fixed()
+    try check_named()
+    try check_gc_and_tasks()
+end

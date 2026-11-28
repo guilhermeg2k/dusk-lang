@@ -1,0 +1,4 @@
+let x: int
+
+func main() -> void
+end

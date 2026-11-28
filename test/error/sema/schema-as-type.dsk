@@ -1,0 +1,5 @@
+schema Api end
+
+func main() -> void
+    let mut value: ?Api = null
+end

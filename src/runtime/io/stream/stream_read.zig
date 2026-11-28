@@ -19,6 +19,7 @@ pub const IoError = enum {
     UnexpectedEnd,
     HandshakeFailed,
     TooLarge,
+    NotTerminal,
     Other,
 };
 

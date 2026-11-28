@@ -1,0 +1,4 @@
+import "std/process"
+func main() -> void
+    let child = process::Child(0)
+end

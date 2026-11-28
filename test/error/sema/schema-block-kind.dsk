@@ -1,0 +1,12 @@
+schema Api
+    enum User
+        name: "full_name"
+    end
+end
+
+struct User
+    name: string
+end
+
+func main() -> void
+end

@@ -1,0 +1,118 @@
+import "std/json"
+import "std/array"
+import "std/map"
+
+struct User
+    name: string
+    age: int
+    email: ?string = null
+end
+
+enum Color
+    Red
+    Green
+end
+
+enum Alias
+    First = 7
+    Second = 7
+end
+
+union Response
+    user: User
+    message: string
+end
+
+union Maybe
+    number: ?int
+    text: string
+end
+
+union Tree
+    leaf: int
+    children: []Tree
+end
+
+struct Node
+    value: int
+    next: ?Node = null
+end
+
+struct Box[T]
+    value: T
+end
+
+func main() -> !void
+    let user: User = try json::decode("{\"age\":42,\"name\":\"Ada\"}")
+    assert(user.name == "Ada")
+    assert(user.age == 42)
+    assert(user.email == null)
+    assert((try json::encode(user)) == "{\"name\":\"Ada\",\"age\":42,\"email\":null}")
+    let explicit = try json::decode[User]("{\"name\":\"Bea\",\"age\":9,\"email\":\"b@x\"}")
+    assert(explicit.email == "b@x")
+    assert((try json::decode[int]("9223372036854775807")) == 9223372036854775807)
+    assert((try json::decode[int]("-9223372036854775808")) == -9223372036854775807 - 1)
+    assert((try json::decode[byte]("255")) == 255)
+    assert((try json::decode[float]("1e2")) == 100.0)
+    assert((try json::decode[bool]("true")))
+    assert((try json::decode[string]("\"a\\nb\\u263a\"")) == "a\nb☺")
+    assert((try json::encode("a\nb☺")) == "\"a\\nb☺\"")
+    let nullable: ?int = try json::decode("null")
+    assert(nullable == null)
+    let present: ?int = try json::decode("5")
+    assert(present == 5)
+    assert((try json::encode(present)) == "5")
+    let values = try json::decode[[]?int]("[1,null,3]")
+    assert(array::len(values) == 3)
+    assert(values[0] == 1)
+    assert(values[1] == null)
+    assert((try json::encode(values)) == "[1,null,3]")
+    let mapping = try json::decode[map[string, ?int]]("{\"b\":null,\"a\":3}")
+    assert(map::has(mapping, "b"))
+    assert(!map::has(mapping, "missing"))
+    assert(mapping["a"] == 3)
+    assert((try json::encode(mapping)) == "{\"b\":null,\"a\":3}")
+    assert((try json::decode[Color]("\"Green\"")) == Color.Green)
+    assert((try json::encode(Color.Red)) == "\"Red\"")
+    assert((try json::decode[Alias]("\"Second\"")) == Alias.First)
+    assert((try json::encode(Alias.Second)) == "\"First\"")
+    let response = try json::decode[Response]("{\"message\":\"ok\"}")
+    assert(response.message == "ok")
+    assert((try json::encode(response)) == "{\"message\":\"ok\"}")
+    let nested = try json::decode[Response]("{\"user\":{\"name\":\"Ada\",\"age\":42}}")
+    if nested.user: found then
+        assert(found.email == null)
+    else
+        assert(false)
+    end
+    let node = try json::decode[Node]("{\"value\":1,\"next\":{\"value\":2}}")
+    if node.next: next then
+        assert(next.value == 2)
+        assert(next.next == null)
+    else
+        assert(false)
+    end
+    assert((try json::encode(node)) == "{\"value\":1,\"next\":{\"value\":2,\"next\":null}}")
+    let nullable_response = try json::decode[?Response]("null")
+    assert(nullable_response == null)
+    let maybe = try json::decode[Maybe]("{\"number\":null}")
+    assert((try json::encode(maybe)) == "{\"number\":null}")
+    let tree = try json::decode[Tree]("{\"children\":[{\"leaf\":1}]}")
+    assert((try json::encode(tree)) == "{\"children\":[{\"leaf\":1}]}")
+    assert((try json::decode[string]("\"\\uD83D\\uDE00\"")) == "😀")
+    assert((try json::decode[string]("\"\\u0000\"")) == "\u{0}")
+    assert((try json::encode("\u{0}")) == "\"\\u0000\"")
+    let box = try json::decode[Box[User]]("{\"value\":{\"name\":\"Ada\",\"age\":42}}")
+    assert(box.value.name == "Ada")
+    let absent_id: ?int = null
+    let known_id: ?int = 5
+    assert((try json::encode(@(id = absent_id))) == "{\"id\":null}")
+    assert((try json::encode(@(id = known_id))) == "{\"id\":5}")
+    assert((try encode_id(7)) == "{\"id\":7}")
+    assert((try json::encode(@(id = known_id, tags = ["a"]))) == "{\"id\":5,\"tags\":[\"a\"]}")
+end
+
+func encode_id(value: int) -> !string
+    let id: ?int = value
+    return try json::encode(@(id = id))
+end

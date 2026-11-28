@@ -3,6 +3,8 @@ pub const Loc = @import("lexer.zig").Loc;
 pub const CompileErrorReporter = struct {
     const Self = @This();
 
+    pub var has_reported_error: bool = false;
+
     src: []const u8,
     allocator: std.mem.Allocator,
     copy_context: ?CopyContext = null,
@@ -294,6 +296,16 @@ pub const CompileErrorReporter = struct {
     pub fn notMutable(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is not mutable", .{identifier}), loc);
         return error.NotMutable;
+    }
+
+    pub fn variableNotInitialized(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' may not be initialized here", .{identifier}), loc);
+        return error.VariableNotInitialized;
+    }
+
+    pub fn cantInferNullType(self: *Self, loc: Loc) CompileError {
+        self.log("Cannot infer type for 'null': add a type annotation like 'let x: ?int = null'", loc);
+        return error.CantInferNullType;
     }
 
 
@@ -621,6 +633,21 @@ pub const CompileErrorReporter = struct {
         return error.TraitRefersToItself;
     }
 
+    pub fn invalidSchema(self: *Self, message: []const u8, loc: Loc) CompileError {
+        self.log(message, loc);
+        return error.InvalidSchema;
+    }
+
+    pub fn slotNeedsSchema(self: *Self, slot: []const u8, found: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is a schema slot, so it must be a schema, not '{s}'", .{ slot, found }), loc);
+        return error.InvalidSchema;
+    }
+
+    pub fn formatLacksMethod(self: *Self, format_name: []const u8, verb: []const u8, type_name: []const u8, reason: []const u8, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't {s} '{s}': {s} and it has no method '{s}'", .{ format_name, verb, type_name, reason, method }), loc);
+        return error.FormatLacksMethod;
+    }
+
     pub fn doesntFitTrait(self: *Self, type_name: []const u8, slot: []const u8, reason: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "{s} doesn't fit {s}: {s}", .{ type_name, slot, reason }), loc);
         return error.DoesntFitTrait;
@@ -737,7 +764,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn methodAsValue(self: *Self, identifier: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Method '{s}' can't be used as a value yet: wrap the call in a lambda instead, like 'func() -> return x.{s}()'", .{ identifier, identifier }), loc);
+        self.log(try allocPrint(self.allocator, "Bound method '{s}' can't be used as a value: use 'Type.{s}' or wrap the call in a lambda like 'func() -> return x.{s}()'", .{ identifier, identifier, identifier }), loc);
         return error.MethodAsValue;
     }
 
@@ -878,6 +905,11 @@ pub const CompileErrorReporter = struct {
             loc,
         );
         return error.NotAnErrorSet;
+    }
+
+    pub fn errorSetRefersToItself(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Error set '{s}' refers to itself", .{identifier}), loc);
+        return error.ErrorSetRefersToItself;
     }
 
     pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) CompileError {
@@ -1029,11 +1061,13 @@ pub const CompileErrorReporter = struct {
     fn logAt(self: *Self, message: []const u8, loc: ?Loc) void {
         if (loc) |known| return self.log(message, known);
         if (@import("builtin").is_test) return;
+        has_reported_error = true;
         std.debug.print("error: {s}\n", .{self.withCopyContext(message)});
     }
 
     pub fn log(self: *Self, message: []const u8, loc: Loc) void {
         if (@import("builtin").is_test) return;
+        has_reported_error = true;
         const msg = self.withCopyContext(message);
 
         const exactLoc = self.findExactLoc(loc.start);
@@ -1220,6 +1254,8 @@ pub const CompileError = error{
     TraitRefersToItself,
     TraitUsedAsType,
     DoesntFitTrait,
+    FormatLacksMethod,
+    InvalidSchema,
     TypeListWithTrait,
     NotATrait,
     ClashingTraitMethods,
@@ -1256,12 +1292,15 @@ pub const CompileError = error{
     InvalidConstantType,
     CatchBlockMustLeave,
     NotAnErrorSet,
+    ErrorSetRefersToItself,
     CantInferMapLiteralType,
     InvalidMapKey,
     DuplicateMapKey,
     ReservedTypeName,
     CantAssignThroughOptionalChain,
     CyclicDefault,
+    VariableNotInitialized,
+    CantInferNullType,
     SelfTypeOutsideType,
 };
 

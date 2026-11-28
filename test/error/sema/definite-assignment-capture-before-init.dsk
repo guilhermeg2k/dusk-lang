@@ -1,0 +1,8 @@
+func main() -> void
+    let mut x: int
+    let f = func() -> int
+        return x
+    end
+    x = 1
+    let _ = f()
+end

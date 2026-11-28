@@ -1,6 +1,6 @@
 # VM internals
 
-How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, the garbage collector and tasks. It describes the code as of v0.16. The language itself is described in [language-ref.md](language-ref.md); how the standard library's modules work inside the runtime (files, streams, TCP, TLS, HTTP, compression) is in [std-internals.md](std-internals.md).
+How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, the garbage collector and tasks. It describes the code as of v0.17 (in development). The language itself is described in [language-ref.md](language-ref.md); how the standard library's modules work inside the runtime (files, streams, TCP, TLS, HTTP, compression) is in [std-internals.md](std-internals.md).
 
 The source files involved:
 
@@ -43,12 +43,13 @@ Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the 
 
 ```
 Program
-├── functions: []Function          one per extern, method, function and lambda, then $main last
+├── functions: []Function          one per extern, method, function and lambda, $main, then field-default closures
 ├── static_closures: []Closure     one per function, same index (see 3.2)
 ├── string_pool: StringPool        every string literal of the program
 ├── struct_descriptors: []StructDescriptor
 ├── union_descriptors: []UnionDescriptor
 ├── error_names: [][]const u8      error id -> name, for unhandled-error messages
+├── serialization_plans: []Plan    one per (type, schema) a program serializes (std-internals 13)
 └── main_func_index
 ```
 
@@ -563,6 +564,8 @@ for each register i < owned with bit i set: copy stack[base + i]
 
 So the two rules for adding an allocating instruction are: **record a heap map in codegen, and set `cur_inst` in the VM before allocating.** A frame stopped at an instruction with no heap map fails the debug assertion in `copyTaskRoots`.
 
+**Temporary roots.** A native that allocates many objects while building one result (the JSON decoder and encoder in `json_codec.zig`) can't keep pointers in Zig locals across allocations, since a collection moves them. It registers each value it still needs with `Heap.protectValue(value, kind)`, which returns an index, reads it back with `protectedValue(index)` after any allocation, and drops everything it added with `restoreRootCount(count)` before returning.
+
 A register's type is changed only *after* the heap map of the instruction that writes it is recorded. For example, `ARRAY_INIT R[3]` records its map while `R[3]` is still typed `void`. So the GC never reads a target register whose content is stale.
 
 ### 9.3 Copying
@@ -593,7 +596,7 @@ Clones are byte copies with `gc_forward` cleared (and `relocated`, for arrays).
 
 Then `Scheduler.freeUnreachableTasks` frees every done task that no `Task` handle reached, except failed tasks nobody awaited, which are kept for the report at the end. Afterwards, the new arena becomes active and the threshold is updated. If the old arena kept more capacity than the new threshold, it is reset with that limit and `gc_queue` is shrunk, so memory goes back to the OS after a peak.
 
-**Resources.** A std struct that owns a native resource (the list is in [std-internals](std-internals.md) section 9) keeps its `int` id for the natives (`~stream_id`, `~listener_id`...) plus a file-only `owner` field: a `Resource` object holding only an id into `EventLoop.resources` (`ResourceRegistry`, `tasks/loop/resource_registry.zig`: kind, table id, slot version). `copy()` shares it, so every copy holds one owner. `Heap.resources` lists the live owners; at the end of a collection `sweepResources` keeps the ones that were moved (`gc_forward`) and puts the others' ids in `dead_resource_ids`. `gc.zig` doesn't know the event loop: `VM.maybeCollectGarbage` hands each dead id to `EventLoop.closeResource`, which takes the slot (ignoring stale ids whose `slot_version` changed, including slots already freed by `close()` / `finish()` via `release`) and closes it by kind. The `resource` type exists only in std modules and the prelude.
+**Resources.** A std struct that owns a native resource (the list is in [std-internals](std-internals.md) section 14) keeps its `int` id for the natives (`~stream_id`, `~listener_id`...) plus a file-only `owner` field: a `Resource` object holding only an id into `EventLoop.resources` (`ResourceRegistry`, `tasks/loop/resource_registry.zig`: kind, table id, slot version). `copy()` shares it, so every copy holds one owner. `Heap.resources` lists the live owners; at the end of a collection `sweepResources` keeps the ones that were moved (`gc_forward`) and puts the others' ids in `dead_resource_ids`. `gc.zig` doesn't know the event loop: `VM.maybeCollectGarbage` hands each dead id to `EventLoop.closeResource`, which takes the slot (ignoring stale ids whose `slot_version` changed, including slots already freed by `close()` / `finish()` via `release`) and closes it by kind. The `resource` type exists only in std modules and the prelude.
 
 ## 10. `copy(x)`: deep copy
 
@@ -673,8 +676,8 @@ WakeResult {                    // src/runtime/tasks/scheduler.zig
 | Native | What it does |
 |---|---|
 | `await(t)` | Marks `t` as awaited. If `t` is done, returns its result (or fails with its error id) without parking. If `t` is the running task, a runtime error. Otherwise adds the running task to `t.waiters` and parks. |
-| `sleep(0)` | Delivers `void` to the running task right away (back of the queue) and parks. |
-| `sleep(ms)` | Starts a libuv timer for the running task and parks; the timer's callback wakes it with `void`. |
+| `sleep` with no time left | `task::sleep` (a Dusk function) rounds its `Duration` up to milliseconds and calls the native `~sleep_ms`. At `0` or below, it delivers `void` to the running task right away (back of the queue) and parks. |
+| `sleep` with time left | `~sleep_ms` starts a libuv timer for the running task and parks; the timer's callback wakes it with `void`. |
 | `std/fs` functions | Copy their paths (and the data to write) into an `FsJob`, start it on libuv's thread pool ([std-internals](std-internals.md) 2) and park; the job's callback wakes the task with the result or an `FsError` variant. |
 | stream reads (stdin, sockets, files) | Return right away when the stream's buffer already holds the answer; otherwise park as the stream's waiter ([std-internals](std-internals.md) 3), woken by data, the end of input, a timeout or `close()`. |
 
@@ -682,11 +685,21 @@ WakeResult {                    // src/runtime/tasks/scheduler.zig
 
 ### 11.4 The event loop
 
-`EventLoop` (`src/runtime/tasks/event_loop.zig`), the fs jobs (`src/runtime/io/fs/fs_job.zig`, [std-internals](std-internals.md) 2), the streams (`src/runtime/io/stream/`, [std-internals](std-internals.md) 3), TCP (`src/runtime/io/net/tcp.zig`, [std-internals](std-internals.md) 4) and the trust store (`src/runtime/io/net/trust_store.zig`, [std-internals](std-internals.md) 5) are the only code that calls libuv, apart from `uv_guess_handle` in the `~is_terminal_fd` native. mbedTLS is called only from `src/runtime/io/net/tls_glue.c` ([std-internals](std-internals.md) 5). `EventLoop` creates its `uv_loop_t` on first use (`ensureLoopStarted`: a `sleep` above 0, an fs call, a stream, a socket, a compression job, or a connection slot wait), so programs that use none of them don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
+`EventLoop` (`src/runtime/tasks/event_loop.zig`), the fs jobs (`src/runtime/io/fs/fs_job.zig`, [std-internals](std-internals.md) 2), the streams (`src/runtime/io/stream/`, [std-internals](std-internals.md) 3), TCP (`src/runtime/io/net/tcp.zig`, [std-internals](std-internals.md) 4), the trust store (`src/runtime/io/net/trust_store.zig`, [std-internals](std-internals.md) 5) and the worker dispatch (`src/runtime/tasks/loop/worker_dispatch.zig`, 11.5) are the only code that calls libuv, apart from `uv_guess_handle` in the `~is_terminal_fd` native. mbedTLS is called only from `src/runtime/io/net/tls_glue.c` ([std-internals](std-internals.md) 5). `EventLoop` creates its `uv_loop_t` on first use (`ensureLoopStarted`: a `sleep` above 0, an fs call, a stream, a socket, a compression job, a connection slot wait or a worker pool), so programs that use none of them don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
 
-libuv's structs differ per OS, so Dusk mostly doesn't use their layout: `src/runtime/tasks/loop/uv.zig` declares the functions it calls with opaque `Loop`, `Handle` and `Request` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`, `uv_req_size`). The few plain C structs whose fields Dusk reads or fills are mirrored as `extern struct`s: `Stat` (`uv_stat_t`, with `c_long` times so it also matches Windows), `Buffer` (`uv_buf_t`, whose field order differs on Windows), the first public fields of `uv_dirent_t` and `uv_dir_t`, and `SocketAddress`, 128 zeroed bytes big enough for any `sockaddr` (Dusk only reads the port, at the same offset for IPv4 and IPv6). `addrinfo` comes from Zig's `std.c`, which already knows each OS's layout. Every handle's `data` (`uv_handle_set_data`) points to a `HandleOwner` field (`kind`: `timer`, `stream`, `stream_timer`, `stream_handshake_timer`, `stream_write_timer`, `listener`, `listener_timer`, `open_timer` or `slot_timer`, the timeout of an HTTP request waiting for a connection slot) inside the struct that owns it, and `@fieldParentPtr` gets from the field back to the owner, so `onHandleClosed` and the exit cleanup know what they're freeing. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
+libuv's structs differ per OS, so Dusk mostly doesn't use their layout: `src/runtime/tasks/loop/uv.zig` declares the functions it calls with opaque `Loop`, `Handle` and `Request` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`, `uv_req_size`). The few plain C structs whose fields Dusk reads or fills are mirrored as `extern struct`s: `Stat` (`uv_stat_t`, with `c_long` times so it also matches Windows), `Buffer` (`uv_buf_t`, whose field order differs on Windows), the first public fields of `uv_dirent_t` and `uv_dir_t`, and `SocketAddress`, 128 zeroed bytes big enough for any `sockaddr` (Dusk only reads the port, at the same offset for IPv4 and IPv6). `addrinfo` comes from Zig's `std.c`, which already knows each OS's layout. Every handle's `data` (`uv_handle_set_data`) points to a `HandleOwner` field (`kind`: `timer`, `stream`, `stream_timer`, `stream_handshake_timer`, `stream_write_timer`, `listener`, `listener_timer`, `open_timer`, `slot_timer` (the timeout of an HTTP request waiting for a connection slot), `process`, `process_timer`, `process_pipe`, `signal`, `terminal_output` or `worker_async` (a worker pool's wake-up handle, 11.5)) inside the struct that owns it, and `@fieldParentPtr` gets from the field back to the owner, so `onHandleClosed` and the exit cleanup know what they're freeing. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
 
-### 11.5 Freeing tasks
+### 11.5 Worker pools
+
+Blocking native work that shouldn't wait behind file operations in libuv's shared pool runs on a dedicated `WorkerPool` (`src/runtime/tasks/loop/worker_pool.zig`): a fixed set of threads started when the pool is created, with an explicit `thread_count` and `max_outstanding` per pool (no global pool, no sizing from the CPU count). It imports neither libuv nor the VM. A job is a `Job` header embedded in the consumer's own native struct: `execute` (runs on a worker), `finish` (runs on the loop thread), a queue link and its `outcome` (`pending`, `executed` or `abandoned`). The pool's two intrusive FIFO queues (queued and completed) and its counters are guarded by one `std.Io.Mutex`, and idle workers sleep on a `std.Io.Condition`; both use a pool-owned `std.Io.Threaded` initialized statically (`init_single_threaded`), whose futex calls go straight to the OS, so creating a pool doesn't install signal handlers. Workers run `execute` and the notifier outside the lock.
+
+- `submit` never waits: it fails with `QueueFull` when `max_outstanding` jobs are queued, running or completed but not yet taken, and with `ShuttingDown` once the pool stops; a refused job stays the caller's. `takeCompleted` hands back one finished job and frees its slot.
+- A worker publishes a finished job to the completed queue, then calls the notifier, and never touches the job again. Workers never touch the scheduler, tasks, VM stacks, heap objects or `pending_operations`; a job's results live in the consumer's struct.
+- `stopAndJoin` refuses new jobs, moves queued ones to the completed queue as `abandoned`, lets running ones finish and joins every thread. A native call that never returns blocks it: there's no cancellation.
+
+`WorkerDispatch` (`src/runtime/tasks/loop/worker_dispatch.zig`) connects a pool to the event loop. `EventLoop.startWorkerDispatch(options)` creates one (each consumer creates its own when it first needs it) and keeps it in `worker_dispatches`. It owns one `uv_async_t` per pool (owner kind `worker_async`) whose `uv_async_send` is the notifier; a failing send panics instead of leaving tasks parked forever. An accepted job adds one to `pending_operations` and to the dispatch's `outstanding` count, and the async handle is referenced only while `outstanding` is above 0, so an idle pool never keeps the program running while a pool job alone keeps the loop waiting. Notifications can merge, so the async callback drains every completed job: it updates the counts and calls `finish(job, .deliver)`, where the consumer wakes its task with a `WakeResult` the usual way (11.3); an abandoned job, or any job once the loop is shutting down, gets `.discard`, so its resources are freed without waking anything. A `finish` that fails is recorded in `callback_failure` and the other jobs still finish. At exit, `EventLoop.deinit` shuts each dispatch down right after reaping child processes: `stopAndJoin`, then every terminal job is finished with `.discard` (exactly once per accepted job), then the async handle is closed and its close callback frees the pool and the dispatch.
+
+### 11.6 Freeing tasks
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 

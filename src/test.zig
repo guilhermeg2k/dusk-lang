@@ -6,6 +6,8 @@ const Stdio = @import("dusk.zig").Stdio;
 const ModuleLoader = @import("compiler/modules.zig").ModuleLoader;
 const Lexer = @import("compiler/lexer.zig").Lexer;
 const uv = @import("runtime/tasks/loop/uv.zig");
+const WorkerPool = @import("runtime/tasks/loop/worker_pool.zig").WorkerPool;
+const PoolJob = @import("runtime/tasks/loop/worker_pool.zig").Job;
 
 fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -74,6 +76,549 @@ test "sema: anonymous coercions preserve private-field visibility" {
     try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
 }
 
+test "sqlite: the bundled library links and reports its version" {
+    try runCase("sqlite-version.dsk");
+}
+
+test "sqlite: open, execute, errors with diagnostics, ordering on one connection, read-only, close and dropped databases" {
+    try runCaseInTmpDir("sqlite-connections.dsk");
+}
+
+test "sqlite: named parameters from structs, schemas, unknown and missing parameters, one statement, statement cache" {
+    try runCase("sqlite-parameters.dsk");
+    try runCaseError("sema/sqlite-array-parameter.dsk", error.FormatLacksMethod);
+}
+
+test "sqlite: typed queries into structs and scalars, query_one, schemas, decoding errors, max_bytes, tasks" {
+    try runCase("sqlite-queries.dsk");
+    try runCaseError("sema/sqlite-array-column.dsk", error.FormatLacksMethod);
+}
+
+test "sqlite: transactions commit, roll back on error, return values, queue other tasks, reject direct db or stale tx use, report busy conflicts" {
+    try runCaseInTmpDir("sqlite-transactions.dsk");
+    try runCaseRuntimeError("sqlite-db-in-transaction.dsk", error.SqliteDatabaseInTransaction);
+    try runCaseRuntimeError("sqlite-nested-transaction.dsk", error.SqliteDatabaseInTransaction);
+    try runCaseRuntimeError("sqlite-tx-after-transaction.dsk", error.SqliteTransactionClosed);
+}
+
+test "sqlite: per-call timeouts interrupt queries and queued calls, busy_timeout_ms waits or fails, exit interrupts running queries" {
+    try runCaseInTmpDir("sqlite-timeouts.dsk");
+    try runCaseRuntimeError("sqlite-exit-with-query.dsk", error.AssertionFailed);
+}
+
+test "json: typed values, containers, enums, unions, defaults and recursion" {
+    try runCase("json.dsk");
+    try runCase("json-imports.dsk");
+    try runCase("json-errors.dsk");
+    try runCase("json-syntax.dsk");
+    try runCase("json-encode-numbers.dsk");
+    try runCase("gc-json.dsk");
+    try runCaseOutput("json-defaults.dsk", "name\nitems\nname\nitems\nname\nitems\nname\nitems\n");
+}
+
+test "json: native entry points reject invalid UTF-8" {
+    const value = @import("runtime/value.zig");
+    const VM = @import("runtime/vm.zig").VM;
+    const json = @import("runtime/json_codec.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile(
+        \\import "std/json"
+        \\func main() -> !void
+        \\    let text = try json::encode("")
+        \\    let parsed = try json::decode[string](text)
+        \\end
+    );
+    var vm = VM.init(&program, .{}, testing.io);
+    defer vm.deinit();
+    const plan_index = for (program.serialization_plans, 0..) |plan, i| {
+        if (plan.shape == .string) break i;
+    } else return error.TestUnexpectedResult;
+    var encode_descriptor: u16 = 0;
+    var decode_descriptor: u16 = 0;
+    for (program.struct_descriptors, 0..) |descriptor, i| {
+        if (descriptor.heap_bitmap != 0) continue;
+        if (descriptor.field_count == 1) {
+            encode_descriptor = @intCast(i);
+        }
+        if (descriptor.field_count == 2) {
+            decode_descriptor = @intCast(i);
+        }
+    }
+    const encode_options = try value.Struct.init(vm.getCurrentHeapAllocator(), 1, encode_descriptor);
+    encode_options.set(0, .{ .int64 = 128 });
+    const invalid_text = try vm.allocBytesValue(&.{0xff}, .string);
+    const fragments = try value.Array.init(vm.getCurrentHeapAllocator(), .string, 8);
+    var encode_args = [_]value.Value{ invalid_text, .{ .heap_obj = &encode_options.obj }, .{ .int64 = @intCast(plan_index) }, .{ .heap_obj = &fragments.obj } };
+    const encoded = try json.encode(&vm, &encode_args);
+    try testing.expect(encoded.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(json.JsonError.InvalidJson)), encoded.value.int64);
+    const decode_options = try value.Struct.init(vm.getCurrentHeapAllocator(), 2, decode_descriptor);
+    decode_options.set(0, .{ .bool = false });
+    decode_options.set(1, .{ .int64 = 128 });
+    const invalid_document = try vm.allocBytesValue(&.{ '"', 0xff, '"' }, .string);
+    const steps = try value.Array.init(vm.getCurrentHeapAllocator(), .function, 8);
+    var decode_args = [_]value.Value{ invalid_document, value.NULL_VALUE, .{ .heap_obj = &decode_options.obj }, .{ .int64 = @intCast(plan_index) }, .{ .heap_obj = &steps.obj } };
+    const decoded = try json.decode(&vm, &decode_args);
+    try testing.expect(decoded.has_failed);
+    try testing.expectEqual(@as(usize, 0), vm.heap.temporary_roots.items.len);
+    try testing.expectEqual(@as(i64, @intFromEnum(json.JsonError.InvalidJson)), decoded.value.int64);
+}
+
+test "json: unsupported types and context-free calls are compile errors" {
+    try runCaseError("sema/json-buffer.dsk", error.InvalidType);
+    try runCaseError("sema/json-function.dsk", error.InvalidType);
+    try runCaseError("sema/json-error-value.dsk", error.InvalidType);
+    try runCaseError("sema/json-map-key.dsk", error.InvalidType);
+    try runCaseError("sema/json-private-field.dsk", error.InvalidType);
+    try runCaseError("sema/json-nested-private-field.dsk", error.InvalidType);
+    try runCaseError("sema/json-untyped-decode.dsk", error.CantInferSlot);
+}
+
+test "serialization: plan natives read field and variant names" {
+    try runCase("serialization-protocol.dsk");
+}
+
+test "serialization: derived code for enums, unions, maps, bytes, roots and depth" {
+    try runCase("serialization-derive.dsk");
+}
+
+test "serialization: schemas rename, alias, skip and omit fields for each consumer" {
+    try runCase("serialization-schemas.dsk");
+    try runModuleCase("schema-blocks/main.dsk");
+    try runCaseError("sema/schema-unknown-field.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-skip-without-default.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-two-places.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-duplicate-name.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-not-a-schema.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-bad-case.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-slot-needs-schema.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-as-type.dsk", error.InvalidType);
+    try runCaseError("sema/schema-omit-null-not-nullable.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-block-kind.dsk", error.InvalidSchema);
+}
+
+test "serialization: proxies convert values through two functions" {
+    try runCase("serialization-proxies.dsk");
+    try runCase("serialization-proxies-parity.dsk");
+    try runCase("json-proxies-native.dsk");
+    try runCaseError("sema/schema-via-wrong-signature.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-via-not-function.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-type-line-rule.dsk", error.InvalidSchema);
+}
+
+test "serialization: reference formats written in Dusk (JSON-like, record notation, rows)" {
+    try runCase("serialization-json-like-format.dsk");
+    try runCase("serialization-record-format.dsk");
+    try runCase("serialization-rows.dsk");
+    try runCaseError("sema/serialization-missing-capability.dsk", error.FormatLacksMethod);
+}
+
+test "process: captured output, arguments, environment, directory and termination" {
+    try runProcessCase("process-run.dsk");
+}
+
+test "process: interactive pipes, waits, deadlines, kill and close" {
+    try runProcessCase("process-child.dsk");
+}
+
+test "process: output caps, whole-operation deadlines and launch cleanup" {
+    try runProcessCase("process-errors.dsk");
+}
+
+test "process: parked children do not occupy the filesystem pool" {
+    try runProcessCase("process-concurrent.dsk");
+}
+
+test "process: captured results and interactive streams survive collection" {
+    try runProcessCase("process-gc.dsk");
+}
+
+test "process: dropped children and signal streams are released after collection" {
+    try runProcessCase("process-gc-resources.dsk");
+}
+
+test "process: private construction and native access" {
+    try runCaseError("sema/process-child-private.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/process-native-private.dsk", error.NotVisible);
+}
+
+test "process: failed launches release native records before returning" {
+    const VM = @import("runtime/vm.zig").VM;
+    const value = @import("runtime/value.zig");
+    const native = @import("runtime/builtins/std/process.zig");
+    const ProcessError = @import("runtime/io/process/process.zig").ProcessError;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = VM.init(&program, .{}, testing.io);
+    defer vm.deinit();
+    const argv = try vm.allocStringArray(&.{"/dusk/missing/executable"});
+    var args = [_]value.Value{ argv, value.NULL_VALUE, value.NULL_VALUE, .{ .int64 = -1 }, .{ .int64 = 16777216 } };
+    for (0..50) |_| {
+        const result = try native.bindings.get("run_handle").?.native(&vm, &args);
+        try testing.expect(result.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(ProcessError.NotFound)), result.value.int64);
+        try testing.expectEqual(@as(usize, 0), vm.event_loop.live_processes);
+        try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+        try testing.expectEqual(@as(usize, 0), vm.event_loop.processes.liveCount());
+    }
+}
+
+fn runProcessCase(name: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var environment = std.process.Environ.Map.init(arena.allocator());
+    defer environment.deinit();
+    const parent = try std.process.currentPathAlloc(testing.io, arena.allocator());
+    const helper = try std.fs.path.resolve(arena.allocator(), &.{ parent, @import("test_paths").process_fixture });
+    const directory = std.fs.path.dirname(helper).?;
+    try environment.put("PATH", directory);
+    try environment.put("DUSK_PROCESS_PARENT", "parent");
+    const filename = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{name});
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, filename, arena.allocator(), .unlimited);
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const gate = try std.fs.path.resolve(arena.allocator(), &.{ parent, ".zig-cache", "tmp", &temporary.sub_path, "process-gate" });
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io, .environment = &environment, .program_args = &.{ helper, std.fs.path.basename(helper), directory, gate } };
+    try dusk.compileAndRun(source);
+}
+
+test "random: seeded replay, bounds, copy and default draws" {
+    try runCase("random.dsk");
+}
+
+test "random: generator allocation across GC and captured state" {
+    try runCase("gc-random.dsk");
+}
+
+test "random: generator mutation and visibility" {
+    try runCaseError("sema/random-generator-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/random-generator-private.dsk", error.NotVisible);
+    try runCaseError("sema/random-generator-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/random-native-private.dsk", error.NotVisible);
+}
+
+test "random: fixed engine, sampling vectors and non-consuming fast paths" {
+    const random = @import("runtime/random.zig");
+    var engine = random.seeded(0);
+    const expected = [_]u64{ 0x53175d61490b23df, 0x61da6f3dc380d507, 0x5c0fdf91ec9a7bfc };
+    for (expected) |word| {
+        try testing.expectEqual(word, engine.next());
+    }
+    engine = random.seeded(0);
+    try testing.expectEqual(@as(i64, 2), try random.nextInt(&engine, 1, 6));
+    engine = random.seeded(0);
+    try testing.expectEqual(@as(u64, 0x3fd75d61490b23df), @as(u64, @bitCast(random.nextFloat(&engine))));
+    engine = random.seeded(0);
+    var bytes: [9]u8 = undefined;
+    random.fillBytes(&engine, &bytes);
+    try testing.expectEqualSlices(u8, &.{ 0xdf, 0x23, 0x0b, 0x49, 0x61, 0x5d, 0x17, 0x53, 0x07 }, &bytes);
+    const state = engine.s;
+    try testing.expectError(error.InvalidBounds, random.nextInt(&engine, 1, -1));
+    try testing.expectEqual(@as(i64, -1), try random.nextInt(&engine, -1, -1));
+    random.fillBytes(&engine, &.{});
+    try testing.expectEqualSlices(u64, &state, &engine.s);
+}
+
+test "random: secure source failures never fall back to ordinary randomness" {
+    const native = @import("runtime/builtins/std/random.zig");
+    const RandomError = @import("runtime/random.zig").RandomError;
+    const value = @import("runtime/value.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{}, null);
+    defer vm.deinit();
+    var source = RandomSourceProbe{};
+    var vtable = std.Io.failing.vtable.*;
+    vtable.random = RandomSourceProbe.fillRandom;
+    vtable.randomSecure = RandomSourceProbe.fillSecure;
+    vm.io = .{ .userdata = &source, .vtable = &vtable };
+    var args = [_]value.Value{.{ .int64 = 9 }};
+    vm.heap.threshold = 0;
+    const success = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(!success.has_failed);
+    try testing.expectEqualSlices(u8, &.{ 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5 }, value.HeapValue.getParentPtr(value.Bytes, success.value.heap_obj).slice());
+    try testing.expectEqual(@as(usize, 1), source.secure_calls);
+    try testing.expectEqual(@as(usize, 0), source.random_calls);
+    inline for (.{ RandomSourceProbe.Failure.unavailable, RandomSourceProbe.Failure.canceled }) |failure| {
+        source.failure = failure;
+        const result = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+        try testing.expect(result.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(RandomError.EntropyUnavailable)), result.value.int64);
+        try testing.expectEqual(@as(usize, 0), source.random_calls);
+        try testing.expect(vm.random_engine == null);
+    }
+    args[0].int64 = 0;
+    const before = source.secure_calls;
+    const empty = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(!empty.has_failed);
+    try testing.expectEqual(@as(usize, 0), value.HeapValue.getParentPtr(value.Bytes, empty.value.heap_obj).len);
+    try testing.expectEqual(before, source.secure_calls);
+    args[0].int64 = -1;
+    const negative = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(negative.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(RandomError.NegativeSize)), negative.value.int64);
+    args[0].int64 = std.math.maxInt(i64);
+    const allocated = vm.heap.allocated;
+    try testing.expectError(error.OutOfMemory, native.bindings.get("secure_bytes").?.native(&vm, &args));
+    try testing.expectEqual(allocated, vm.heap.allocated);
+    try testing.expectEqual(before, source.secure_calls);
+}
+
+const RandomSourceProbe = struct {
+    const Failure = enum { none, unavailable, canceled };
+
+    random_calls: usize = 0,
+    secure_calls: usize = 0,
+    failure: Failure = .none,
+
+    fn fillRandom(userdata: ?*anyopaque, bytes: []u8) void {
+        const self: *RandomSourceProbe = @ptrCast(@alignCast(userdata.?));
+        self.random_calls += 1;
+        @memset(bytes, 0x3c);
+    }
+
+    fn fillSecure(userdata: ?*anyopaque, bytes: []u8) std.Io.RandomSecureError!void {
+        const self: *RandomSourceProbe = @ptrCast(@alignCast(userdata.?));
+        self.secure_calls += 1;
+        @memset(bytes, 0xa5);
+        switch (self.failure) {
+            .none => {},
+            .unavailable => return error.EntropyUnavailable,
+            .canceled => return error.Canceled,
+        }
+    }
+};
+
+test "random: lazy seeding is per VM and fast paths need no I/O" {
+    const native = @import("runtime/builtins/std/random.zig");
+    const random = @import("runtime/random.zig");
+    const value = @import("runtime/value.zig");
+    const VM = @import("runtime/vm.zig").VM;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = VM.init(&program, .{}, null);
+    defer vm.deinit();
+    var int_args = [_]value.Value{ .{ .int64 = 5 }, .{ .int64 = 5 } };
+    const equal = try native.bindings.get("integer").?.native(&vm, &int_args);
+    try testing.expect(!equal.has_failed);
+    try testing.expectEqual(@as(i64, 5), equal.value.int64);
+    var size_args = [_]value.Value{.{ .int64 = 0 }};
+    inline for (.{ "bytes", "secure_bytes" }) |name| {
+        const empty = try native.bindings.get(name).?.native(&vm, &size_args);
+        try testing.expect(!empty.has_failed);
+    }
+    try testing.expect(vm.random_engine == null);
+    int_args[1].int64 = 4;
+    const invalid = try native.bindings.get("integer").?.native(&vm, &int_args);
+    try testing.expect(invalid.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.InvalidBounds)), invalid.value.int64);
+    var no_args: [0]value.Value = .{};
+    const unsupported = try native.bindings.get("decimal").?.native(&vm, &no_args);
+    try testing.expect(unsupported.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), unsupported.value.int64);
+    try testing.expect(vm.random_engine == null);
+    int_args[1].int64 = 6;
+    const missing_int_source = try native.bindings.get("integer").?.native(&vm, &int_args);
+    try testing.expect(missing_int_source.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), missing_int_source.value.int64);
+    size_args[0].int64 = 1;
+    inline for (.{ "bytes", "secure_bytes" }) |name| {
+        const missing_source = try native.bindings.get(name).?.native(&vm, &size_args);
+        try testing.expect(missing_source.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), missing_source.value.int64);
+    }
+    var source = RandomSourceProbe{};
+    var vtable = std.Io.failing.vtable.*;
+    vtable.random = RandomSourceProbe.fillRandom;
+    vtable.randomSecure = RandomSourceProbe.fillSecure;
+    const io = std.Io{ .userdata = &source, .vtable = &vtable };
+    vm.io = io;
+    const first = try native.bindings.get("decimal").?.native(&vm, &no_args);
+    var expected = random.seeded(0x3c3c3c3c3c3c3c3c);
+    try testing.expectEqual(random.nextFloat(&expected), first.value.float64);
+    const second = try native.bindings.get("decimal").?.native(&vm, &no_args);
+    try testing.expectEqual(random.nextFloat(&expected), second.value.float64);
+    try testing.expectEqual(@as(usize, 1), source.random_calls);
+    var fresh = VM.init(&program, .{}, io);
+    defer fresh.deinit();
+    const restarted = try native.bindings.get("decimal").?.native(&fresh, &no_args);
+    try testing.expectEqual(first.value.float64, restarted.value.float64);
+    try testing.expectEqual(@as(usize, 2), source.random_calls);
+    size_args[0].int64 = 1;
+    const secure = try native.bindings.get("secure_bytes").?.native(&vm, &size_args);
+    try testing.expect(!secure.has_failed);
+    try testing.expectEqual(@as(usize, 1), source.secure_calls);
+    try testing.expectEqual(@as(usize, 2), source.random_calls);
+    try testing.expectEqualSlices(u64, &expected.s, &vm.random_engine.?.s);
+}
+
+test "path: lexical components, normalization and explicit bases" {
+    try runCase("path.dsk");
+}
+
+test "path: GC moves input strings and arrays during native result allocation" {
+    try runCase("gc-path.dsk");
+    const value = @import("runtime/value.zig");
+    const path = @import("runtime/builtins/std/path.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{}, testing.io);
+    defer vm.deinit();
+    const text = try vm.allocBytesValue("folder/.env", .string);
+    const root = try vm.heap.protectValue(text, .string);
+    inline for (.{ .{ "basename", ".env" }, .{ "dirname", "folder" }, .{ "extension", "" }, .{ "stem", ".env" }, .{ "normalize", if (@import("builtin").os.tag == .windows) "folder\\.env" else "folder/.env" } }) |case| {
+        vm.heap.threshold = 0;
+        const args: [*]value.Value = @ptrCast(&vm.heap.temporary_roots.items[root].value);
+        const result = try path.bindings.get(case[0]).?.native(&vm, args[0..1]);
+        try testing.expectEqualStrings(case[1], value.HeapValue.getParentPtr(value.Bytes, result.value.heap_obj).slice());
+    }
+    const parts = try vm.allocStringArray(&.{ "folder", "file.dsk" });
+    const array_root = try vm.heap.protectValue(parts, .array);
+    vm.heap.threshold = 0;
+    const args: [*]value.Value = @ptrCast(&vm.heap.temporary_roots.items[array_root].value);
+    const result = try path.bindings.get("join").?.native(&vm, args[0..1]);
+    const expected = try std.fs.path.join(testing.allocator, &.{ "folder", "file.dsk" });
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, value.HeapValue.getParentPtr(value.Bytes, result.value.heap_obj).slice());
+}
+
+test "path: argument types" {
+    try runCaseError("sema/path-join-non-string.dsk", error.InvalidType);
+    try runCaseError("sema/path-normalize-non-string.dsk", error.InvalidType);
+}
+
+test "path: POSIX and Windows lexical semantics independent of host" {
+    const path = @import("runtime/path.zig");
+    const posix = path.Paths(.posix);
+    const windows = path.Paths(.windows);
+    const allocator = testing.allocator;
+    const posix_normal = try posix.normalize(allocator, "/../../a//./b/../");
+    defer allocator.free(posix_normal);
+    try testing.expectEqualStrings("/a", posix_normal);
+    const leading_parents = try posix.normalize(allocator, "../../a/../b");
+    defer allocator.free(leading_parents);
+    try testing.expectEqualStrings("../../b", leading_parents);
+    const posix_resolved = try posix.resolve(allocator, "/base", "/other/../last");
+    defer allocator.free(posix_resolved);
+    try testing.expectEqualStrings("/last", posix_resolved);
+    const posix_relative = try posix.relative(allocator, "/a/b", "/a/c/leaf");
+    defer allocator.free(posix_relative);
+    try testing.expectEqualStrings("../c/leaf", posix_relative);
+    try testing.expectEqualStrings("a\\b", posix.basename("a\\b"));
+    try testing.expectEqualStrings(".env", windows.stem("C:\\folder\\.env"));
+    try testing.expectEqualStrings(".local", windows.extension("C:\\folder\\.env.local"));
+    try testing.expectEqualStrings("C:\\", windows.dirname("C:\\file").?);
+    try testing.expect(windows.dirname("C:\\") == null);
+    try testing.expectEqualStrings("", windows.basename("C:\\"));
+    try testing.expect(windows.isAbsolute("C:\\folder"));
+    try testing.expect(windows.isAbsolute("\\\\server\\share\\folder"));
+    try testing.expect(!windows.isAbsolute("\\folder"));
+    try testing.expect(!windows.isAbsolute("C:folder"));
+    const windows_normal = try windows.normalize(allocator, "c:/base//one/../two/");
+    defer allocator.free(windows_normal);
+    try testing.expectEqualStrings("C:\\base\\two", windows_normal);
+    const windows_resolved = try windows.resolve(allocator, "C:\\base", "\\rooted\\file");
+    defer allocator.free(windows_resolved);
+    try testing.expectEqualStrings("C:\\rooted\\file", windows_resolved);
+    try testing.expectError(error.NotAbsolute, windows.resolve(allocator, "C:\\base", "D:relative"));
+    try testing.expectError(error.NotAbsolute, windows.resolve(allocator, "\\base", "file"));
+    const windows_relative = try windows.relative(allocator, "C:\\one\\two", "c:/one/three");
+    defer allocator.free(windows_relative);
+    try testing.expectEqualStrings("..\\three", windows_relative);
+    const different_drive = try windows.relative(allocator, "C:\\one", "D:\\two");
+    defer allocator.free(different_drive);
+    try testing.expectEqualStrings("D:\\two", different_drive);
+    const unc = try windows.resolve(allocator, "\\\\server\\share\\base", "../file");
+    defer allocator.free(unc);
+    try testing.expectEqualStrings("\\\\server\\share\\file", unc);
+    const identical = try windows.relative(allocator, "C:\\folder", "c:/folder/.");
+    defer allocator.free(identical);
+    try testing.expectEqualStrings(".", identical);
+}
+
+test "os: platform, empty arguments, environment validation, cwd and status" {
+    try runCase("os.dsk");
+}
+
+test "os: runtime platform agrees with public enum" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const name = switch (@import("builtin").os.tag) {
+        .linux => "Linux",
+        .macos => "MacOS",
+        .windows => "Windows",
+        else => "Other",
+    };
+    const source = try std.fmt.allocPrint(arena.allocator(), "import \"std/os\" func main() -> void assert(os::platform() == os::Platform.{s}) end", .{name});
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+test "os: signal waiter close, concurrent wait and idle teardown" {
+    try runCase("os-signals.dsk");
+    try runCaseError("sema/os-signal-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/os-signal-native-private.dsk", error.NotVisible);
+}
+
+test "os: host arguments, environment snapshots and exit status reset" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var environment = std.process.Environ.Map.init(testing.allocator);
+    defer environment.deinit();
+    try environment.put("DUSK_TEST_VALUE", "héllo");
+    try environment.put("DUSK_TEST_EMPTY", "");
+    try environment.put("DUSK_TEST_INVALID", "\xff");
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io, .program_args = &.{ "one two", "--flag", "世界" }, .environment = &environment };
+    try dusk.compileAndRun(
+        \\import "std/os"
+        \\import "std/array"
+        \\func main() -> !void
+        \\    let mut args = try os::args()
+        \\    assert(array::len(args) == 3)
+        \\    assert(args[0] == "one two" and args[1] == "--flag" and args[2] == "世界")
+        \\    args[0] = "changed"
+        \\    let again = try os::args()
+        \\    assert(again[0] == "one two")
+        \\    assert(try os::env("DUSK_TEST_VALUE") == "héllo")
+        \\    assert(try os::env("DUSK_TEST_EMPTY") == "")
+        \\    assert(try os::env("DUSK_TEST_MISSING") == null)
+        \\    let invalid = os::env("DUSK_TEST_INVALID") catch e then
+        \\        assert(e == os::OsError.InvalidUtf8)
+        \\        return
+        \\    end
+        \\    assert(false)
+        \\end
+    );
+    try dusk.compileAndRun("import \"std/os\" func main() -> !void try os::set_exit_code(42) end");
+    try testing.expectEqual(@as(u8, 42), dusk.exit_code);
+    try dusk.compileAndRun("func main() -> void end");
+    try testing.expectEqual(@as(u8, 0), dusk.exit_code);
+    try dusk.compileAndRun("import \"std/os\" func main() -> !void try os::set_exit_code(42) end");
+    try testing.expectError(error.ParserError, dusk.compileAndRun("func"));
+    try testing.expectEqual(@as(u8, 1), dusk.exit_code);
+    dusk.program_args = &.{"\xff"};
+    try dusk.compileAndRun(
+        \\import "std/os"
+        \\func main() -> !void
+        \\    let args = os::args() catch e then
+        \\        assert(e == os::OsError.InvalidUtf8)
+        \\        return
+        \\    end
+        \\    assert(false)
+        \\end
+    );
+}
+
 test "math: constants, numeric functions and errors" {
     try runCase("math.dsk");
 }
@@ -134,7 +679,7 @@ test "math: abs overflow, rounding bounds and nonnumeric extrema" {
             var arena = std.heap.ArenaAllocator.init(testing.allocator);
             defer arena.deinit();
             const source = try std.fmt.allocPrint(arena.allocator(), "import \"std/math\"\nfunc main() -> void let result = math::{s}({s}) end", .{ function, values });
-            const expected_error = if (std.mem.eql(u8, values, "[null]")) error.CantInferSlot else error.TypeDoesntFitSlot;
+            const expected_error = if (std.mem.eql(u8, values, "[null]")) error.CantInferArrayLiteralType else error.TypeDoesntFitSlot;
             var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
             try testing.expectError(expected_error, dusk.compile(source));
         }
@@ -149,6 +694,188 @@ test "time: timestamps, formatting and private construction" {
     try runCaseError("sema/time-timestamp-argument.dsk", error.InvalidType);
     try runCaseError("sema/time-timestamp-format-argument.dsk", error.InvalidNumberOfArgs);
     try runCaseError("sema/time-timestamp-native-private.dsk", error.NotVisible);
+}
+
+test "time: ISO parsing, offsets, expanded years and errors" {
+    try runCase("time-parsing.dsk");
+}
+
+test "time: durations, checked timestamp arithmetic and comparisons" {
+    try runCase("time-arithmetic.dsk");
+}
+
+test "time: monotonic instants, tasks and GC" {
+    try runCase("time-instants.dsk");
+}
+
+test "time: duration and instant privacy and argument types" {
+    try runCaseError("sema/time-duration-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-duration-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-duration-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-duration-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-instant-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-instant-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-instant-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-instant-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-duration-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-instant-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-arithmetic-native-private.dsk", error.NotVisible);
+}
+
+test "time: bundled named zones, fixed offsets, aliases, transitions and GC" {
+    try runCase("time-timezones.dsk");
+    try runCaseError("sema/time-timezone-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-timezone-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-timezone-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-timezone-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-timezone-native-private.dsk", error.NotVisible);
+    try runCaseError("sema/time-timezone-argument.dsk", error.InvalidType);
+}
+
+test "time: zone-aware ISO formatting, precision, round trips and GC" {
+    try runCase("time-iso-formatting.dsk");
+}
+
+test "time: unary UTC serialization adapter and full-range proxy round trips" {
+    try runCase("time-iso-serialization.dsk");
+    try runCaseError("sema/time-iso-failing-encoder.dsk", error.InvalidSchema);
+}
+
+test "time: ISO API migration and error handling" {
+    try runCaseError("sema/time-iso-module-removed.dsk", error.NotDefined);
+    try runCaseError("sema/time-timestamp-to-string-removed.dsk", error.InvalidStructField);
+    try runCaseError("sema/time-iso-module-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-iso-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-iso-zone-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-iso-utc-extra-argument.dsk", error.InvalidNumberOfArgs);
+}
+
+test "time: local discovery parks cold callers, shares first snapshot and caches without yielding" {
+    var environment = try TestTimezoneEnvironment.init("America/New_York");
+    defer environment.deinit();
+    try runCase("time-local.dsk");
+}
+
+test "time: local discovery reads TZ from VM.environment when provided" {
+    var process_tz = try TestTimezoneEnvironment.init("Missing/LocalZone");
+    defer process_tz.deinit();
+    var host_env = std.process.Environ.Map.init(testing.allocator);
+    defer host_env.deinit();
+    try host_env.put("TZ", "Asia/Tokyo");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io, .environment = &host_env };
+    const source =
+        \\import "std/os"
+        \\import "std/time"
+        \\func main() -> !void
+        \\    assert((try os::env("TZ")) == "Asia/Tokyo")
+        \\    let zone = try time::local_timezone()
+        \\    assert(zone.name() == "Asia/Tokyo")
+        \\end
+    ;
+    try dusk.compileAndRun(source);
+}
+
+test "time: local failures are catchable through native calls and await without UTC fallback" {
+    var environment = try TestTimezoneEnvironment.init("Missing/LocalZone");
+    defer environment.deinit();
+    try runCase("time-local-errors.dsk");
+    try runCaseError("sema/time-local-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-local-extra-argument.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/time-local-native-private.dsk", error.NotVisible);
+}
+
+test "time: local snapshot survives environment changes and failed discoveries can retry" {
+    var environment = try TestTimezoneEnvironment.init("Missing/LocalZone");
+    defer environment.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const source =
+        \\import "std/time"
+        \\import "std/io"
+        \\func main() -> void
+        \\    let zone = time::local_timezone() catch e then
+        \\        assert(e == time::TimeError.LocalTimeUnavailable)
+        \\        io::println("unavailable")
+        \\        return
+        \\    end
+        \\    io::println(zone.name())
+        \\end
+    ;
+    const program = try dusk.compile(source);
+    const VM = @import("runtime/vm.zig").VM;
+    var vm = VM.init(&program, .{ .stdout = .{ .custom = &output.writer } }, testing.io);
+    defer vm.deinit();
+    try vm.run();
+    try testing.expectEqual(@as(?i64, null), vm.timezones.local_identifier);
+    try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+    try TestTimezoneEnvironment.set("America/New_York");
+    try vm.run();
+    const identifier = vm.timezones.local_identifier.?;
+    try TestTimezoneEnvironment.set("Missing/LocalZone");
+    try vm.run();
+    try testing.expectEqual(identifier, vm.timezones.local_identifier.?);
+    try testing.expectEqualStrings("unavailable\nAmerica/New_York\nAmerica/New_York\n", output.written());
+    const object_count = vm.heap.object_count;
+    var args: [0]@import("runtime/value.zig").Value = .{};
+    const native = @import("runtime/builtins/std/time.zig").bindings.get("local_timezone_id").?.native;
+    const cached = try native(&vm, &args);
+    try testing.expect(!cached.has_failed and !cached.is_parked);
+    try testing.expectEqual(identifier, cached.value.int64);
+    try testing.expectEqual(object_count, vm.heap.object_count);
+    try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+}
+
+const TestTimezoneEnvironment = struct {
+    previous: ?[:0]u8,
+
+    fn init(value: ?[:0]const u8) !TestTimezoneEnvironment {
+        var first: [1]u8 = undefined;
+        var length: usize = first.len;
+        const status = uv.uv_os_getenv("TZ", &first, &length);
+        const previous: ?[:0]u8 = if (status == 0) try testing.allocator.dupeZ(u8, "") else previous: {
+            const failure = std.mem.span(uv.uv_err_name(status));
+            if (std.mem.eql(u8, failure, "ENOENT")) {
+                break :previous null;
+            }
+            try testing.expectEqualStrings("ENOBUFS", failure);
+            const buffer = try testing.allocator.alloc(u8, length);
+            defer testing.allocator.free(buffer);
+            try testing.expectEqual(@as(c_int, 0), uv.uv_os_getenv("TZ", buffer.ptr, &length));
+            break :previous try testing.allocator.dupeZ(u8, buffer[0..length]);
+        };
+        errdefer if (previous) |text| {
+            testing.allocator.free(text);
+        };
+        try set(value);
+        return .{ .previous = previous };
+    }
+
+    fn deinit(self: *TestTimezoneEnvironment) void {
+        const status = if (self.previous) |value| uv.uv_os_setenv("TZ", value) else uv.uv_os_unsetenv("TZ");
+        std.debug.assert(status == 0);
+        if (self.previous) |value| {
+            testing.allocator.free(value);
+        }
+    }
+
+    fn set(value: ?[:0]const u8) !void {
+        const status = if (value) |text| uv.uv_os_setenv("TZ", text) else uv.uv_os_unsetenv("TZ");
+        try testing.expectEqual(@as(c_int, 0), status);
+    }
+};
+
+test "time: custom numeric patterns, escaping, precision and GC" {
+    try runCase("time-patterns.dsk");
+    try runCaseError("sema/time-pattern-missing.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/time-pattern-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-pattern-zone-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-pattern-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-pattern-native-private.dsk", error.NotVisible);
 }
 
 test "time: clocks and tasks" {
@@ -242,7 +969,7 @@ test "stdout: flushed before the scheduler waits for events" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try runSourceWithStdout("import \"std/io\"\nimport \"std/task\"\nfunc main() -> void io::println(\"1\") task::sleep(20) io::println(\"2\") end", &recorder.interface);
+    try runSourceWithStdout("import \"std/io\"\nimport \"std/task\"\nimport \"std/time\"\nfunc main() -> void io::println(\"1\") task::sleep(time::milliseconds(20)) io::println(\"2\") end", &recorder.interface);
     try testing.expectEqual(2, recorder.drain_count);
     try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
 }
@@ -575,9 +1302,385 @@ test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw an
     try runCase("http-server.dsk");
 }
 
+test "http server: stops on SIGTERM / SIGINT, finishes requests, gives up after shutdown_timeout_ms, a second signal stops the program" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try expectStopOnSignal("graceful", &.{.TERM}, .{ .exited = 0 }, &.{ "handling", "client: 200 done", "serve returned", "stopped" });
+    try expectStopOnSignal("timeout", &.{ .INT, .INT }, .{ .signal = .INT }, &.{ "handling", "client: failed", "serve returned", "stopped" });
+    try expectStopOnSignal("off", &.{.TERM}, .{ .signal = .TERM }, &.{"handling"});
+}
+
+fn expectStopOnSignal(mode: []const u8, signals: []const std.posix.SIG, expected_term: std.process.Child.Term, expected_lines: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const parent = try std.process.currentPathAlloc(testing.io, allocator);
+    const dusk = try std.fs.path.resolve(allocator, &.{ parent, @import("test_paths").dusk });
+    var child = try std.process.spawn(testing.io, .{
+        .argv = &.{ dusk, "test/fixtures/http/stop-on-signal.dsk", mode },
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
+    defer child.kill(testing.io);
+    const pid = child.id.?;
+    var buffer: [4096]u8 = undefined;
+    var reader = child.stdout.?.reader(testing.io, &buffer);
+    var lines: std.ArrayList([]const u8) = .empty;
+    var next_signal: usize = 0;
+    while (try reader.interface.takeDelimiter('\n')) |line| {
+        try lines.append(allocator, try allocator.dupe(u8, line));
+        if (next_signal == signals.len) continue;
+        const is_first_due = next_signal == 0 and std.mem.eql(u8, line, "handling");
+        const is_next_due = next_signal > 0 and areAllLinesPresent(lines.items, expected_lines);
+        if (!is_first_due and !is_next_due) continue;
+        try std.posix.kill(pid, signals[next_signal]);
+        next_signal += 1;
+    }
+    const term = try child.wait(testing.io);
+    try testing.expectEqual(signals.len, next_signal);
+    try testing.expectEqualDeep(expected_term, term);
+    try testing.expectEqual(expected_lines.len, lines.items.len);
+    try testing.expect(areAllLinesPresent(lines.items, expected_lines));
+}
+
+fn areAllLinesPresent(lines: []const []const u8, expected_lines: []const []const u8) bool {
+    for (expected_lines) |expected| {
+        const is_present = for (lines) |line| {
+            if (std.mem.eql(u8, line, expected)) break true;
+        } else false;
+        if (!is_present) {
+            return false;
+        }
+    }
+    return true;
+}
+
+test "worker pool: runs a job on a worker thread and hands it back" {
+    var notified = TestGate{};
+    var job = TestJob{ .id = 0 };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 4 }, notified.notifier());
+    try pool.submit(&job.job);
+    notified.waitFor(1);
+    try testing.expectEqual(&job.job, pool.takeCompleted().?);
+    try testing.expect(pool.takeCompleted() == null);
+    try testing.expectEqual(PoolJob.Outcome.executed, job.job.outcome);
+    try testing.expect(job.execute_thread != std.Thread.getCurrentId());
+    pool.stopAndJoin();
+    pool.destroy();
+}
+
+test "worker pool: one worker takes jobs in submission order" {
+    var notified = TestGate{};
+    var release = TestGate{};
+    var order = TestOrder{};
+    var jobs = [_]TestJob{ .{ .id = 0, .release = &release, .order = &order }, .{ .id = 1, .order = &order }, .{ .id = 2, .order = &order }, .{ .id = 3, .order = &order } };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 4 }, notified.notifier());
+    for (&jobs) |*job| {
+        try pool.submit(&job.job);
+    }
+    release.add();
+    notified.waitFor(4);
+    try testing.expectEqualSlices(usize, &.{ 0, 1, 2, 3 }, order.ids[0..order.count]);
+    while (pool.takeCompleted()) |_| {}
+    pool.stopAndJoin();
+    pool.destroy();
+}
+
+test "worker pool: two workers run two jobs at the same time" {
+    var notified = TestGate{};
+    var started = TestGate{};
+    var release = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .started = &started, .release = &release }, .{ .id = 1, .started = &started, .release = &release } };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 2, .max_outstanding = 2 }, notified.notifier());
+    try pool.submit(&jobs[0].job);
+    try pool.submit(&jobs[1].job);
+    started.waitFor(2);
+    try testing.expect(jobs[0].execute_thread != jobs[1].execute_thread);
+    release.add();
+    notified.waitFor(2);
+    while (pool.takeCompleted()) |_| {}
+    pool.stopAndJoin();
+    pool.destroy();
+}
+
+test "worker pool: the limit counts finished jobs nobody took yet" {
+    var notified = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0 }, .{ .id = 1 }, .{ .id = 2 } };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 2 }, notified.notifier());
+    try pool.submit(&jobs[0].job);
+    try pool.submit(&jobs[1].job);
+    try testing.expectError(error.QueueFull, pool.submit(&jobs[2].job));
+    notified.waitFor(2);
+    try testing.expectError(error.QueueFull, pool.submit(&jobs[2].job));
+    try testing.expect(jobs[2].job.outcome == .pending and jobs[2].execute_thread == 0);
+    _ = pool.takeCompleted().?;
+    try pool.submit(&jobs[2].job);
+    notified.waitFor(3);
+    while (pool.takeCompleted()) |_| {}
+    pool.stopAndJoin();
+    pool.destroy();
+}
+
+test "worker pool: stopping abandons queued jobs, waits for the running one and refuses new ones" {
+    var notified = TestGate{};
+    var started = TestGate{};
+    var release = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .started = &started, .release = &release }, .{ .id = 1 }, .{ .id = 2 } };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 4 }, notified.notifier());
+    for (&jobs) |*job| {
+        try pool.submit(&job.job);
+    }
+    started.waitFor(1);
+    const releaser = try std.Thread.spawn(.{}, releaseOnceStopping, .{ pool, &release });
+    pool.stopAndJoin();
+    releaser.join();
+    try testing.expectError(error.ShuttingDown, pool.submit(&jobs[1].job));
+    var taken: usize = 0;
+    while (pool.takeCompleted()) |_| {
+        taken += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), taken);
+    try testing.expectEqual(PoolJob.Outcome.executed, jobs[0].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.abandoned, jobs[1].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.abandoned, jobs[2].job.outcome);
+    try testing.expectEqual(@as(usize, 0), jobs[1].execute_thread);
+    pool.destroy();
+}
+
+test "worker pool: options must ask for threads and room, and pools are independent" {
+    var notified = TestGate{};
+    try testing.expectError(error.InvalidOptions, WorkerPool.create(testing.allocator, .{ .thread_count = 0, .max_outstanding = 1 }, notified.notifier()));
+    try testing.expectError(error.InvalidOptions, WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 0 }, notified.notifier()));
+    var release = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .release = &release }, .{ .id = 1 }, .{ .id = 2 } };
+    const busy = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 1 }, notified.notifier());
+    const idle = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 1 }, notified.notifier());
+    try busy.submit(&jobs[0].job);
+    try testing.expectError(error.QueueFull, busy.submit(&jobs[1].job));
+    try idle.submit(&jobs[2].job);
+    notified.waitFor(1);
+    try testing.expectEqual(&jobs[2].job, idle.takeCompleted().?);
+    idle.stopAndJoin();
+    idle.destroy();
+    release.add();
+    notified.waitFor(2);
+    _ = busy.takeCompleted().?;
+    busy.stopAndJoin();
+    busy.destroy();
+}
+
+test "worker dispatch: finishes run on the loop thread, and an idle pool doesn't keep the loop alive" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop = EventLoop{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const dispatch = try event_loop.startWorkerDispatch(.{ .thread_count = 2, .max_outstanding = 3 });
+    const loop = event_loop.loop.?;
+    try testing.expectEqual(@as(c_int, 0), uv.uv_run(loop, .nowait));
+    var jobs = [_]TestJob{ .{ .id = 0 }, .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 } };
+    for (jobs[0..3]) |*job| {
+        try dispatch.submit(&job.job);
+    }
+    try testing.expectError(error.QueueFull, dispatch.submit(&jobs[3].job));
+    try testing.expectEqual(@as(usize, 3), event_loop.pending_operations);
+    while (event_loop.hasPendingOperations()) {
+        try event_loop.waitForEvent();
+    }
+    for (jobs[0..3]) |job| {
+        try testing.expectEqual(@as(usize, 1), job.finish_count);
+        try testing.expectEqual(PoolJob.Delivery.deliver, job.delivery.?);
+        try testing.expectEqual(std.Thread.getCurrentId(), job.finish_thread);
+        try testing.expect(job.execute_thread != job.finish_thread);
+    }
+    try testing.expectEqual(@as(usize, 0), jobs[3].finish_count);
+    try testing.expectEqual(@as(c_int, 0), uv.uv_run(loop, .nowait));
+}
+
+test "worker dispatch: libuv's pool keeps working while every worker is busy" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop = EventLoop{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const dispatch = try event_loop.startWorkerDispatch(.{ .thread_count = 2, .max_outstanding = 2 });
+    var started = TestGate{};
+    var release = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .started = &started, .release = &release }, .{ .id = 1, .started = &started, .release = &release } };
+    try dispatch.submit(&jobs[0].job);
+    try dispatch.submit(&jobs[1].job);
+    started.waitFor(2);
+    const work_memory = try testing.allocator.alignedAlloc(u8, .@"16", uv.uv_req_size(.work));
+    defer testing.allocator.free(work_memory);
+    var is_work_done = false;
+    const work: *uv.Request = @ptrCast(work_memory.ptr);
+    uv.uv_req_set_data(work, &is_work_done);
+    try testing.expectEqual(@as(c_int, 0), uv.uv_queue_work(event_loop.loop.?, work, doNothingOnPool, markWorkDone));
+    while (!is_work_done) {
+        try event_loop.waitForEvent();
+    }
+    try testing.expectEqual(@as(usize, 0), jobs[0].finish_count + jobs[1].finish_count);
+    release.add();
+    while (event_loop.hasPendingOperations()) {
+        try event_loop.waitForEvent();
+    }
+    try testing.expectEqual(@as(usize, 2), jobs[0].finish_count + jobs[1].finish_count);
+}
+
+test "worker dispatch: a failing finish is reported and the other jobs still finish" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop = EventLoop{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const dispatch = try event_loop.startWorkerDispatch(.{ .thread_count = 1, .max_outstanding = 3 });
+    var jobs = [_]TestJob{ .{ .id = 0 }, .{ .id = 1, .should_fail_finish = true }, .{ .id = 2 } };
+    for (&jobs) |*job| {
+        try dispatch.submit(&job.job);
+    }
+    var failure: ?anyerror = null;
+    while (event_loop.hasPendingOperations()) {
+        event_loop.waitForEvent() catch |err| {
+            failure = err;
+        };
+    }
+    try testing.expectEqual(@as(?anyerror, error.TestFinishFailed), failure);
+    for (jobs) |job| {
+        try testing.expectEqual(@as(usize, 1), job.finish_count);
+    }
+}
+
+test "worker dispatch: teardown discards finished, running and queued jobs exactly once" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop = EventLoop{ .allocator = testing.allocator };
+    const dispatch = try event_loop.startWorkerDispatch(.{ .thread_count = 1, .max_outstanding = 4 });
+    var started = TestGate{};
+    var release = TestGate{};
+    var executed = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .executed = &executed }, .{ .id = 1, .started = &started, .release = &release }, .{ .id = 2 }, .{ .id = 3 } };
+    try dispatch.submit(&jobs[0].job);
+    executed.waitFor(1);
+    try dispatch.submit(&jobs[1].job);
+    started.waitFor(1);
+    try dispatch.submit(&jobs[2].job);
+    try dispatch.submit(&jobs[3].job);
+    const releaser = try std.Thread.spawn(.{}, releaseOnceStopping, .{ dispatch.pool.?, &release });
+    event_loop.deinit();
+    releaser.join();
+    for (jobs) |job| {
+        try testing.expectEqual(@as(usize, 1), job.finish_count);
+        try testing.expectEqual(PoolJob.Delivery.discard, job.delivery.?);
+    }
+    try testing.expectEqual(PoolJob.Outcome.executed, jobs[0].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.executed, jobs[1].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.abandoned, jobs[2].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.abandoned, jobs[3].job.outcome);
+    try testing.expectEqual(@as(usize, 0), event_loop.pending_operations);
+}
+
+const TestGate = struct {
+    threaded: std.Io.Threaded = .init_single_threaded,
+    mutex: std.Io.Mutex = .init,
+    changed: std.Io.Condition = .init,
+    count: usize = 0,
+
+    fn add(self: *TestGate) void {
+        const io = self.threaded.io();
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        self.count += 1;
+        self.changed.broadcast(io);
+    }
+
+    fn waitFor(self: *TestGate, count: usize) void {
+        const io = self.threaded.io();
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        while (self.count < count) {
+            self.changed.waitUncancelable(io, &self.mutex);
+        }
+    }
+
+    fn notifier(self: *TestGate) WorkerPool.Notifier {
+        return .{ .context = self, .notify = addFromNotifier };
+    }
+
+    fn addFromNotifier(context: *anyopaque) void {
+        const self: *TestGate = @ptrCast(@alignCast(context));
+        self.add();
+    }
+};
+
+const TestOrder = struct {
+    ids: [8]usize = undefined,
+    count: usize = 0,
+};
+
+const TestJob = struct {
+    job: PoolJob = .{ .execute = execute, .finish = finish },
+    id: usize,
+    started: ?*TestGate = null,
+    release: ?*TestGate = null,
+    executed: ?*TestGate = null,
+    order: ?*TestOrder = null,
+    should_fail_finish: bool = false,
+    execute_thread: std.Thread.Id = 0,
+    finish_thread: std.Thread.Id = 0,
+    finish_count: usize = 0,
+    delivery: ?PoolJob.Delivery = null,
+
+    fn execute(job: *PoolJob) void {
+        const self: *TestJob = @alignCast(@fieldParentPtr("job", job));
+        self.execute_thread = std.Thread.getCurrentId();
+        if (self.started) |started| {
+            started.add();
+        }
+        if (self.release) |release| {
+            release.waitFor(1);
+        }
+        if (self.order) |order| {
+            order.ids[order.count] = self.id;
+            order.count += 1;
+        }
+        if (self.executed) |executed| {
+            executed.add();
+        }
+    }
+
+    fn finish(job: *PoolJob, delivery: PoolJob.Delivery) anyerror!void {
+        const self: *TestJob = @alignCast(@fieldParentPtr("job", job));
+        self.finish_thread = std.Thread.getCurrentId();
+        self.finish_count += 1;
+        self.delivery = delivery;
+        if (self.should_fail_finish) {
+            return error.TestFinishFailed;
+        }
+    }
+};
+
+fn releaseOnceStopping(pool: *WorkerPool, release: *TestGate) void {
+    const io = pool.threaded.io();
+    while (true) {
+        pool.mutex.lockUncancelable(io);
+        const is_stopping = pool.is_stopping;
+        pool.mutex.unlock(io);
+        if (is_stopping) break;
+        std.Thread.yield() catch {};
+    }
+    release.add();
+}
+
+fn doNothingOnPool(_: *uv.Request) callconv(.c) void {}
+
+fn markWorkDone(work: *uv.Request, _: c_int) callconv(.c) void {
+    const is_done: *bool = @ptrCast(@alignCast(uv.uv_req_get_data(work).?));
+    is_done.* = true;
+}
+
 test "net: TLS over loopback with test certificates, errors on both sides, start_tls twice" {
     try runCase("net-tls.dsk");
     try runCaseRuntimeError("net-start-tls-twice.dsk", error.TlsAlreadyStarted);
+}
+
+test "strings: a result too large for memory is an out-of-memory error, not an overflow" {
+    try runCaseRuntimeError("string-repeat-too-large.dsk", error.OutOfMemory);
+}
+
+test "time: a Duration factory past about 292 years is a runtime error" {
+    try runCaseRuntimeError("time-duration-out-of-range.dsk", error.DurationOutOfRange);
 }
 
 test "net: start_tls on a plain connection, handshake() and its errors, handshake timeouts" {
@@ -1067,6 +2170,7 @@ test "io: a stdin read parks until data arrives while other tasks run" {
     const source =
         \\import "std/io"
         \\import "std/task"
+        \\import "std/time"
         \\import "std/string"
         \\func main() -> !void
         \\    let mut is_done = false
@@ -1074,7 +2178,7 @@ test "io: a stdin read parks until data arrives while other tasks run" {
         \\    let counter = spawn(func() -> void
         \\        for !is_done do
         \\            ticks = ticks + 1
-        \\            task::sleep(1)
+        \\            task::sleep(time::milliseconds(1))
         \\        end
         \\    end)
         \\    let input = io::stdin()
@@ -1101,6 +2205,7 @@ test "io: a second task reading stdin at the same time gets Busy" {
     const source =
         \\import "std/io"
         \\import "std/task"
+        \\import "std/time"
         \\import "std/string"
         \\func main() -> !void
         \\    let reader = spawn(func() -> !string
@@ -1110,7 +2215,7 @@ test "io: a second task reading stdin at the same time gets Busy" {
         \\        end
         \\        return "none"
         \\    end)
-        \\    task::sleep(5)
+        \\    task::sleep(time::milliseconds(5))
         \\    io::stdin().read_bytes(8) catch e then
         \\        io::println("${e == io::IoError.Busy}")
         \\    end
@@ -1234,6 +2339,27 @@ test "io: read_line limits, invalid UTF-8, read_all and read_all_bytes" {
     try expectStdinOutput(all_bytes, (try pipeWithInput("\xff\x00\x01"))[0], "3 255\n");
 }
 
+test "io: raw mode and terminal size on a pipe" {
+    const source =
+        \\import "std/io"
+        \\import "std/os"
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.set_raw(true) catch e then
+        \\        io::println("${e == io::IoError.NotTerminal}")
+        \\    end
+        \\    io::println("${io::stdout().size() == null}")
+        \\    let resize = try os::watch_signal(os::Signal.WindowChange)
+        \\    resize.close()
+        \\    input.close()
+        \\    input.set_raw(false) catch e then
+        \\        io::println("${e == io::IoError.Closed}")
+        \\    end
+        \\end
+    ;
+    try expectStdinOutput(source, (try pipeWithInput(""))[0], "true\ntrue\ntrue\n");
+}
+
 test "io: read_all collects 10 MB written while the program waits" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const big = try testing.allocator.alloc(u8, 10 * 1024 * 1024);
@@ -1334,6 +2460,7 @@ test "io: close, reading after close, and a parked reader woken by close" {
     const woken =
         \\import "std/io"
         \\import "std/task"
+        \\import "std/time"
         \\func main() -> !void
         \\    let reader = spawn(func() -> bool
         \\        io::stdin().read_line() catch e then
@@ -1341,7 +2468,7 @@ test "io: close, reading after close, and a parked reader woken by close" {
         \\        end
         \\        return false
         \\    end)
-        \\    task::sleep(5)
+        \\    task::sleep(time::milliseconds(5))
         \\    io::stdin().close()
         \\    io::println("${await(reader)}")
         \\end
@@ -1398,6 +2525,7 @@ test "io: a timer that doesn't fire doesn't delay the program, and close beats i
     const closed =
         \\import "std/io"
         \\import "std/task"
+        \\import "std/time"
         \\func main() -> !void
         \\    let reader = spawn(func() -> bool
         \\        io::stdin().read_all(timeout_ms = 5000) catch e then
@@ -1405,7 +2533,7 @@ test "io: a timer that doesn't fire doesn't delay the program, and close beats i
         \\        end
         \\        return false
         \\    end)
-        \\    task::sleep(5)
+        \\    task::sleep(time::milliseconds(5))
         \\    io::stdin().close()
         \\    io::println("${await(reader)}")
         \\end
@@ -1590,7 +2718,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 16 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 19 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -1805,7 +2933,7 @@ test "string escapes decode into UTF-8 literals" {
         const tokens = try lexer.list();
         var parser = @import("compiler/parser.zig").Parser.init(arena.allocator(), source, tokens.items);
         const root = try parser.parse();
-        const decoded = root.statements.items[0].data.let.value.data.string_literal;
+        const decoded = root.statements.items[0].data.let.value.?.data.string_literal;
         try testing.expectEqualStrings(case.expected, decoded);
         try testing.expect(std.unicode.utf8ValidateSlice(decoded));
     }
@@ -1832,7 +2960,7 @@ test "multiline strings strip the closing indentation" {
         const tokens = try lexer.list();
         var parser = @import("compiler/parser.zig").Parser.init(arena.allocator(), source, tokens.items);
         const root = try parser.parse();
-        try testing.expectEqualStrings(case.expected, root.statements.items[0].data.let.value.data.string_literal);
+        try testing.expectEqualStrings(case.expected, root.statements.items[0].data.let.value.?.data.string_literal);
     }
 }
 
@@ -2079,6 +3207,10 @@ test "buffer put, put_bytes and slice" {
     try runCase("buffer-put.dsk");
 }
 
+test "buffer binary numbers, search, fill, copy and parse_int" {
+    try runCase("buffer-binary.dsk");
+}
+
 test "buffer GC" {
     try runCaseOutput("buffer-gc.dsk", "388894\n");
 }
@@ -2171,6 +3303,31 @@ fn runCaseRuntimeError(src_file: []const u8, expected: anytype) !void {
 
 test "a name starting with a builtin's name" {
     try runCase("builtin-name-prefix.dsk");
+}
+
+test "definite assignment allows deferred initialization on all paths and rejects uninitialized use" {
+    try runCase("definite-assignment.dsk");
+    try runCaseError("sema/definite-assignment-read-unassigned.dsk", error.VariableNotInitialized);
+    try runCaseError("sema/definite-assignment-partial-if.dsk", error.VariableNotInitialized);
+    try runCaseError("sema/definite-assignment-immutable-reassign.dsk", error.NotMutable);
+    try runCaseError("sema/definite-assignment-immutable-in-loop.dsk", error.NotMutable);
+    try runCaseError("sema/definite-assignment-capture-before-init.dsk", error.VariableNotInitialized);
+    try runCaseError("sema/definite-assignment-defer-before-init.dsk", error.VariableNotInitialized);
+    try runCaseError("sema/definite-assignment-top-level.dsk", error.TopLevelLetNotConstant);
+}
+
+test "missing struct fields report the field name and untyped null literals are rejected" {
+    try runCaseError("sema/struct-missing-field.dsk", error.MissingArgument);
+    try runCaseError("sema/untyped-null-let.dsk", error.CantInferNullType);
+    try runCaseError("sema/untyped-null-array.dsk", error.CantInferArrayLiteralType);
+}
+
+test "net and http listeners support reuse_port on Linux and FreeBSD" {
+    const os_tag = @import("builtin").os.tag;
+    if (os_tag != .linux and os_tag != .freebsd) {
+        return error.SkipZigTest;
+    }
+    try runCase("net-reuse-port.dsk");
 }
 
 test "fibonacci" {
@@ -2995,8 +4152,8 @@ test "sema error: constant assign" {
 }
 
 test "sema error: method as a constant" {
-    try runCaseError("sema/method-as-value-constant.dsk", error.MethodAsValue);
-    try runCaseError("sema/enum-method-as-value-constant.dsk", error.MethodAsValue);
+    try runCaseError("sema/method-as-value-constant.dsk", error.InvalidConstantType);
+    try runCaseError("sema/enum-method-as-value-constant.dsk", error.InvalidConstantType);
 }
 
 test "sema error: static field not constant" {
@@ -3784,6 +4941,7 @@ test "generics: generic functions are checked where they are written" {
 
 test "function values: named functions as values, function types and calls through values" {
     try runCaseOutput("function-values.dsk", "null\n<func add>\nvalue: <func add>\n[<func add>, <func sub>]\n");
+    try runCaseOutput("unbound-method-values.dsk", "<func Counter.get>\n<func Direction.label>\n<func Value.describe>\n<func Stack[int].push>\n");
     try runCase("gc-function-values.dsk");
     try runCaseError("parser/function-type-inferred-error.dsk", error.ParserError);
     try runCaseError("sema/function-value-compare.dsk", error.CantCompare);
@@ -3794,12 +4952,16 @@ test "function values: named functions as values, function types and calls throu
     try runCaseError("sema/function-value-nullable-call.dsk", error.NullableMustBeUnwrapped);
     try runCaseError("sema/function-value-arg-count.dsk", error.InvalidNumberOfArgs);
     try runCaseError("sema/function-value-mut-arg.dsk", error.NotMutable);
+    try runCaseError("sema/unbound-method-mut-arg.dsk", error.NotMutable);
+    try runCaseError("sema/unbound-generic-method-no-type.dsk", error.GenericNeedsCall);
     try runCaseError("sema/function-value-top-level.dsk", error.TopLevelLetNotConstant);
     try runCaseError("sema/method-as-value.dsk", error.MethodAsValue);
     try runCaseError("sema/enum-method-as-value.dsk", error.MethodAsValue);
     try runCaseError("sema/union-method-as-value.dsk", error.MethodAsValue);
     try runCaseError("sema/struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
     try runCaseError("sema/generic-struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
+    try runModuleCaseOutput("visibility/unbound-method-ok.dsk", "<func counter::Counter.remembered>\n");
+    try runModuleCaseError("visibility/unbound-method-private.dsk", error.NotVisible);
 }
 
 test "lambdas: func(...) expressions" {
@@ -3947,6 +5109,7 @@ test "modules: public declarations can't mention '~' types" {
     try runModuleCaseError("visibility/private-return.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-field.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-error-set.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-merged-error-set.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-variant.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-method.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-function-type.dsk", error.PrivateTypeInPublicSignature);
@@ -4103,7 +5266,7 @@ test "generics: explicit call types and indexed function calls" {
     try runCaseError("sema/generic-call-wrong-result-constraint.dsk", error.TypeDoesntFitSlot);
     try runCaseError("sema/generic-call-explicit-try-plain.dsk", error.NotAFailingCall);
     try runCaseError("sema/generic-call-too-many-types.dsk", error.WrongSlotCount);
-    try runCaseError("sema/generic-call-too-few-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-too-few-types.dsk", error.CantInferSlot);
     try runCaseError("sema/generic-call-plain-function-types.dsk", error.WrongSlotCount);
     try runCaseError("sema/generic-call-plain-function-named-type.dsk", error.WrongSlotCount);
     try runCaseError("sema/generic-call-wrong-argument.dsk", error.InvalidType);
@@ -4232,12 +5395,18 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("process"), @import("runtime/builtins/std/process.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("random"), @import("runtime/builtins/std/random.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("path"), @import("runtime/builtins/std/path.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("os"), @import("runtime/builtins/std/os.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("fs"), @import("runtime/builtins/std/fs.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("url"), @import("runtime/builtins/std/url.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("http"), @import("runtime/builtins/std/http.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("json"), @import("runtime/builtins/std/json.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("time"), @import("runtime/builtins/std/time.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("buffer"), @import("runtime/builtins/std/buffer.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("compression"), @import("runtime/builtins/std/compression.zig").error_sets);
 }
@@ -4745,10 +5914,16 @@ test "http request parser: smuggling shapes, unknown methods and malformed heads
     }
 }
 
+test {
+    _ = @import("cli_test.zig");
+}
+
 test "cr phase 1: defer re-emission, return try errdefer, when gc, anonymous null aliasing, cyclic defaults" {
     try runCase("defer-reemit-and-tail-call.dsk");
+    try runCase("struct-self-member-defaults.dsk");
     try runCaseError("sema/anonymous-null-aliasing.dsk", error.ReadOnlyIntoMutable);
     try runCaseError("sema/cyclic-struct-default.dsk", error.CyclicDefault);
+    try runCaseError("sema/cyclic-mutual-struct-default.dsk", error.CyclicDefault);
     try runCaseError("sema/cyclic-param-default.dsk", error.CyclicDefault);
 }
 
@@ -4768,6 +5943,19 @@ test "cr phase 5: compression reader overflow and close, decompressor too large 
 
 test "cr phase 6: http pool double-close, response splitting, empty location, trailers, head keep-alive, nul path, url dot-segments" {
     try runCase("http-url-phase6.dsk");
+}
+
+test "errors-merged" {
+    try runCase("errors-merged.dsk");
+    try runModuleCase("merged-errors/main.dsk");
+    try runModuleCaseError("merged-errors/private-remote.dsk", error.NotVisible);
+    try runCaseError("sema/errors-merged-non-error-primitive.dsk", error.NotAnErrorSet);
+    try runCaseError("sema/errors-merged-non-error-struct.dsk", error.NotAnErrorSet);
+    try runCaseError("sema/errors-merged-unknown.dsk", error.UnknownType);
+    try runCaseError("sema/errors-merged-cycle.dsk", error.ErrorSetRefersToItself);
+    try runCaseError("sema/errors-merged-self-cycle.dsk", error.ErrorSetRefersToItself);
+    try runCaseError("sema/errors-merged-not-in-set.dsk", error.ErrorNotInSet);
+    try runCaseError("sema/errors-merged-when-not-exhaustive.dsk", error.WhenNotExhaustive);
 }
 
 test "parser error: stray top-level block keywords" {

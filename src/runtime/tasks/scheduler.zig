@@ -1,6 +1,7 @@
 const std = @import("std");
 const v = @import("../value.zig");
 const bc = @import("../bytecode.zig");
+const LocalResult = @import("../timezone.zig").LocalResult;
 
 pub const INITIAL_STACK_SLOTS = 1024;
 pub const INITIAL_FRAMES = 32;
@@ -181,10 +182,12 @@ pub const WakePayload = union(enum) {
     ints: []i64,
     bytes: []u8,
     names: [][]u8,
+    local_timezone: LocalResult,
 
     pub fn free(self: WakePayload, allocator: std.mem.Allocator) void {
         switch (self) {
             .none => {},
+            .local_timezone => |result| result.free(allocator),
             .ints => |ints| allocator.free(ints),
             .bytes => |bytes| allocator.free(bytes),
             .names => |names| {
@@ -196,3 +199,16 @@ pub const WakePayload = union(enum) {
         }
     }
 };
+
+test "a wake that can't queue the task leaves the result with the caller" {
+    var failing_allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var scheduler: Scheduler = .{ .allocator = failing_allocator.allocator() };
+    defer scheduler.deinit();
+    var task: TaskState = undefined;
+    task.wake_result = null;
+    const values = try std.testing.allocator.dupe(i64, &.{ 1, 2 });
+    const result: WakeResult = .{ .value = .{ .int64 = 0 }, .kind = .array, .payload = .{ .ints = values } };
+    try std.testing.expectError(error.OutOfMemory, scheduler.wake(&task, result));
+    try std.testing.expect(task.wake_result == null);
+    result.payload.free(std.testing.allocator);
+}

@@ -1,0 +1,39 @@
+import "std/http"
+import "std/io"
+import "std/os"
+import "std/task"
+import "std/time"
+
+func say(line: string) -> void
+    io::println(line)
+    io::stdout().flush() catch e then
+        return
+    end
+end
+
+func main() -> !void
+    let mode = (try os::args())[0]
+    let is_timeout = mode == "timeout"
+    let handler_ms = if is_timeout then 30000 else 300 end
+    let shutdown_ms = if is_timeout then 200 else 10000 end
+    let server = try http::listen("127.0.0.1", 0, stop_on_signal = mode != "off", shutdown_timeout_ms = shutdown_ms)
+    defer say("stopped")
+    let port = server.port()
+    spawn(func() -> void
+        let response = http::request("http://127.0.0.1:$port/slow") catch e then
+            say("client: failed")
+            return
+        end
+        let body = response.text() catch e then
+            say("client: failed")
+            return
+        end
+        say("client: ${response.status} $body")
+    end)
+    server.serve(func(req: http::Request) -> http::Response
+        say("handling")
+        task::sleep(time::milliseconds(handler_ms))
+        return http::text("done")
+    end)
+    say("serve returned")
+end

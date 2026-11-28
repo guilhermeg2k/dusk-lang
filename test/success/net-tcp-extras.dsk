@@ -3,6 +3,7 @@ import "std/net"
 import "std/string"
 import "std/buffer"
 import "std/task"
+import "std/time"
 
 func text_of(data: ?buffer) -> !string
     if data: bytes then
@@ -32,7 +33,7 @@ func main() -> !void
     end)
     let writer = try net::tcp_connect("127.0.0.1", listener.port())
     try writer.write("abc")
-    task::sleep(10)
+    task::sleep(time::milliseconds(10))
     try writer.write("defgh")
     writer.close()
     let parts = try await(exact)
@@ -60,7 +61,7 @@ func main() -> !void
     let big = try string::repeat("z", 3000000)
     let big_reader = spawn(func() -> io::IoError!int
         let conn = try listener.accept()
-        task::sleep(10)
+        task::sleep(time::milliseconds(10))
         let data = try conn.read_exact(3000000)
         conn.close()
         if data: bytes then
@@ -98,7 +99,7 @@ func main() -> !void
 
     let leaving = spawn(func() -> io::IoError!net::Address
         let conn = try listener.accept()
-        task::sleep(20)
+        task::sleep(time::milliseconds(20))
         let address = conn.remote_address()
         conn.close()
         return address

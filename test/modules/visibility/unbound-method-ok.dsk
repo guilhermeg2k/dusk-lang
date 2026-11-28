@@ -1,0 +1,12 @@
+import "std/io"
+import "@/counter"
+
+func main() -> void
+    let remembered_fn = counter::Counter.remembered
+    let inc_fn = counter::Counter.increment
+    let mut c = counter::Counter(count = 1)
+    inc_fn(c)
+    assert(c.count == 2)
+    assert(remembered_fn(c) == 1)
+    io::println("${remembered_fn}")
+end

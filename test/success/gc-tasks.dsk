@@ -1,5 +1,6 @@
 import "std/task": sleep
 import "std/array": len, append
+import "std/time"
 
 struct Point
     x: int
@@ -38,7 +39,7 @@ func main() -> void
         let n = i % 10
         append(tasks, spawn(func()
             let local = make_array(n)
-            sleep(0)
+            sleep(time::milliseconds(0))
             churn(50)
             return local
         end))

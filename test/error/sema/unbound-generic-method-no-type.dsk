@@ -1,0 +1,13 @@
+import "std/array": append
+
+struct Stack[T]
+    items: []T = []
+
+    func push(mut self: @, item: T) -> void
+        append(self.items, item)
+    end
+end
+
+func main() -> void
+    let f = Stack.push
+end

@@ -125,6 +125,19 @@ pub const Stream = struct {
         return stream;
     }
 
+    pub fn openProcessPipe(allocator: std.mem.Allocator, event_loop: *EventLoop, scheduler: *Scheduler, loop: *uv.Loop) !*Self {
+        const stream = try allocator.create(Self);
+        errdefer allocator.destroy(stream);
+        const memory = try allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.named_pipe));
+        errdefer allocator.free(memory);
+        if (uv.uv_pipe_init(loop, @ptrCast(memory.ptr), 0) < 0) {
+            return error.PipeInitFailed;
+        }
+        stream.* = .{ .allocator = allocator, .event_loop = event_loop, .scheduler = scheduler, .kind = .pipe, .loop = loop, .file = -1, .handle_memory = memory, .open_handles = 1, .has_uv_file_ownership = true };
+        uv.uv_handle_set_data(stream.uvHandle(), &stream.owner);
+        return stream;
+    }
+
     pub fn destroy(self: *Self) void {
         if (self.tls_layer) |layer| {
             layer.destroy();
@@ -312,6 +325,27 @@ pub const Stream = struct {
                 }
                 self.is_reading = true;
             },
+        }
+    }
+
+    pub fn pauseReadingWhenIdle(self: *Self) void {
+        if (self.waiter != null) return;
+        self.stopReading();
+    }
+
+    pub fn setTerminalMode(self: *Self, is_raw: bool) error{ NotTerminal, Other }!void {
+        if (self.kind != .tty) {
+            return error.NotTerminal;
+        }
+        if (self.handle_memory.len == 0) {
+            return error.Other;
+        }
+        const mode: uv.TtyMode = if (is_raw) .raw else .normal;
+        if (uv.uv_tty_set_mode(self.uvHandle(), mode) != 0) {
+            return error.Other;
+        }
+        if (is_raw) {
+            self.event_loop.has_used_raw_terminal = true;
         }
     }
 

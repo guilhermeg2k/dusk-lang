@@ -7,6 +7,7 @@ import "std/io"
 import "std/net"
 import "std/string"
 import "std/task"
+import "std/time"
 
 struct Counter
     closed: int = 0
@@ -28,7 +29,7 @@ func wait_for(counter: Counter, wanted: int) -> void
             return
         end
         churn()
-        task::sleep(10)
+        task::sleep(time::milliseconds(10))
     end
 end
 
@@ -132,7 +133,7 @@ func main() -> !void
     let copies_server = count_closes(listener, copies, 1)
     let kept = try keep_copy(port)
     churn()
-    task::sleep(50)
+    task::sleep(time::milliseconds(50))
     churn()
     assert(copies.closed == 0)
     try kept.write("still open\n")
@@ -149,7 +150,7 @@ func main() -> !void
     let mut after = try net::tcp_connect("127.0.0.1", port)
     churn()
     try after.write("unaffected\n")
-    task::sleep(20)
+    task::sleep(time::milliseconds(20))
     assert(explicit.closed == 1)
     after.close()
     wait_for(explicit, 2)
@@ -163,7 +164,7 @@ func main() -> !void
         if written != "" then
             break
         end
-        task::sleep(10)
+        task::sleep(time::milliseconds(10))
     end
     assert(written == "written but never closed")
 
@@ -182,7 +183,7 @@ func main() -> !void
     assert(try first.read_all() == "hello")
     first.close()
     churn()
-    task::sleep(20)
+    task::sleep(time::milliseconds(20))
     churn()
     assert(pooled.closed == 0)
     assert(try (try http::request(url)).text() == "hello")
@@ -197,7 +198,7 @@ func main() -> !void
 
     let lost_port = try drop_listener()
     churn()
-    task::sleep(20)
+    task::sleep(time::milliseconds(20))
     churn()
     let refused = net::tcp_connect("127.0.0.1", lost_port) catch e then
         assert(e == net::NetError.ConnectionRefused)
