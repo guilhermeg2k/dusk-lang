@@ -83,7 +83,12 @@ func failure_path(text: string) -> string
 end
 
 func top_failure() -> ?json::JsonError
-    let stamp = json::decode[Stamp, Api]("\"later\"") catch e then
+    let mut diagnostic = json::Diagnostic()
+    let stamp = json::decode[Stamp, Api](" \"later\"", diagnostic) catch e then
+        assert(diagnostic.path == "")
+        assert(diagnostic.byte_offset == 1)
+        assert(diagnostic.line == 1)
+        assert(diagnostic.column == 2)
         return e
     end
     return null
@@ -276,8 +281,18 @@ func main() -> !void
     assert(failure_path("{\"stamp\":${iso(1)},\"stamps\":[${iso(2)},\"x\"],\"named\":{},\"moments\":[],\"total\":{\"base\":1}}") == "stamps[1]")
     assert(failure_path("{\"stamp\":${iso(1)},\"stamps\":[],\"named\":{\"a b\":\"x\"},\"moments\":[],\"total\":{\"base\":1}}") == "named[\"a b\"]")
     assert(failure_path("{\"stamp\":${iso(1)},\"stamps\":[],\"named\":{},\"moments\":[{\"at\":\"x\"}],\"total\":{\"base\":1}}") == "moments[0].at")
+    assert(failure_path("{\"ignored\":{\"a\":[1,2]},\"stamp\":${iso(1)},\"stamps\":[],\"named\":{\"k\":${iso(2)},\"a.b\":\"x\"},\"moments\":[],\"total\":{\"base\":1}}") == "named[\"a.b\"]")
     assert(failure_path(good) == "no failure")
     assert(top_failure() == json::JsonError.InvalidValue)
+
+    let mut nested_diag = json::Diagnostic()
+    let mut nested_failed = false
+    json::decode[Node, Api]("{\"label\":\"r\",\"children\":[{\"label\":\"c\",\"children\":[{\"label\":\"leaf\",\"seen\":\"bad\"}]}]}", nested_diag) catch e then
+        assert(e == json::JsonError.InvalidValue)
+        assert(nested_diag.path == "children[0].children[0].seen")
+        nested_failed = true
+    end
+    assert(nested_failed)
 
     let mut nodes: []Node = []
     for 0..19999: i do

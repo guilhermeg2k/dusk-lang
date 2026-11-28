@@ -542,14 +542,31 @@ pub fn describeStep(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     if (@as(u64, @bitCast(args[2])) == 0) {
         return native.ok(.{ .null = {} });
     }
+    defer releaseScratch();
+    const allocator = scratch.allocator();
     const root_base = vm.heap.temporary_roots.items.len;
     defer vm.heap.restoreRootCount(root_base);
     const closure = closureOf(args[0]);
-    const path = closure.captures()[closure.capture_count - 2];
     const offset: usize = @intCast(closure.captures()[closure.capture_count - 1].int64);
-    const position = Position.at(bytes(args[1]), offset);
+    const source = bytes(args[1]);
+    const position = Position.at(source, offset);
     const diagnostic = try vm.heap.protectValue(args[2], .nullable);
-    const path_value = if (@as(u64, @bitCast(path)) == 0) try vm.allocBytesValue("", .string) else path;
+    var decoder = Decoder{
+        .vm = vm,
+        .allocator = allocator,
+        .source = source,
+        .lexer = .{ .source = source, .allocator = allocator },
+        .diagnostic = diagnostic,
+        .max_depth = 512,
+        .should_reject_unknown_fields = false,
+        .steps = 0,
+    };
+    decoder.findPath(@intCast(args[3].int64), offset) catch |failure| {
+        if (failure != error.PathFound) {
+            return failure;
+        }
+    };
+    const path_value = try vm.allocBytesValue(decoder.path.items, .string);
     try writeDiagnosticFields(vm, diagnostic, path_value, position);
     return native.ok(.{ .null = {} });
 }
@@ -634,7 +651,6 @@ const PendingItem = struct {
 
 const SiteValue = struct {
     proxy_value: usize,
-    path: usize,
     offset: usize,
 };
 
@@ -929,10 +945,8 @@ const Decoder = struct {
             return null;
         }
         const offset = try self.vm.heap.protectValue(.{ .int64 = @intCast(self.lexer.token_start) }, .int64);
-        const path_value = if (self.hasDiagnostic()) try self.vm.allocBytesValue(self.path.items, .string) else v.NULL_VALUE;
-        const path = try self.vm.heap.protectValue(path_value, .nullable);
         const proxy_value = try self.decodeValue(site.plan, depth);
-        return .{ .proxy_value = proxy_value, .path = path, .offset = offset };
+        return .{ .proxy_value = proxy_value, .offset = offset };
     }
 
     fn queueStep(self: *Decoder, function: u16, captures: []const usize) !void {
@@ -941,12 +955,11 @@ const Decoder = struct {
     }
 
     fn queueConversion(self: *Decoder, function: u16, targets: []const usize, site_value: SiteValue) !void {
-        var captures: [5]usize = undefined;
+        var captures: [4]usize = undefined;
         @memcpy(captures[0..targets.len], targets);
         captures[targets.len] = site_value.proxy_value;
-        captures[targets.len + 1] = site_value.path;
-        captures[targets.len + 2] = site_value.offset;
-        try self.queueStep(function, captures[0 .. targets.len + 3]);
+        captures[targets.len + 1] = site_value.offset;
+        try self.queueStep(function, captures[0 .. targets.len + 2]);
     }
 
     fn readUnion(self: *Decoder, shape: serialization_plan.TaggedUnion, depth: usize) !usize {
@@ -1084,6 +1097,142 @@ const Decoder = struct {
         if (!self.hasDiagnostic()) return;
         const path = try self.vm.allocBytesValue(self.path.items, .string);
         try writeDiagnosticFields(self.vm, self.diagnostic, path, Position.at(self.source, self.lexer.token_start));
+    }
+
+    fn findPath(self: *Decoder, plan_index: u32, target_offset: usize) anyerror!void {
+        const plan = self.vm.program.serialization_plans[plan_index];
+        if (plan.root_site) |site| {
+            return self.findPathInSite(site, target_offset);
+        }
+        return self.findPathInValue(plan_index, target_offset);
+    }
+
+    fn findPathInSite(self: *Decoder, site: serialization_plan.ProxySite, target_offset: usize) anyerror!void {
+        const kind = self.lexer.peekKind();
+        const is_null = site.is_nullable_target and kind == .literal_null;
+        if (is_null) {
+            try self.lexer.readLiteral("null");
+            return;
+        }
+        if (self.lexer.token_start == target_offset) {
+            return error.PathFound;
+        }
+        return self.findPathInValue(site.plan, target_offset);
+    }
+
+    fn findPathInValue(self: *Decoder, plan_index: u32, target_offset: usize) anyerror!void {
+        const kind = self.lexer.peekKind();
+        if (self.lexer.token_start == target_offset) {
+            return error.PathFound;
+        }
+        const plan = self.vm.program.serialization_plans[plan_index];
+        if (plan.shape == .nullable) {
+            if (kind == .literal_null) {
+                try self.lexer.readLiteral("null");
+                return;
+            }
+            return self.findPathInValue(plan.shape.nullable, target_offset);
+        }
+        switch (plan.shape) {
+            .int, .byte, .float => _ = try self.lexer.readNumber(),
+            .boolean => try self.lexer.readLiteral(if (kind == .literal_true) "true" else "false"),
+            .string, .enumeration => _ = try self.lexer.readString(),
+            .array => |items| {
+                self.lexer.pos += 1;
+                var is_first = true;
+                var i: usize = 0;
+                while (try self.lexer.hasItem(&is_first)) : (i += 1) {
+                    const path_base = self.path.items.len;
+                    try self.appendIndexPath(i);
+                    if (items.proxy) |site| {
+                        try self.findPathInSite(site, target_offset);
+                    } else {
+                        try self.findPathInValue(items.item, target_offset);
+                    }
+                    self.path.shrinkRetainingCapacity(path_base);
+                }
+            },
+            .structure => |shape| {
+                self.lexer.pos += 1;
+                var guess: usize = 0;
+                var is_first = true;
+                while (try self.lexer.nextKey(&is_first)) |key| {
+                    const path_base = self.path.items.len;
+                    try self.appendFieldPath(key, false);
+                    if (findField(shape.fields, key, guess)) |i| {
+                        guess = i + 1;
+                        if (shape.fields[i].proxy) |site| {
+                            try self.findPathInSite(site, target_offset);
+                        } else {
+                            try self.findPathInValue(shape.fields[i].plan, target_offset);
+                        }
+                    } else {
+                        try self.skipJsonTokens();
+                    }
+                    self.path.shrinkRetainingCapacity(path_base);
+                }
+            },
+            .map => |items| {
+                self.lexer.pos += 1;
+                var is_first = true;
+                while (try self.lexer.nextKey(&is_first)) |key| {
+                    const path_base = self.path.items.len;
+                    try self.appendFieldPath(key, true);
+                    if (items.proxy) |site| {
+                        try self.findPathInSite(site, target_offset);
+                    } else {
+                        try self.findPathInValue(items.item, target_offset);
+                    }
+                    self.path.shrinkRetainingCapacity(path_base);
+                }
+            },
+            .tagged_union => |shape| {
+                self.lexer.pos += 1;
+                var is_first = true;
+                const key = try self.lexer.nextKey(&is_first) orelse return;
+                const path_base = self.path.items.len;
+                try self.appendFieldPath(key, false);
+                for (shape.variants) |variant| {
+                    if (!variant.isNamed(key)) continue;
+                    if (variant.proxy) |site| {
+                        try self.findPathInSite(site, target_offset);
+                    } else {
+                        try self.findPathInValue(variant.plan, target_offset);
+                    }
+                    break;
+                }
+                _ = try self.lexer.nextKey(&is_first);
+                self.path.shrinkRetainingCapacity(path_base);
+            },
+            .proxy => |site| return self.findPathInSite(site, target_offset),
+            .nullable => unreachable,
+        }
+    }
+
+    fn skipJsonTokens(self: *Decoder) anyerror!void {
+        const kind = self.lexer.peekKind();
+        switch (kind) {
+            .object => {
+                self.lexer.pos += 1;
+                var is_first = true;
+                while (try self.lexer.nextKey(&is_first)) |_| {
+                    try self.skipJsonTokens();
+                }
+            },
+            .array => {
+                self.lexer.pos += 1;
+                var is_first = true;
+                while (try self.lexer.hasItem(&is_first)) {
+                    try self.skipJsonTokens();
+                }
+            },
+            .string => _ = try self.lexer.readString(),
+            .number => _ = try self.lexer.readNumber(),
+            .literal_true => try self.lexer.readLiteral("true"),
+            .literal_false => try self.lexer.readLiteral("false"),
+            .literal_null => try self.lexer.readLiteral("null"),
+            .end, .invalid => return error.InvalidJson,
+        }
     }
 };
 

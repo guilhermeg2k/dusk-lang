@@ -39,7 +39,7 @@ extern func ~collect_sites[T](value: T, options: EncodeOptions, plan: int, mut r
 extern func ~collect_nested(mut queue: []func() -> void, start: int, stop: int, options: EncodeOptions) -> JsonError!void
 extern func ~decode_value[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut steps: []func() -> bool) -> JsonError!T
 extern func ~decode_proxied[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut steps: []func() -> bool, mut result: []T) -> JsonError!void
-extern func ~describe_step(step: func() -> bool, text: string, mut diagnostic: ?Diagnostic) -> void
+extern func ~describe_step(step: func() -> bool, text: string, mut diagnostic: ?Diagnostic, plan: int) -> void
 
 func encode[T, S: schema](value: T, options: EncodeOptions = @()) -> JsonError!string
     if serialization::has_proxies[T, S]() then
@@ -64,23 +64,24 @@ end
 
 func decode[T, S: schema](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T
     let mut steps: []func() -> bool = []
+    let plan = serialization::plan_of[T, S]()
     if serialization::is_proxied[T, S]() then
         let mut result: []T = []
-        try decode_proxied[T](text, diagnostic, options, serialization::plan_of[T, S](), steps, result)
-        try run_steps(steps, text, diagnostic)
+        try decode_proxied[T](text, diagnostic, options, plan, steps, result)
+        try run_steps(steps, text, diagnostic, plan)
         return result[0]
     end
-    let value = try decode_value[T](text, diagnostic, options, serialization::plan_of[T, S](), steps)
+    let value = try decode_value[T](text, diagnostic, options, plan, steps)
     if array::len(steps) > 0 then
-        try run_steps(steps, text, diagnostic)
+        try run_steps(steps, text, diagnostic, plan)
     end
     return value
 end
 
-func ~run_steps(steps: []func() -> bool, text: string, mut diagnostic: ?Diagnostic) -> JsonError!void
+func ~run_steps(steps: []func() -> bool, text: string, mut diagnostic: ?Diagnostic, plan: int) -> JsonError!void
     for steps: step do
         if !step() then
-            describe_step(step, text, diagnostic)
+            describe_step(step, text, diagnostic, plan)
             return JsonError.InvalidValue
         end
     end

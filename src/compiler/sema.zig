@@ -6300,7 +6300,6 @@ pub const SemaAnalyzer = struct {
         }
         try out.appendSlice(self.allocator, "return true\nend\n");
         const arg_count = captures.items.len;
-        try captures.append(self.allocator, try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.string)));
         try captures.append(self.allocator, int);
         return .{
             .uid = try self.registerSiteFunction(out.items, loc),
