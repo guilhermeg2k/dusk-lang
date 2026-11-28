@@ -160,12 +160,12 @@ struct ResponseStream
         return try stream_body_line(self.stream_id, max, timeout_ms)
     end
 
-    func read_all(mut self: @, timeout_ms: int = -1) -> io::IoError!string
-        return try stream_body_all(self.stream_id, timeout_ms)
+    func read_all(mut self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!string
+        return try stream_body_all(self.stream_id, max_bytes, timeout_ms)
     end
 
-    func read_all_bytes(mut self: @, timeout_ms: int = -1) -> io::IoError!buffer
-        return try stream_body_all_bytes(self.stream_id, timeout_ms)
+    func read_all_bytes(mut self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!buffer
+        return try stream_body_all_bytes(self.stream_id, max_bytes, timeout_ms)
     end
 
     func set_read_timeout(self: @, timeout_ms: int) -> void
@@ -189,6 +189,7 @@ struct Server
     ~owner: resource
     ~max_body: int
     ~head_timeout_ms: int
+    ~body_timeout_ms: int
     ~idle_timeout_ms: int
     ~write_timeout_ms: int
     ~max_connections: int
@@ -496,8 +497,8 @@ extern func ~stream_read_head(stream_id: int, is_head_request: bool, timeout_ms:
 extern func ~stream_read_whole_body(stream_id: int, cap: int, timeout_ms: int) -> HttpError!buffer
 extern func ~stream_body_bytes(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?buffer
 extern func ~stream_body_line(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?string
-extern func ~stream_body_all(stream_id: int, timeout_ms: int) -> io::IoError!string
-extern func ~stream_body_all_bytes(stream_id: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~stream_body_all(stream_id: int, max_bytes: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_body_all_bytes(stream_id: int, max_bytes: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
 extern func ~stream_decode_body(stream_id: int, format: compression::Format) -> void
 extern func ~pool_take(key: string) -> int
@@ -1393,7 +1394,7 @@ func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
 
-func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000, reuse_port: bool = false) -> HttpError!Server
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, body_timeout_ms: int = 30000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000, reuse_port: bool = false) -> HttpError!Server
     if compression_level < 0 or compression_level > 9 then
         invalid_compression_level(compression_level)
     end
@@ -1401,7 +1402,7 @@ func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: i
         return from_net(e)
     end
     let server_id = server_state_new()
-    return Server(listener = listener, server_id = server_id, owner = own(7, server_id), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level, stop_on_signal = stop_on_signal, shutdown_timeout_ms = shutdown_timeout_ms)
+    return Server(listener = listener, server_id = server_id, owner = own(7, server_id), max_body = max_body, head_timeout_ms = head_timeout_ms, body_timeout_ms = body_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level, stop_on_signal = stop_on_signal, shutdown_timeout_ms = shutdown_timeout_ms)
 end
 
 func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int, reuse_port: bool) -> net::NetError!net::TcpListener
@@ -1439,6 +1440,7 @@ func ~serve_request[E: error](server: Server, conn: net::TcpConn, stream_id: int
             reject(stream_id, HttpError.InvalidRequest)
             return false
         end
+        stream_set_read_timeout(stream_id, server.body_timeout_ms)
         let response = handler(request) catch e then
             let body_failure = request_body_failure(stream_id)
             if body_failure == BODY_TOO_LARGE then
@@ -1459,6 +1461,7 @@ func ~next_head(server: Server, stream_id: int, is_first: bool) -> HttpError!?bu
     if !server_set_idle(server.server_id, stream_id, true) then
         return null
     end
+    stream_set_read_timeout(stream_id, -1)
     let wait_ms = if is_first then server.head_timeout_ms else server.idle_timeout_ms end
     let ready = stream_wait_data(stream_id, wait_ms) catch e then
         server_set_idle(server.server_id, stream_id, false)

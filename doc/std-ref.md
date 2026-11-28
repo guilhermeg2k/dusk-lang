@@ -1310,9 +1310,9 @@ A status code is never an error: a `404` or a `500` is a normal `Response`. Call
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
 | `read_bytes(max: int)` | `io::IoError!?buffer` | Up to `max` bytes of the body; `null` once the body is over. Uses the timeout from `set_read_timeout`. |
-| `read_line(max: int = -1, timeout_ms: int = -1)` | `io::IoError!?string` | The next line of the body, without its `\n` or `\r\n`; `null` once the body is over. |
-| `read_all(timeout_ms: int = -1)` | `io::IoError!string` | The rest of the body, as text. |
-| `read_all_bytes(timeout_ms: int = -1)` | `io::IoError!buffer` | The rest of the body, as bytes. |
+| `read_line(max: int = -1, timeout_ms: int = -1)` | `io::IoError!?string` | The next line of the body, without its `\n` or `\r\n`; `null` once the body is over. Fails with `LineTooLong` past `max` bytes. |
+| `read_all(max_bytes: int = -1, timeout_ms: int = -1)` | `io::IoError!string` | The rest of the body, as text (fails with `TooLarge` past `max_bytes`). |
+| `read_all_bytes(max_bytes: int = -1, timeout_ms: int = -1)` | `io::IoError!buffer` | The rest of the body, as bytes (fails with `TooLarge` past `max_bytes`). |
 | `set_read_timeout(timeout_ms: int)` | `void` | Sets the default timeout in milliseconds for `read_bytes` (`-1`, the default: wait forever). |
 | `close()` | `void` | Done with the response. Reads after it fail with `Closed`. |
 
@@ -1414,7 +1414,7 @@ end
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000, reuse_port: bool = false)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one; `reuse_port = true` allows several processes to share the port on Linux and FreeBSD). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. `stop_on_signal` and `shutdown_timeout_ms` control how the server stops (see Stopping). |
+| `listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, body_timeout_ms: int = 30000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000, reuse_port: bool = false)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one; `reuse_port = true` allows several processes to share the port on Linux and FreeBSD). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. `stop_on_signal` and `shutdown_timeout_ms` control how the server stops (see Stopping). |
 
 **`Server`**
 
@@ -1458,10 +1458,10 @@ Here Ctrl+C lets the requests in flight finish, then `log.close()` writes what's
 | `headers` | `Headers` | The request headers. |
 | `remote_address` | `net::Address` | The client's address. |
 | `query_param(name: string)` | `?string` | The first value of a query parameter, decoded, with `+` read as a space. |
-| `text(timeout_ms: int = -1)` | `HttpError!string` | The body as text (`InvalidUtf8` when it isn't valid UTF-8). |
-| `bytes(timeout_ms: int = -1)` | `HttpError!buffer` | The body as bytes. |
-| `read_bytes(max: int)` | `io::IoError!?buffer` | The next piece of the body, up to `max` bytes; `null` at its end. For bodies too big to hold at once: it isn't limited by `max_body`. Uses the timeout from `set_read_timeout`. |
-| `set_read_timeout(timeout_ms: int)` | `void` | Sets the default timeout in milliseconds for `read_bytes` (`-1`, the default: wait forever). |
+| `text(timeout_ms: int = -1)` | `HttpError!string` | The body as text (`InvalidUtf8` when it isn't valid UTF-8). With `-1`, the whole body must arrive within the server's `body_timeout_ms` (`TimedOut` otherwise). |
+| `bytes(timeout_ms: int = -1)` | `HttpError!buffer` | The body as bytes, with the same timeout. |
+| `read_bytes(max: int)` | `io::IoError!?buffer` | The next piece of the body, up to `max` bytes; `null` at its end. For bodies too big to hold at once: it isn't limited by `max_body`. Each read waits at most the timeout from `set_read_timeout`. |
+| `set_read_timeout(timeout_ms: int)` | `void` | Sets the timeout in milliseconds that `read_bytes`, `text` and `bytes` use for this request (the server's `body_timeout_ms` until then; `-1`: wait forever). |
 
 The body is read only when the handler asks for it. `text` and `bytes` fail with `BodyTooLarge` past `max_body` bytes, and with `InvalidRequest` when the client sends a broken body.
 
@@ -1554,6 +1554,7 @@ end)
 - A request that isn't valid HTTP/1.1 (bad framing, `Content-Length` together with `Transfer-Encoding`, bad characters, an unknown method, a path whose `%` escapes don't decode) gets `400`, a head over 64 KiB gets `431`, and the handler isn't called. The connection then closes.
 - A client that stops reading a response (a big body, a stream) for `write_timeout_ms` is disconnected, like `TcpConn.set_write_timeout`: a streamed response's next write fails with `TimedOut`. A client that reads slowly but steadily isn't.
 - A client has `head_timeout_ms` to start sending a request on a new connection and `head_timeout_ms` to finish its head (`408` otherwise). Between requests on a kept connection, it may stay quiet for `idle_timeout_ms` before the server closes it.
+- A body the handler reads has `body_timeout_ms` to arrive: all of it for `text` and `bytes`, each piece for `read_bytes`. A read that runs out fails with `TimedOut`, so a client that stops sending halfway can't hold a connection forever. Raise it along with `max_body` for big uploads on slow networks.
 - Connections are kept for the next request unless the client asks to close (`Connection: close`, or HTTP/1.0 without `keep-alive`) or the handler sets `Connection: close`. Requests on one connection are answered in order.
 - A body the handler didn't read is read and dropped after the response if it's at most 64 KiB; a bigger one closes the connection.
 - `Expect: 100-continue`: the client gets `100 Continue` when the handler first reads the body. If it never does, the response goes out and the connection closes, so the client never sends a body nobody wants.

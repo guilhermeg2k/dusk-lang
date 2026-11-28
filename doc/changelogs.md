@@ -34,6 +34,8 @@
 - Running out of memory while waking a task that waited for a file, a stream, a network call or a child process could free that call's result twice
 - Missing required fields in struct construction (`Point()`) now report `Missing argument '<field>'` instead of `Invalid number of arguments`, and untyped `let x = null` / `let xs = [null]` now fail to compile instead of inferring an internal `null` type
 - A struct's field default values can now reference the struct's own static fields (`Config.DEFAULT`) and methods (`Bot.list_commands`, or method calls inside a default lambda) without triggering `CyclicDefault`, while genuine default-construction cycles (`x: A = A()` or mutual A/B defaults) still fail with `CyclicDefault`
+- A compressed response read through `http::open` could use far more memory than its own size: `read_line(max = 100)` unpacked everything that had arrived before checking the line's length (a 400 KB gzip body took 100 MB), and `read_all` / `read_all_bytes` had no limit at all. Line reads now unpack only past `max`, and `read_all` / `read_all_bytes` take `max_bytes` (fails with `TooLarge`) like a `TcpConn`'s
+- HTTP servers waited forever for a request body that stopped arriving, so a client could hold a connection and its handler open by sending part of a body. `http::listen` gains `body_timeout_ms = 30000`: `req.text()` and `req.bytes()` get that long for the whole body and each `req.read_bytes` for its piece, then fail with `TimedOut`; `req.set_read_timeout` changes it for one request
 
 ## v0.16 - Shigeo
 

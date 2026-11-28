@@ -1126,6 +1126,34 @@ func check_gzip(listener: net::TcpListener) -> !void
     big.close()
     await(big_server)
 
+    let capped_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let mut capped = try http::open(base(listener))
+    expect_read_error(io::IoError.TooLarge, func() -> return try capped.read_all(max_bytes = 100000))
+    capped.close()
+    await(capped_server)
+
+    let capped_bytes_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let mut capped_bytes = try http::open(base(listener))
+    let mut capped_failure: ?io::IoError = null
+    capped_bytes.read_all_bytes(max_bytes = 100000) catch e then
+        capped_failure = e
+    end
+    assert(capped_failure == io::IoError.TooLarge)
+    capped_bytes.close()
+    await(capped_bytes_server)
+
+    let exact_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let mut exact = try http::open(base(listener))
+    assert(buffer::len(try exact.read_all_bytes(max_bytes = 1048576)) == 1048576)
+    exact.close()
+    await(exact_server)
+
+    let no_newline_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let mut no_newline = try http::open(base(listener))
+    expect_read_error(io::IoError.LineTooLong, func() -> return try no_newline.read_line(max = 100) orelse "")
+    no_newline.close()
+    await(no_newline_server)
+
     let mut framed = try buffer::new(buffer::len(hello) + 32)
     let half = buffer::len(hello) // 2
     let mut at = try buffer::put(framed, 0, "${string::lower(to_hex(half))}\r\n")

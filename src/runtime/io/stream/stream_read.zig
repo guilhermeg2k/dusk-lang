@@ -56,13 +56,14 @@ pub const ReadMode = union(enum) {
 pub const BodyRead = union(enum) {
     bytes: usize,
     line: ?usize,
-    all_text,
-    all_bytes,
+    all_text: ?usize,
+    all_bytes: ?usize,
 
     pub fn decodeLimit(self: BodyRead) usize {
         return switch (self) {
             .bytes => |max| @max(max, min_decoded_bytes),
-            .line, .all_text, .all_bytes => std.math.maxInt(usize),
+            .line => |max| if (max) |limit| @max(limit +| 2, min_decoded_bytes) else std.math.maxInt(usize),
+            .all_text, .all_bytes => |max| if (max) |limit| limit +| 1 else std.math.maxInt(usize),
         };
     }
 };

@@ -155,17 +155,19 @@ fn streamBodyBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn streamBodyLine(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const max = args[1].int64;
-    const limit: ?usize = if (max < 0) null else @intCast(max);
-    return io.readStream(vm, args[0].int64, .{ .http_body = .{ .line = limit } }, args[2].int64);
+    return io.readStream(vm, args[0].int64, .{ .http_body = .{ .line = optionalLimit(args[1].int64) } }, args[2].int64);
 }
 
 fn streamBodyAll(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return io.readStream(vm, args[0].int64, .{ .http_body = .all_text }, args[1].int64);
+    return io.readStream(vm, args[0].int64, .{ .http_body = .{ .all_text = optionalLimit(args[1].int64) } }, args[2].int64);
 }
 
 fn streamBodyAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return io.readStream(vm, args[0].int64, .{ .http_body = .all_bytes }, args[1].int64);
+    return io.readStream(vm, args[0].int64, .{ .http_body = .{ .all_bytes = optionalLimit(args[1].int64) } }, args[2].int64);
+}
+
+fn optionalLimit(max: i64) ?usize {
+    return if (max < 0) null else @intCast(max);
 }
 
 fn readHttp(vm: *VM, stream_id: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
