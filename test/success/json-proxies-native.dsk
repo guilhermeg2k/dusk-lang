@@ -103,19 +103,16 @@ end
 
 struct MutatingItem
     id: int
+    hook: ?func() -> void = null
 end
 
 struct MutatingOther
     label: string
 end
 
-let mut shared_items: []MutatingItem = []
-
 func mutating_item_to_int(item: MutatingItem) -> int
-    if array::len(shared_items) > 1 then
-        let popped = array::pop(shared_items) catch e then
-            return item.id
-        end
+    if item.hook: run_hook then
+        run_hook()
     end
     return item.id
 end
@@ -229,6 +226,34 @@ schema ProxyCycleSchema
     FanB: via(fan_b_to_wire, wire_to_fan_b)
 end
 
+enum Shade
+    Light
+    Dark
+end
+
+func shade_to_int(shade: Shade) -> int
+    if shade == Shade.Light then
+        return 1
+    end
+    return 2
+end
+
+func int_to_shade(number: int) -> Shade
+    if number == 1 then
+        return Shade.Light
+    end
+    return Shade.Dark
+end
+
+union ShadeChoice
+    shade: ?Shade
+    other: int
+end
+
+schema ShadeSchema
+    Shade: via(shade_to_int, int_to_shade)
+end
+
 func main() -> !void
     assert(serialization::is_proxied[Stamp, Api]())
     assert(serialization::is_proxied[?time::Timestamp, Api]())
@@ -320,17 +345,35 @@ func main() -> !void
     end
     assert(proxy_depth_failed)
 
-    shared_items = [MutatingItem(id = 1094795585), MutatingItem(id = 2)]
+    let mut pair_items: []MutatingItem = []
+    let pop_pair = func() -> void
+        if array::len(pair_items) > 1 then
+            let popped = array::pop(pair_items) catch e then
+                return
+            end
+        end
+    end
+    array::append(pair_items, MutatingItem(id = 1094795585, hook = pop_pair))
+    array::append(pair_items, MutatingItem(id = 2))
     let mut pair_failed = false
-    json::encode[MutatingPair, MutatingSchema](MutatingPair(items = shared_items, other = MutatingOther(label = "ok"))) catch e then
+    json::encode[MutatingPair, MutatingSchema](MutatingPair(items = pair_items, other = MutatingOther(label = "ok"))) catch e then
         assert(e == json::JsonError.InvalidValue)
         pair_failed = true
     end
     assert(pair_failed)
 
-    shared_items = [MutatingItem(id = 1), MutatingItem(id = 2)]
+    let mut tail_items: []MutatingItem = []
+    let pop_tail = func() -> void
+        if array::len(tail_items) > 1 then
+            let popped = array::pop(tail_items) catch e then
+                return
+            end
+        end
+    end
+    array::append(tail_items, MutatingItem(id = 1, hook = pop_tail))
+    array::append(tail_items, MutatingItem(id = 2))
     let mut tail_failed = false
-    json::encode[MutatingTail, MutatingSchema](MutatingTail(items = shared_items)) catch e then
+    json::encode[MutatingTail, MutatingSchema](MutatingTail(items = tail_items)) catch e then
         assert(e == json::JsonError.InvalidValue)
         tail_failed = true
     end
@@ -370,4 +413,29 @@ func main() -> !void
         chain_depth_failed = true
     end
     assert(chain_depth_failed)
+
+    let shade_some = try json::decode[ShadeChoice, ShadeSchema]("{\"shade\":2}")
+    when shade_some
+        shade: found then
+            assert(found == Shade.Dark)
+        end
+        other: _ then
+            assert(false)
+        end
+    end
+    assert((try json::encode[ShadeChoice, ShadeSchema](shade_some)) == "{\"shade\":2}")
+    let shade_null = try json::decode[ShadeChoice, ShadeSchema]("{\"shade\":null}")
+    when shade_null
+        shade: found then
+            assert(found == null)
+        end
+        other: _ then
+            assert(false)
+        end
+    end
+    let mut shade_many: []ShadeChoice = []
+    for 0..499: i do
+        array::append(shade_many, try json::decode[ShadeChoice, ShadeSchema]("{\"shade\":2}"))
+    end
+    assert(array::len(shade_many) == 500)
 end

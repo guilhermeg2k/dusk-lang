@@ -381,6 +381,10 @@ func chain_error(text: string) -> ?serialization::SerializationError
     return null
 end
 
+struct NullableDefault
+    count: ?int = 5
+end
+
 func main() -> !void
     let text = "{\"colors\": [\"Red\", \"Blue\"], \"shapes\": [{\"circle\": 3}, {\"square\": {\"side\": 200}}, {\"nothing\": null}], \"labels\": {\"a\": 1, \"b\": 2}, \"notes\": {\"x\": null, \"y\": \"why\"}, \"level\": \"Mid\", \"nested\": [[1, 2], [], [3]], \"maybe_shape\": null, \"small\": 7}"
     let mut reader = reader_for(text)
@@ -424,6 +428,13 @@ func main() -> !void
     let mut color_writer = JsonWriter()
     try serialization::encode(Color.Green, color_writer)
     assert(text_of(color_writer) == "\"Green\"")
+
+    let mut default_omitted_reader = reader_for("{}")
+    let omitted: NullableDefault = try serialization::decode(default_omitted_reader)
+    assert(omitted.count == 5)
+    let mut default_null_reader = reader_for("{\"count\": null}")
+    let explicit_null: NullableDefault = try serialization::decode(default_null_reader)
+    assert(explicit_null.count == null)
 
     let mut deep_parts: []string = []
     for 0..599: i do

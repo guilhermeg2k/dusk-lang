@@ -205,6 +205,7 @@ test "serialization: proxies convert values through two functions" {
     try runCase("json-proxies-native.dsk");
     try runCaseError("sema/schema-via-wrong-signature.dsk", error.InvalidSchema);
     try runCaseError("sema/schema-via-not-function.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-via-cycle.dsk", error.InvalidSchema);
     try runCaseError("sema/schema-type-line-rule.dsk", error.InvalidSchema);
 }
 

@@ -93,6 +93,7 @@ pub const SemaAnalyzer = struct {
     derived_function_aliases: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
     proxy_converter_count: usize = 0,
     proxy_encoders: std.AutoHashMapUnmanaged(ProxyEncoderKey, ir.SiteFunction) = .empty,
+    active_proxy_plans: std.ArrayList(usize) = .empty,
     var_init_states: std.AutoHashMapUnmanaged(usize, InitState) = .empty,
     var_decl_loop_depth: std.AutoHashMapUnmanaged(usize, usize) = .empty,
 
@@ -6017,7 +6018,7 @@ pub const SemaAnalyzer = struct {
             try self.emit(out, "{s} = {s}\n", .{ target, expression });
             return;
         }
-        try self.emit(out, "if !(try reader.read_null()) then\n{s} = {s}\nend\n", .{ target, expression });
+        try self.emit(out, "if !(try reader.read_null()) then\n{s} = {s}\nelse\n{s} = null\nend\n", .{ target, expression, target });
     }
 
     fn emitFieldEncode(self: *Self, out: *std.ArrayList(u8), source: []const u8, type_id: tt.TypeId, proxy: ?usize, number: usize, loc: err.Loc) CompileError!void {
@@ -6038,7 +6039,7 @@ pub const SemaAnalyzer = struct {
             return;
         }
         const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
-        try self.emit(out, "if !(try reader.read_null()) then\n{s} = {s}\nend\n", .{ target, try self.decodeExpression(base, loc) });
+        try self.emit(out, "if !(try reader.read_null()) then\n{s} = {s}\nelse\n{s} = null\nend\n", .{ target, try self.decodeExpression(base, loc), target });
     }
 
     fn decodeExpression(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
@@ -6176,7 +6177,7 @@ pub const SemaAnalyzer = struct {
         const index = self.serialization_plans.items.len;
         try self.serialization_plans.append(self.allocator, .{ .type_id = type_id, .shape = .scalar });
         try self.plan_by_key.put(self.allocator, key, index);
-        const shape = try self.planShape(type_id, schema, path, loc);
+        const shape = try self.planShape(index, type_id, schema, path, loc);
         self.serialization_plans.items[index].shape = shape;
         try self.attachProxySites(index, schema, loc);
         return index;
@@ -6239,7 +6240,12 @@ pub const SemaAnalyzer = struct {
             try chain.append(self.allocator, unwrapped.shape.proxy.proxy);
             current = unwrapped.shape.proxy.plan;
         }
+        var visited: std.AutoHashMapUnmanaged(usize, void) = .empty;
         while (self.serialization_plans.items[current].shape == .proxy) {
+            if (visited.contains(current)) {
+                return self.err_reporter.invalidSchema("a 'via' chain can't loop back to the same type", self.reportAtUserCall(loc));
+            }
+            try visited.put(self.allocator, current, {});
             const link = self.serialization_plans.items[current].shape.proxy;
             try chain.append(self.allocator, link.proxy);
             current = link.plan;
@@ -6296,7 +6302,10 @@ pub const SemaAnalyzer = struct {
             .field => |member| try self.emit(&out, "target.{s} = {s}\n", .{ member, previous }),
             .index => try self.emit(&out, "target[index] = {s}\n", .{previous}),
             .key => try self.emit(&out, "target[key] = {s}\n", .{previous}),
-            .payload => try self.emit(&out, "set_payload(target, tag, {s})\n", .{previous}),
+            .payload => {
+                const item_text = try self.derivedTypeText(target.item_type, loc);
+                try self.emit(&out, "let payload: {s} = {s}\nset_payload(target, tag, payload)\n", .{ item_text, previous });
+            },
         }
         try out.appendSlice(self.allocator, "return true\nend\n");
         const arg_count = captures.items.len;
@@ -6391,14 +6400,22 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn planShape(self: *Self, type_id: tt.TypeId, schema: tt.TypeId, path: []const u8, loc: err.Loc) CompileError!ir.PlanShape {
+    fn planShape(self: *Self, plan_index: usize, type_id: tt.TypeId, schema: tt.TypeId, path: []const u8, loc: err.Loc) CompileError!ir.PlanShape {
         const type_ptr = self.type_table.getTypePtrById(type_id);
         if (type_ptr.is_nullable) {
             const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
             return .{ .nullable = try self.planIndex(base, schema, path, loc) };
         }
         if (try self.typeProxy(type_id, schema)) |proxy| {
-            return .{ .proxy = .{ .proxy = proxy, .plan = try self.planIndex(self.proxies.items[proxy].proxy_type, schema, path, loc) } };
+            try self.active_proxy_plans.append(self.allocator, plan_index);
+            defer _ = self.active_proxy_plans.pop();
+            const target_plan = try self.planIndex(self.proxies.items[proxy].proxy_type, schema, path, loc);
+            for (self.active_proxy_plans.items) |active| {
+                if (active == target_plan) {
+                    return self.err_reporter.invalidSchema("a 'via' chain can't loop back to the same type", self.reportAtUserCall(loc));
+                }
+            }
+            return .{ .proxy = .{ .proxy = proxy, .plan = target_plan } };
         }
         switch (type_ptr.kind) {
             .int, .byte, .float, .boolean, .string => return .scalar,
