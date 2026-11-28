@@ -27,6 +27,26 @@ struct Node
     next: ?Node = null
 end
 
+struct Wide
+    f1: int = 0
+    f2: int = 0
+    f3: int = 0
+    f4: int = 0
+    f5: int = 0
+    f6: int = 0
+    f7: int = 0
+    f8: int = 0
+    f9: int = 0
+    f10: int = 0
+end
+
+schema WideApi
+    struct Wide
+        f1: "alpha", "a_alias"
+        f10: "omega", "z_alias"
+    end
+end
+
 func expect_error[T](text: string, expected: json::JsonError) -> void
     json::decode[T](text) catch e then
         assert(e == expected)
@@ -113,4 +133,21 @@ func main() -> !void
     let shared = Node(value = 2)
     let repeated = [shared, shared]
     assert((try json::encode(repeated)) == "[{\"value\":2,\"next\":null},{\"value\":2,\"next\":null}]")
+    let wide = try json::decode[Wide, WideApi]("{\"z_alias\":10,\"f5\":5,\"unknown_a\":\"\\u0041\\n\",\"a_alias\":1,\"f2\":2}")
+    assert(wide.f1 == 1)
+    assert(wide.f2 == 2)
+    assert(wide.f5 == 5)
+    assert(wide.f10 == 10)
+    expect_error[Wide]("{\"f1\":1,\"\\u0078\":\"\\n\",\"x\":2}", json::JsonError.DuplicateKey)
+    expect_error[Wide]("{\"f1\":1,\"skip\":{\"\\u0061\":\"\\t\",\"a\":2}}", json::JsonError.DuplicateKey)
+    expect_error[Wide]("{\"f1\":1,\"skip\":\"\\uD800\"}", json::JsonError.InvalidJson)
+    expect_error[Choice]("{\"\\u0074ext\":\"a\\nb\",\"text\":\"c\"}", json::JsonError.DuplicateKey)
+    json::decode[Choice]("{\"number\":1,\"number\":2}", diagnostic) catch e then
+        assert(e == json::JsonError.DuplicateKey)
+        assert(diagnostic.path == "number")
+    end
+    json::decode[map[string, []int]]("{\"a\\\"b\\nc\":[\"bad\"]}", diagnostic) catch e then
+        assert(e == json::JsonError.TypeMismatch)
+        assert(diagnostic.path == "[\"a\\\"b\\nc\"][0]")
+    end
 end

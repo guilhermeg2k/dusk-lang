@@ -23,11 +23,17 @@ pub const JsonError = enum {
 
 var scratch: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
 var encoded: std.ArrayList(u8) = .empty;
+var unescaped: std.ArrayList(u8) = .empty;
 
 const kept_output_capacity = 1 << 20;
 
 fn releaseScratch() void {
     _ = scratch.reset(.{ .retain_with_limit = 1 << 20 });
+}
+
+fn releaseUnescaped() void {
+    if (unescaped.capacity <= kept_output_capacity) return;
+    unescaped.clearAndFree(std.heap.c_allocator);
 }
 
 pub fn encode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
@@ -81,6 +87,8 @@ pub fn collectNested(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     const stop: usize = @intCast(args[2].int64);
     var i: usize = @intCast(args[1].int64);
     while (i < stop) : (i += 1) {
+        const item_base = vm.heap.temporary_roots.items.len;
+        defer vm.heap.restoreRootCount(item_base);
         const closure = closureOf(arrayOf(vm.heap.protectedValue(queue)).getDataPtr()[i]);
         const out = arrayOf(closure.captures()[1]);
         if (out.len == 0) continue;
@@ -452,7 +460,11 @@ fn longestEscapedSize(length: usize) usize {
 }
 
 fn appendStringAssumeCapacity(text: []const u8) void {
-    const out = encoded.unusedCapacitySlice();
+    appendEscapedStringAssumeCapacity(&encoded, text);
+}
+
+fn appendEscapedStringAssumeCapacity(out_list: *std.ArrayList(u8), text: []const u8) void {
+    const out = out_list.unusedCapacitySlice();
     out[0] = '"';
     var written: usize = 1;
     for (text) |char| {
@@ -464,7 +476,7 @@ fn appendStringAssumeCapacity(text: []const u8) void {
         written += writeEscapeInto(out[written..], char);
     }
     out[written] = '"';
-    encoded.items.len += written + 1;
+    out_list.items.len += written + 1;
 }
 
 fn needsEscape(char: u8) bool {
@@ -544,6 +556,7 @@ pub fn describeStep(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
         return native.ok(.{ .null = {} });
     }
     defer releaseScratch();
+    defer releaseUnescaped();
     const allocator = scratch.allocator();
     const root_base = vm.heap.temporary_roots.items.len;
     defer vm.heap.restoreRootCount(root_base);
@@ -556,7 +569,7 @@ pub fn describeStep(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
         .vm = vm,
         .allocator = allocator,
         .source = source,
-        .lexer = .{ .source = source, .allocator = allocator },
+        .lexer = .{ .source = source },
         .diagnostic = diagnostic,
         .max_depth = 512,
         .should_reject_unknown_fields = false,
@@ -574,6 +587,7 @@ pub fn describeStep(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
 
 fn decodeDocument(vm: *VM, args: []v.Value, has_holder: bool) anyerror!native.NativeResult {
     defer releaseScratch();
+    defer releaseUnescaped();
     const allocator = scratch.allocator();
     const root_base = vm.heap.temporary_roots.items.len;
     defer vm.heap.restoreRootCount(root_base);
@@ -587,7 +601,7 @@ fn decodeDocument(vm: *VM, args: []v.Value, has_holder: bool) anyerror!native.Na
         .vm = vm,
         .allocator = allocator,
         .source = source,
-        .lexer = .{ .source = source, .allocator = allocator },
+        .lexer = .{ .source = source },
         .diagnostic = diagnostic,
         .max_depth = if (isValidDepth(max_depth)) @intCast(max_depth) else 0,
         .should_reject_unknown_fields = options.get(0).bool,
@@ -604,11 +618,24 @@ fn decodeDocument(vm: *VM, args: []v.Value, has_holder: bool) anyerror!native.Na
     return native.ok(result);
 }
 
-fn findField(fields: []const serialization_plan.Field, key: []const u8, guess: usize) ?usize {
-    if (guess < fields.len and fields[guess].isNamed(key)) {
+fn findField(shape: serialization_plan.Structure, key: []const u8, guess: usize) ?usize {
+    if (guess < shape.fields.len and shape.fields[guess].isNamed(key)) {
         return guess;
     }
-    for (fields, 0..) |field, i| {
+    if (shape.lookup.len > 0) {
+        var low: usize = 0;
+        var high: usize = shape.lookup.len;
+        while (low < high) {
+            const mid = low + (high - low) / 2;
+            switch (std.mem.order(u8, key, shape.lookup[mid].name)) {
+                .lt => high = mid,
+                .gt => low = mid + 1,
+                .eq => return shape.lookup[mid].index,
+            }
+        }
+        return null;
+    }
+    for (shape.fields, 0..) |field, i| {
         if (field.isNamed(key)) {
             return i;
         }
@@ -710,12 +737,15 @@ const Decoder = struct {
                 try self.lexer.readLiteral("null");
                 return self.vm.heap.protectValue(v.NULL_VALUE, .nullable);
             }
+            const child_base = self.vm.heap.temporary_roots.items.len;
             const child = try self.decodeValue(plan.shape.nullable, depth);
             const inner = self.vm.program.serialization_plans[plan.shape.nullable];
             if (inner.kind.isHeapType()) {
                 return child;
             }
-            const boxed = try self.vm.allocNullBox(self.vm.heap.protectedValue(child), inner.kind);
+            const raw_child = self.vm.heap.protectedValue(child);
+            self.vm.heap.restoreRootCount(child_base);
+            const boxed = try self.vm.allocNullBox(raw_child, inner.kind);
             return self.vm.heap.protectValue(boxed, .nullable);
         }
         switch (plan.shape) {
@@ -766,6 +796,7 @@ const Decoder = struct {
                 try self.enterContainer(.array, depth);
                 const item_kind = self.vm.program.serialization_plans[items.item].kind;
                 const array = try allocRootedArray(self.vm, item_kind, 8);
+                const pending_base = self.vm.heap.temporary_roots.items.len;
                 var pending: std.ArrayList(PendingItem) = .empty;
                 var is_first = true;
                 var i: usize = 0;
@@ -779,8 +810,10 @@ const Decoder = struct {
                         }
                         try appendRootedItem(self.vm, array, placeholder);
                     } else {
+                        const item_base = self.vm.heap.temporary_roots.items.len;
                         const item = try self.decodeValue(items.item, depth + 1);
                         try appendRootedItem(self.vm, array, item);
+                        self.vm.heap.restoreRootCount(item_base);
                     }
                     self.path.shrinkRetainingCapacity(path_base);
                 }
@@ -789,6 +822,7 @@ const Decoder = struct {
                         const index = try self.vm.heap.protectValue(.{ .int64 = @intCast(entry.index) }, .int64);
                         try self.queueConversion(site.decode_function, &.{ array, index }, entry.site_value);
                     }
+                    self.vm.heap.restoreRootCount(pending_base);
                 }
                 return array;
             },
@@ -817,7 +851,7 @@ const Decoder = struct {
 
     fn rejectToken(self: *Decoder, kind: ValueKind) anyerror {
         switch (kind) {
-            .string => _ = try self.lexer.readString(),
+            .string => try self.lexer.skipString(),
             .number => _ = try self.lexer.readNumber(),
             .literal_true => try self.lexer.readLiteral("true"),
             .literal_false => try self.lexer.readLiteral("false"),
@@ -849,13 +883,14 @@ const Decoder = struct {
         while (try self.lexer.nextKey(&is_first)) |key| {
             const path_base = self.path.items.len;
             try self.appendFieldPath(key, false);
-            const field_index = findField(shape.fields, key, guess);
+            const field_index = findField(shape, key, guess);
             if (field_index) |i| {
                 if (seen_fields.isSet(i)) {
                     return error.DuplicateKey;
                 }
                 seen_fields.set(i);
                 guess = i + 1;
+                const field_base = self.vm.heap.temporary_roots.items.len;
                 if (shape.fields[i].proxy) |site| {
                     if (try self.decodeSite(site, depth + 1)) |site_value| {
                         try self.queueConversion(site.decode_function, &.{object}, site_value);
@@ -864,6 +899,7 @@ const Decoder = struct {
                     const item = try self.decodeValue(shape.fields[i].plan, depth + 1);
                     self.rootedStruct(object).set(shape.fields[i].slot, self.vm.heap.protectedValue(item));
                 }
+                self.vm.heap.restoreRootCount(field_base);
             } else {
                 if (self.should_reject_unknown_fields) {
                     return error.UnknownField;
@@ -872,6 +908,7 @@ const Decoder = struct {
                 if (entry.found_existing) {
                     return error.DuplicateKey;
                 }
+                entry.key_ptr.* = try self.persistKey(key);
                 try self.skipValue(depth + 1);
             }
             self.path.shrinkRetainingCapacity(path_base);
@@ -898,6 +935,8 @@ const Decoder = struct {
         const map = try self.vm.heap.protectValue(value, .map);
         var is_first = true;
         while (try self.lexer.nextKey(&is_first)) |key_text| {
+            const entry_base = self.vm.heap.temporary_roots.items.len;
+            defer self.vm.heap.restoreRootCount(entry_base);
             const path_base = self.path.items.len;
             try self.appendFieldPath(key_text, true);
             const key_value = try self.vm.allocBytesValue(key_text, .string);
@@ -923,6 +962,8 @@ const Decoder = struct {
     }
 
     fn applyDefault(self: *Decoder, object: usize, slot: u8, default: serialization_plan.Default) !void {
+        const default_base = self.vm.heap.temporary_roots.items.len;
+        defer self.vm.heap.restoreRootCount(default_base);
         switch (default) {
             .function => |function| try self.queueStep(function, &.{object}),
             .constant => |constant| {
@@ -978,7 +1019,8 @@ const Decoder = struct {
     fn readUnion(self: *Decoder, shape: serialization_plan.TaggedUnion, depth: usize) !usize {
         try self.enterContainer(.object, depth);
         var is_first = true;
-        const key = try self.lexer.nextKey(&is_first) orelse return error.InvalidUnion;
+        const raw_key = try self.lexer.nextKey(&is_first) orelse return error.InvalidUnion;
+        const key = try self.persistKey(raw_key);
         const path_base = self.path.items.len;
         try self.appendFieldPath(key, false);
         const variant = for (shape.variants) |candidate| {
@@ -986,6 +1028,8 @@ const Decoder = struct {
                 break candidate;
             }
         } else return error.UnknownVariant;
+        const union_base = self.vm.heap.temporary_roots.items.len;
+        const result = try self.vm.heap.protectValue(v.NULL_VALUE, .@"union");
         var site_value: ?SiteValue = null;
         const item = if (variant.proxy) |site| blk: {
             site_value = try self.decodeSite(site, depth + 1);
@@ -993,7 +1037,6 @@ const Decoder = struct {
         } else try self.decodeValue(variant.plan, depth + 1);
         if (try self.lexer.nextKey(&is_first)) |second| {
             if (std.mem.eql(u8, second, key)) {
-                try self.appendFieldPath(second, true);
                 return error.DuplicateKey;
             }
             return error.InvalidUnion;
@@ -1003,11 +1046,12 @@ const Decoder = struct {
         const object = try v.Union.init(self.vm.getCurrentHeapAllocator(), shape.descriptor);
         self.vm.increaseHeapAllocationCount(size);
         object.set(variant.tag, self.vm.heap.protectedValue(item));
-        const result = try self.vm.heap.protectValue(.{ .heap_obj = &object.obj }, .@"union");
+        self.vm.heap.temporary_roots.items[result].value = .{ .heap_obj = &object.obj };
         if (site_value) |found| {
             const tag = try self.vm.heap.protectValue(.{ .int64 = variant.tag }, .int64);
             try self.queueConversion(variant.proxy.?.decode_function, &.{ result, tag }, found);
         }
+        self.vm.heap.restoreRootCount(union_base + 1);
         self.path.shrinkRetainingCapacity(path_base);
         return result;
     }
@@ -1025,6 +1069,7 @@ const Decoder = struct {
                         try self.appendFieldPath(key_text, true);
                         return error.DuplicateKey;
                     }
+                    entry.key_ptr.* = try self.persistKey(key_text);
                     const path_base = self.path.items.len;
                     try self.appendFieldPath(key_text, false);
                     try self.skipValue(depth + 1);
@@ -1042,7 +1087,7 @@ const Decoder = struct {
                     self.path.shrinkRetainingCapacity(path_base);
                 }
             },
-            .string => _ = try self.lexer.readString(),
+            .string => try self.lexer.skipString(),
             .number => _ = try self.lexer.readNumber(),
             .literal_true => try self.lexer.readLiteral("true"),
             .literal_false => try self.lexer.readLiteral("false"),
@@ -1051,9 +1096,22 @@ const Decoder = struct {
         }
     }
 
+    fn persistKey(self: *Decoder, key: []const u8) ![]const u8 {
+        const source_start = @intFromPtr(self.source.ptr);
+        const source_end = source_start + self.source.len;
+        const key_addr = @intFromPtr(key.ptr);
+        const is_in_source = key_addr >= source_start and key_addr <= source_end;
+        if (is_in_source) {
+            return key;
+        }
+        return self.allocator.dupe(u8, key);
+    }
+
     fn appendIndexPath(self: *Decoder, index: usize) !void {
         if (!self.hasDiagnostic()) return;
-        try self.path.appendSlice(self.allocator, try std.fmt.allocPrint(self.allocator, "[{d}]", .{index}));
+        var buffer: [24]u8 = undefined;
+        const formatted = std.fmt.bufPrint(&buffer, "[{d}]", .{index}) catch unreachable;
+        try self.path.appendSlice(self.allocator, formatted);
     }
 
     fn hasDiagnostic(self: *Decoder) bool {
@@ -1069,15 +1127,7 @@ const Decoder = struct {
 
     fn appendFieldPath(self: *Decoder, name: []const u8, is_map_key: bool) !void {
         if (!self.hasDiagnostic()) return;
-        var is_identifier = name.len > 0;
-        for (name, 0..) |c, i| {
-            const is_valid = std.ascii.isAlphabetic(c) or c == '_' or (i > 0 and std.ascii.isDigit(c));
-            if (!is_valid) {
-                is_identifier = false;
-                break;
-            }
-        }
-        const can_use_identifier = is_identifier and !is_map_key;
+        const can_use_identifier = !is_map_key and isIdentifier(name);
         if (can_use_identifier) {
             if (self.path.items.len > 0) {
                 try self.path.append(self.allocator, '.');
@@ -1085,9 +1135,23 @@ const Decoder = struct {
             try self.path.appendSlice(self.allocator, name);
             return;
         }
-        try self.path.append(self.allocator, '[');
-        try self.path.appendSlice(self.allocator, try std.json.Stringify.valueAlloc(self.allocator, name, .{}));
-        try self.path.append(self.allocator, ']');
+        try self.path.ensureUnusedCapacity(self.allocator, longestEscapedSize(name.len) + 2);
+        self.path.appendAssumeCapacity('[');
+        appendEscapedStringAssumeCapacity(&self.path, name);
+        self.path.appendAssumeCapacity(']');
+    }
+
+    fn isIdentifier(name: []const u8) bool {
+        if (name.len == 0) {
+            return false;
+        }
+        for (name, 0..) |c, i| {
+            const is_valid = std.ascii.isAlphabetic(c) or c == '_' or (i > 0 and std.ascii.isDigit(c));
+            if (!is_valid) {
+                return false;
+            }
+        }
+        return true;
     }
 
     fn allocRootedStruct(self: *Decoder, descriptor: u16) !usize {
@@ -1156,7 +1220,7 @@ const Decoder = struct {
         switch (plan.shape) {
             .int, .byte, .float => _ = try self.lexer.readNumber(),
             .boolean => try self.lexer.readLiteral(if (kind == .literal_true) "true" else "false"),
-            .string, .enumeration => _ = try self.lexer.readString(),
+            .string, .enumeration => try self.lexer.skipString(),
             .array => |items| {
                 self.lexer.pos += 1;
                 var is_first = true;
@@ -1179,7 +1243,7 @@ const Decoder = struct {
                 while (try self.lexer.nextKey(&is_first)) |key| {
                     const path_base = self.path.items.len;
                     try self.appendFieldPath(key, false);
-                    if (findField(shape.fields, key, guess)) |i| {
+                    if (findField(shape, key, guess)) |i| {
                         guess = i + 1;
                         if (shape.fields[i].proxy) |site| {
                             try self.findPathInSite(site, target_offset);
@@ -1246,7 +1310,7 @@ const Decoder = struct {
                     try self.skipJsonTokens();
                 }
             },
-            .string => _ = try self.lexer.readString(),
+            .string => try self.lexer.skipString(),
             .number => _ = try self.lexer.readNumber(),
             .literal_true => try self.lexer.readLiteral("true"),
             .literal_false => try self.lexer.readLiteral("false"),
@@ -1265,7 +1329,6 @@ const Number = struct {
 
 const Lexer = struct {
     source: []const u8,
-    allocator: std.mem.Allocator,
     pos: usize = 0,
     token_start: usize = 0,
 
@@ -1429,23 +1492,70 @@ const Lexer = struct {
         return error.InvalidJson;
     }
 
+    fn skipString(self: *Lexer) !void {
+        self.pos += 1;
+        var chunk_start = self.pos;
+        var has_non_ascii = false;
+        while (self.pos < self.source.len) {
+            const c = self.source[self.pos];
+            if (c == '"') {
+                if (has_non_ascii and !std.unicode.utf8ValidateSlice(self.source[chunk_start..self.pos])) {
+                    return error.InvalidJson;
+                }
+                self.pos += 1;
+                return;
+            }
+            if (c == '\\') {
+                if (has_non_ascii and !std.unicode.utf8ValidateSlice(self.source[chunk_start..self.pos])) {
+                    return error.InvalidJson;
+                }
+                self.pos += 1;
+                try self.skipEscape();
+                chunk_start = self.pos;
+                has_non_ascii = false;
+                continue;
+            }
+            if (c < 0x20) {
+                return error.InvalidJson;
+            }
+            if (c >= 0x80) {
+                has_non_ascii = true;
+            }
+            self.pos += 1;
+        }
+        return error.InvalidJson;
+    }
+
+    fn skipEscape(self: *Lexer) !void {
+        if (self.pos >= self.source.len) {
+            return error.InvalidJson;
+        }
+        const escape = self.source[self.pos];
+        self.pos += 1;
+        switch (escape) {
+            '"', '\\', '/', 'b', 'f', 'n', 'r', 't' => {},
+            'u' => _ = try self.readCodepoint(),
+            else => return error.InvalidJson,
+        }
+    }
+
     fn readEscapedString(self: *Lexer, start: usize) ![]const u8 {
-        var out: std.ArrayList(u8) = .empty;
-        try out.appendSlice(self.allocator, self.source[start..self.pos]);
+        unescaped.clearRetainingCapacity();
+        try unescaped.appendSlice(std.heap.c_allocator, self.source[start..self.pos]);
         while (self.pos < self.source.len) {
             const c = self.source[self.pos];
             self.pos += 1;
             if (c == '"') {
-                if (!std.unicode.utf8ValidateSlice(out.items)) {
+                if (!std.unicode.utf8ValidateSlice(unescaped.items)) {
                     return error.InvalidJson;
                 }
-                return out.items;
+                return unescaped.items;
             }
             if (c < 0x20) {
                 return error.InvalidJson;
             }
             if (c != '\\') {
-                try out.append(self.allocator, c);
+                try unescaped.append(std.heap.c_allocator, c);
                 continue;
             }
             if (self.pos >= self.source.len) {
@@ -1454,20 +1564,27 @@ const Lexer = struct {
             const escape = self.source[self.pos];
             self.pos += 1;
             switch (escape) {
-                '"', '\\', '/' => try out.append(self.allocator, escape),
-                'b' => try out.append(self.allocator, 0x08),
-                'f' => try out.append(self.allocator, 0x0c),
-                'n' => try out.append(self.allocator, '\n'),
-                'r' => try out.append(self.allocator, '\r'),
-                't' => try out.append(self.allocator, '\t'),
-                'u' => try self.appendCodepoint(&out),
+                '"', '\\', '/' => try unescaped.append(std.heap.c_allocator, escape),
+                'b' => try unescaped.append(std.heap.c_allocator, 0x08),
+                'f' => try unescaped.append(std.heap.c_allocator, 0x0c),
+                'n' => try unescaped.append(std.heap.c_allocator, '\n'),
+                'r' => try unescaped.append(std.heap.c_allocator, '\r'),
+                't' => try unescaped.append(std.heap.c_allocator, '\t'),
+                'u' => try self.appendCodepoint(),
                 else => return error.InvalidJson,
             }
         }
         return error.InvalidJson;
     }
 
-    fn appendCodepoint(self: *Lexer, out: *std.ArrayList(u8)) !void {
+    fn appendCodepoint(self: *Lexer) !void {
+        const codepoint = try self.readCodepoint();
+        var buffer: [4]u8 = undefined;
+        const length = std.unicode.utf8Encode(codepoint, &buffer) catch return error.InvalidJson;
+        try unescaped.appendSlice(std.heap.c_allocator, buffer[0..length]);
+    }
+
+    fn readCodepoint(self: *Lexer) !u21 {
         var codepoint: u21 = try self.readHex4();
         if (codepoint >= 0xDC00 and codepoint <= 0xDFFF) {
             return error.InvalidJson;
@@ -1484,9 +1601,7 @@ const Lexer = struct {
             }
             codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
         }
-        var buffer: [4]u8 = undefined;
-        const length = std.unicode.utf8Encode(codepoint, &buffer) catch return error.InvalidJson;
-        try out.appendSlice(self.allocator, buffer[0..length]);
+        return codepoint;
     }
 
     fn readHex4(self: *Lexer) !u21 {

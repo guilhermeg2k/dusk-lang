@@ -38,6 +38,12 @@ pub const Structure = struct {
     descriptor: u16,
     fields: []const Field,
     skipped: []const SkippedField,
+    lookup: []const NameEntry = &.{},
+};
+
+pub const NameEntry = struct {
+    name: []const u8,
+    index: usize,
 };
 
 pub const Field = struct {

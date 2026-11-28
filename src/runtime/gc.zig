@@ -5,6 +5,7 @@ const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const TaskState = @import("tasks/scheduler.zig").TaskState;
 
 const MIN_GC_THRESHOLD = 1000000; //1MB
+const kept_temporary_roots_capacity = 4096;
 
 pub const Heap = struct {
     const Self = @This();
@@ -97,6 +98,10 @@ pub const Heap = struct {
     }
 
     pub fn restoreRootCount(self: *Self, count: usize) void {
+        if (count == 0 and self.temporary_roots.capacity > kept_temporary_roots_capacity) {
+            self.temporary_roots.clearAndFree(self.queue_allocator);
+            return;
+        }
         self.temporary_roots.shrinkRetainingCapacity(count);
     }
 

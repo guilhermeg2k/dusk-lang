@@ -1853,11 +1853,15 @@ pub const BytecodeGen = struct {
                 .string => .string,
                 else => @panic("runtimePlanShape: scalar plan for a type that isn't a scalar"),
             },
-            .structure => |structure| .{ .structure = .{
-                .descriptor = try self.structDescriptorOf(plan.type_id),
-                .fields = try self.runtimePlanFields(plan.type_id, structure.fields, funcs),
-                .skipped = try self.runtimeSkippedFields(plan.type_id, structure.skipped, funcs),
-            } },
+            .structure => |structure| blk: {
+                const runtime_fields = try self.runtimePlanFields(plan.type_id, structure.fields, funcs);
+                break :blk .{ .structure = .{
+                    .descriptor = try self.structDescriptorOf(plan.type_id),
+                    .fields = runtime_fields,
+                    .skipped = try self.runtimeSkippedFields(plan.type_id, structure.skipped, funcs),
+                    .lookup = try self.buildFieldLookup(runtime_fields),
+                } };
+            },
             .enumeration => |variants| blk: {
                 const enumeration = type_ptr.kind.@"enum";
                 const runtime_variants = try self.allocator.alloc(serialization_plan.EnumVariant, variants.len);
@@ -1898,6 +1902,32 @@ pub const BytecodeGen = struct {
             };
         }
         return runtime_fields;
+    }
+
+    fn buildFieldLookup(self: *Self, fields: []const serialization_plan.Field) ![]const serialization_plan.NameEntry {
+        var total_names: usize = 0;
+        for (fields) |field| {
+            total_names += 1 + field.aliases.len;
+        }
+        if (total_names <= 8) {
+            return &.{};
+        }
+        const entries = try self.allocator.alloc(serialization_plan.NameEntry, total_names);
+        var cursor: usize = 0;
+        for (fields, 0..) |field, i| {
+            entries[cursor] = .{ .name = field.name, .index = i };
+            cursor += 1;
+            for (field.aliases) |alias| {
+                entries[cursor] = .{ .name = alias, .index = i };
+                cursor += 1;
+            }
+        }
+        std.mem.sort(serialization_plan.NameEntry, entries, {}, lessThanNameEntry);
+        return entries;
+    }
+
+    fn lessThanNameEntry(_: void, a: serialization_plan.NameEntry, b: serialization_plan.NameEntry) bool {
+        return std.mem.order(u8, a.name, b.name) == .lt;
     }
 
     fn runtimeSkippedFields(self: *Self, owner_type: tt.TypeId, skipped: []const ir.PlanSkip, funcs: *std.ArrayList(bc.Function)) ![]const serialization_plan.SkippedField {
