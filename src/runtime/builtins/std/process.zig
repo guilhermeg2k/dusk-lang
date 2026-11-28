@@ -95,7 +95,7 @@ fn launchChild(vm: *VM, options: process.Launch) !*process.Process {
 
 const PreparedLaunch = struct {
     launch: process.Launch,
-    candidates: ?[]const [:0]const u8 = null,
+    candidates: ?[]const process.Candidate = null,
 };
 
 fn prepareLaunch(vm: *VM, args: []v.Value, allocator: std.mem.Allocator) !PreparedLaunch {
@@ -179,7 +179,7 @@ fn addEnvironment(allocator: std.mem.Allocator, entries: *std.ArrayList(?[*:0]co
 
 fn checkInterpreterScript(program: []const u8) !void {
     if (builtin.os.tag != .windows) return;
-    const extension = std.fs.path.extension(program);
+    const extension = std.fs.path.extension(std.mem.trimEnd(u8, program, ". "));
     const needs_interpreter = std.ascii.eqlIgnoreCase(extension, ".cmd") or std.ascii.eqlIgnoreCase(extension, ".bat");
     if (needs_interpreter) {
         return error.InvalidExecutable;
@@ -190,18 +190,20 @@ fn hasPathSeparator(program: []const u8) bool {
     return std.mem.indexOfScalar(u8, program, '/') != null or (builtin.os.tag == .windows and std.mem.indexOfAny(u8, program, "\\:") != null);
 }
 
-fn executableCandidates(vm: *VM, allocator: std.mem.Allocator, program: []const u8, cwd: []const u8) ![]const [:0]const u8 {
+fn executableCandidates(vm: *VM, allocator: std.mem.Allocator, program: []const u8, cwd: []const u8) ![]const process.Candidate {
     const environment = vm.environment orelse return error.NotFound;
     const path = environment.get("PATH") orelse return error.NotFound;
     try validateText(path);
     const suffixes: []const []const u8 = if (builtin.os.tag == .windows) &.{ "", ".exe", ".com" } else &.{""};
-    var candidates: std.ArrayList([:0]const u8) = .empty;
+    var candidates: std.ArrayList(process.Candidate) = .empty;
     var parts = std.mem.splitScalar(u8, path, std.fs.path.delimiter);
     while (parts.next()) |part| {
+        const is_from_relative_entry = !paths.isAbsolute(part);
         const directory = try paths.resolve(allocator, cwd, part);
         const candidate = try std.fs.path.join(allocator, &.{ directory, program });
         for (suffixes) |suffix| {
-            try candidates.append(allocator, try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{ candidate, suffix }, 0));
+            const candidate_path = try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{ candidate, suffix }, 0);
+            try candidates.append(allocator, .{ .path = candidate_path, .is_from_relative_entry = is_from_relative_entry });
         }
     }
     return candidates.items;

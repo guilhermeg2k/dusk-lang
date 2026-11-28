@@ -322,7 +322,7 @@ Functions that can fail return an error union with the module's error set `Proce
 | `InvalidArgument` | An empty argument list or program name, a zero byte in an argument, path or variable, a bad variable name, or a negative `timeout_ms` (other than `-1`) or `max_output` |
 | `NotFound` | The program isn't on `PATH`, the path doesn't exist, or `cwd` doesn't exist |
 | `PermissionDenied` | The program exists but can't be run |
-| `InvalidExecutable` | The file can't be run as a program (on Windows, a `.bat` or `.cmd` file: run it through its interpreter) |
+| `InvalidExecutable` | The file can't be run as a program (on Windows, a `.bat` or `.cmd` file, also when its name ends in dots or spaces: run it through its interpreter) |
 | `ResourceLimit` | The system won't start another process |
 | `TimedOut` | `timeout_ms` ran out |
 | `OutputTooLarge` | `run` received more than `max_output` bytes |
@@ -331,6 +331,7 @@ Functions that can fail return an error union with the module's error set `Proce
 | `Busy` | Another task is already waiting for the child, or `close` while it's still running |
 | `Closed` | The child was closed |
 | `NotPiped` | `stdin()`, `stdout()` or `stderr()` on a stream that wasn't set to `Stdio.Pipe` |
+| `RelativePath` | A bare program name was found through an empty or relative `PATH` entry (such as `.`) |
 | `Other` | Any other failure |
 
 | Function | Returns | Description |
@@ -338,7 +339,7 @@ Functions that can fail return an error union with the module's error set `Proce
 | `run(args, cwd = null, env = null, timeout_ms = -1, max_output = 16777216)` | `ProcessError!Result` | Runs a program and waits for it, collecting its stdout and stderr. |
 | `start(args, cwd = null, env = null, stdin_mode = Stdio.Ignore, stdout_mode = Stdio.Inherit, stderr_mode = Stdio.Inherit)` | `ProcessError!Child` | Starts a program and returns right away. |
 
-**Arguments.** `args[0]` is the program and the rest are passed exactly as written: spaces, quotes and empty strings stay as they are. Nothing goes through a shell, so `*`, `>` and `|` are plain characters. A program name with a `/` (or on Windows a `\` or `:`) is a path, relative to the child's folder; a bare name is looked up in the folders of `PATH`, from the program's own environment even when `env` gives the child a different one. Empty or relative `PATH` entries are relative to the child's folder. On Windows the lookup also tries the `.exe` and `.com` endings.
+**Arguments.** `args[0]` is the program and the rest are passed exactly as written: spaces, quotes and empty strings stay as they are. Nothing goes through a shell, so `*`, `>` and `|` are plain characters. A program name with a `/` (or on Windows a `\` or `:`) is a path, relative to the child's folder; a bare name is looked up in the folders of `PATH`, from the program's own environment even when `env` gives the child a different one. Empty or relative `PATH` entries (such as `.`) would point into the child's folder, so a name found through one fails with `RelativePath` instead of running: a file placed in that folder can't take the place of a system program. The search still goes on past such entries when they don't hold the name, and a path such as `./tool` runs a program from the child's folder on purpose. On Windows the lookup also tries the `.exe` and `.com` endings.
 
 **Folder and environment.** `cwd` is the child's folder; a relative one is relative to the program's current folder. `env = null` gives the child the program's environment (the same one `os::env` reads); a map replaces it entirely (on Windows the system may add a few variables it needs). Names can't be empty or contain `=`. The child's stdin is empty: it reads the end of input right away.
 

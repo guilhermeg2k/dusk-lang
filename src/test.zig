@@ -240,6 +240,11 @@ test "process: dropped children and signal streams are released after collection
     try runProcessCase("process-gc-resources.dsk");
 }
 
+test "process: bare names found through relative PATH entries are refused" {
+    const separator = [_]u8{std.fs.path.delimiter};
+    try runProcessCaseWithPathPrefix("process-relative-path.dsk", "missing-relative-entry" ++ separator ++ separator);
+}
+
 test "process: private construction and native access" {
     try runCaseError("sema/process-child-private.dsk", error.CantBuildOutsideModule);
     try runCaseError("sema/process-native-private.dsk", error.NotVisible);
@@ -269,6 +274,10 @@ test "process: failed launches release native records before returning" {
 }
 
 fn runProcessCase(name: []const u8) !void {
+    try runProcessCaseWithPathPrefix(name, "");
+}
+
+fn runProcessCaseWithPathPrefix(name: []const u8, path_prefix: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var environment = std.process.Environ.Map.init(arena.allocator());
@@ -276,7 +285,7 @@ fn runProcessCase(name: []const u8) !void {
     const parent = try std.process.currentPathAlloc(testing.io, arena.allocator());
     const helper = try std.fs.path.resolve(arena.allocator(), &.{ parent, @import("test_paths").process_fixture });
     const directory = std.fs.path.dirname(helper).?;
-    try environment.put("PATH", directory);
+    try environment.put("PATH", try std.mem.concat(arena.allocator(), u8, &.{ path_prefix, directory }));
     try environment.put("DUSK_PROCESS_PARENT", "parent");
     const filename = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{name});
     const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, filename, arena.allocator(), .unlimited);

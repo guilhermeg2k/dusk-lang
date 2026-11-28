@@ -1,0 +1,22 @@
+import "std/process"
+import "std/os"
+
+func main() -> !void
+    let args = try os::args()
+    let name = args[1]
+    let directory = args[2]
+    let mut refused = false
+    process::run([name, "exit", "0"], cwd = directory) catch e then
+        assert(e == process::ProcessError.RelativePath)
+        refused = true
+    end
+    assert(refused)
+    let mut start_refused = false
+    process::start([name, "exit", "0"], cwd = directory) catch e then
+        assert(e == process::ProcessError.RelativePath)
+        start_refused = true
+    end
+    assert(start_refused)
+    let result = try process::run([name, "exit", "0"], cwd = "/")
+    assert(result.is_success())
+end
