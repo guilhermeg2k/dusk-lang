@@ -71,7 +71,8 @@ pub fn write(stream: *Stream, task: *TaskState, data: []const u8) !WriteOutcome 
         return .{ .failure = failure };
     }
     if (!stream.is_append) {
-        const total_pending = std.math.add(usize, stream.pending_output.items.len, data.len) catch return .{ .failure = .Other };
+        const queued = std.math.add(usize, stream.output_in_flight_bytes, stream.pending_output.items.len) catch return .{ .failure = .Other };
+        const total_pending = std.math.add(usize, queued, data.len) catch return .{ .failure = .Other };
         if (total_pending > std.math.maxInt(i64)) {
             return .{ .failure = .Other };
         }
@@ -109,7 +110,8 @@ pub fn flush(stream: *Stream, task: *TaskState) !WriteOutcome {
 
 pub fn filePosition(stream: *const Stream) i64 {
     if (stream.can_write_file) {
-        const pending: i64 = @intCast(@min(stream.pending_output.items.len, @as(usize, std.math.maxInt(i64))));
+        const queued = stream.output_in_flight_bytes +| stream.pending_output.items.len;
+        const pending: i64 = @intCast(@min(queued, @as(usize, std.math.maxInt(i64))));
         return stream.file_offset +| pending;
     }
     const unread: i64 = @intCast(@min(stream.buffered.items.len - stream.read_offset, @as(usize, std.math.maxInt(i64))));
@@ -141,6 +143,7 @@ pub fn flushOutputBeforeClose(stream: *Stream) void {
 
 pub fn finishOutput(stream: *Stream, written_bytes: usize, has_failed: bool) void {
     stream.has_output_in_flight = false;
+    stream.output_in_flight_bytes = 0;
     const written: i64 = @intCast(@min(written_bytes, @as(usize, std.math.maxInt(i64))));
     stream.file_offset = stream.file_offset +| written;
     if (has_failed) {
@@ -230,6 +233,7 @@ fn startOutputJob(stream: *Stream) !void {
         return failure;
     };
     stream.has_output_in_flight = true;
+    stream.output_in_flight_bytes = owned_output.len;
 }
 
 fn wakeOutputWaiters(stream: *Stream) void {

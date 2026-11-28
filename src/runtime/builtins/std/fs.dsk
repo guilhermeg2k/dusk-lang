@@ -115,12 +115,12 @@ struct File
     end
 
     func seek(self: @, offset: int, from: SeekFrom = SeekFrom.Start) -> io::IoError!int
+        try stream_flush(self.stream_id)
         let base = when from
             SeekFrom.Start then 0 end
             SeekFrom.Current then self.position() end
             SeekFrom.End then try self.size() end
         end
-        try stream_flush(self.stream_id)
         if offset > 0 and base > 9223372036854775807 - offset then
             return io::IoError.Other
         end

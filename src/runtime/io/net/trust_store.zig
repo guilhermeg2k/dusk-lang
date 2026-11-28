@@ -129,12 +129,14 @@ const LoadJob = struct {
         const allocator = event_loop.allocator;
         const loop = try event_loop.ensureLoopStarted();
         const job = try allocator.create(LoadJob);
-        errdefer allocator.destroy(job);
-        const memory = try allocator.alignedAlloc(u8, handle_alignment, uv.uv_req_size(.work));
+        const memory = allocator.alignedAlloc(u8, handle_alignment, uv.uv_req_size(.work)) catch |err| {
+            allocator.destroy(job);
+            return err;
+        };
         job.* = .{ .event_loop = event_loop, .work_memory = memory, .cert_file = copyEnv(allocator, "SSL_CERT_FILE"), .cert_dirs = copyEnv(allocator, "SSL_CERT_DIR") };
+        errdefer job.destroy();
         uv.uv_req_set_data(job.workRequest(), job);
         if (uv.uv_queue_work(loop, job.workRequest(), onLoadWork, onLoadDone) != 0) {
-            job.destroy();
             return error.PoolJobFailed;
         }
         event_loop.pending_operations += 1;

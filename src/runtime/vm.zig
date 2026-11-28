@@ -789,7 +789,7 @@ pub const VM = struct {
     }
 
     pub fn allocString(self: *Self, len: usize) !*v.Bytes {
-        const size = v.Bytes.calc_size(len);
+        const size = try v.Bytes.calcSizeChecked(len);
         try self.maybeCollectGarbage(size);
         const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), len, .string);
         self.increaseHeapAllocationCount(size);
@@ -921,9 +921,10 @@ pub const VM = struct {
         if (len < 0) {
             return RuntimeErrorReporter.negativeBufferSize(len);
         }
-        const size = v.Bytes.calc_size(@intCast(len));
+        const byte_len: usize = @intCast(len);
+        const size = try v.Bytes.calcSizeChecked(byte_len);
         try self.maybeCollectGarbage(size);
-        const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), @intCast(len), .buffer);
+        const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), byte_len, .buffer);
         self.increaseHeapAllocationCount(size);
         return .{ .heap_obj = &bytes.obj };
     }

@@ -7,4 +7,10 @@ func main() -> void
     assert(-7 // 2 == -3)
     assert(7 // -2 == -3)
     assert(7.0 / 2.0 == 3.5)
+    let fa = 7.0
+    let fb = -2.0
+    assert(fa % fb == -1.0)
+    let fc = 0.0
+    let nan_mod = fa % fc
+    assert(nan_mod != nan_mod)
 end

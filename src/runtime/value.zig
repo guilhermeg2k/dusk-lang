@@ -566,6 +566,10 @@ pub const Bytes = extern struct {
         return @sizeOf(Self) + len;
     }
 
+    pub fn calcSizeChecked(len: usize) error{OutOfMemory}!usize {
+        return std.math.add(usize, @sizeOf(Self), len) catch return error.OutOfMemory;
+    }
+
     pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
         const size = Self.calc_size(self.len);
         const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];

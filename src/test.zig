@@ -536,6 +536,16 @@ test "http server: server table reuses slots, rejects stale ids and closes on re
     try testing.expect(event_loop.httpServerAt(third) == null);
 }
 
+test "bytes and heap: calcSizeChecked and needsCollection do not overflow usize" {
+    const v = @import("runtime/value.zig");
+    const Heap = @import("runtime/gc.zig").Heap;
+    try testing.expectError(error.OutOfMemory, v.Bytes.calcSizeChecked(std.math.maxInt(usize) - 1));
+    var heap = Heap.init(testing.allocator);
+    defer heap.deinit();
+    heap.countAllocation(64);
+    try testing.expect(heap.needsCollection(std.math.maxInt(usize)));
+}
+
 test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_query" {
     try runCase("url.dsk");
 }

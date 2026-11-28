@@ -148,6 +148,7 @@ pub const HttpReader = struct {
                 .ok => {
                     self.has_pending_decoder_output = produced == room.len;
                     if (consumed == 0 and produced == 0) {
+                        if (raw.len == 0) break;
                         return error.InvalidBody;
                     }
                 },

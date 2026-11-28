@@ -270,7 +270,8 @@ fn strReplace(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const old = bytesArg(args, 1);
     if (old.len == 0) return ok(args[0]);
     const matches = std.mem.count(u8, text, old);
-    const total = text.len - matches * old.len + matches * bytesArg(args, 2).len;
+    const added = std.math.mul(usize, matches, bytesArg(args, 2).len) catch return error.OutOfMemory;
+    const total = std.math.add(usize, text.len - matches * old.len, added) catch return error.OutOfMemory;
     const result = try vm.allocString(total);
     _ = std.mem.replace(u8, bytesArg(args, 0), bytesArg(args, 1), bytesArg(args, 2), result.mutableSlice());
     return stringResult(result);

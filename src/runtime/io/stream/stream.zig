@@ -85,6 +85,7 @@ pub const Stream = struct {
     file_offset: i64 = 0,
     pending_output: std.ArrayList(u8) = .empty,
     has_output_in_flight: bool = false,
+    output_in_flight_bytes: usize = 0,
     output_waiters: std.ArrayList(OutputWaiter) = .empty,
     output_failure: ?IoError = null,
     pool_key: ?[]u8 = null,
