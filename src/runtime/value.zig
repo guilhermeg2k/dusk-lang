@@ -1,4 +1,5 @@
 const std = @import("std");
+const hash_seed = @import("hash_seed.zig");
 const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
 const bc = @import("bytecode.zig");
 const TaskState = @import("tasks/scheduler.zig").TaskState;
@@ -295,8 +296,6 @@ pub const Array = extern struct {
 pub const Map = extern struct {
     const Self = @This();
 
-    var seed_generator = std.Random.SplitMix64.init(0);
-
     obj: HeapValue,
     key_type: ValueType,
     value_type: ValueType,
@@ -306,14 +305,8 @@ pub const Map = extern struct {
 
     pub fn init(allocator: std.mem.Allocator, key_type: ValueType, value_type: ValueType) !*Self {
         const ptr = try allocator.create(Self);
-        ptr.* = .{ .obj = .{ .kind = .map }, .key_type = key_type, .value_type = value_type, .next_seq = 1, .seed = seed_generator.next(), .storage = NULL_VALUE };
+        ptr.* = .{ .obj = .{ .kind = .map }, .key_type = key_type, .value_type = value_type, .next_seq = 1, .seed = hash_seed.next(), .storage = NULL_VALUE };
         return ptr;
-    }
-
-    pub fn randomizeSeeds(io: std.Io) void {
-        var random_start: u64 = undefined;
-        io.random(std.mem.asBytes(&random_start));
-        seed_generator = .init(random_start);
     }
 
     pub fn getStorage(self: *const Self) ?*MapStorage {
@@ -363,13 +356,13 @@ pub const Map = extern struct {
         entry.value = NULL_VALUE;
         storage.count -= 1;
         if (storage.count == 0) {
-            self.seed = seed_generator.next();
+            self.seed = hash_seed.next();
         }
         return true;
     }
 
     pub fn clear(self: *Self) void {
-        self.seed = seed_generator.next();
+        self.seed = hash_seed.next();
         const storage = self.getStorage() orelse return;
         storage.len = 0;
         storage.count = 0;

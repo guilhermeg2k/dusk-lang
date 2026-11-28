@@ -1,6 +1,7 @@
 const std = @import("std");
 const v = @import("value.zig");
 const VM = @import("vm.zig").VM;
+const hash_seed = @import("hash_seed.zig");
 const serialization_plan = @import("serialization_plan.zig");
 const native = @import("builtins/native.zig");
 
@@ -654,6 +655,20 @@ const SiteValue = struct {
     offset: usize,
 };
 
+const SeededKeyContext = struct {
+    seed: u64,
+
+    pub fn hash(self: @This(), key: []const u8) u64 {
+        return std.hash.Wyhash.hash(self.seed, key);
+    }
+
+    pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+        return std.mem.eql(u8, a, b);
+    }
+};
+
+const SeededKeySet = std.HashMapUnmanaged([]const u8, void, SeededKeyContext, 80);
+
 const Decoder = struct {
     vm: *VM,
     allocator: std.mem.Allocator,
@@ -664,6 +679,7 @@ const Decoder = struct {
     should_reject_unknown_fields: bool,
     path: std.ArrayList(u8) = .empty,
     steps: usize,
+    key_seed: ?u64 = null,
 
     fn decodeRoot(self: *Decoder, plan_index: u32, holder: ?usize) !v.Value {
         if (self.max_depth == 0) {
@@ -827,7 +843,7 @@ const Decoder = struct {
         try self.enterContainer(.object, depth);
         const object = try self.allocRootedStruct(shape.descriptor);
         var seen_fields = try SeenFields.init(self.allocator, shape.fields.len);
-        var unknown_keys: ?std.StringHashMap(void) = null;
+        var unknown_keys: SeededKeySet = .empty;
         var guess: usize = 0;
         var is_first = true;
         while (try self.lexer.nextKey(&is_first)) |key| {
@@ -852,10 +868,7 @@ const Decoder = struct {
                 if (self.should_reject_unknown_fields) {
                     return error.UnknownField;
                 }
-                if (unknown_keys == null) {
-                    unknown_keys = std.StringHashMap(void).init(self.allocator);
-                }
-                const entry = try unknown_keys.?.getOrPut(key);
+                const entry = try unknown_keys.getOrPutContext(self.allocator, key, self.keySeedContext());
                 if (entry.found_existing) {
                     return error.DuplicateKey;
                 }
@@ -1004,10 +1017,10 @@ const Decoder = struct {
         switch (kind) {
             .object => {
                 try self.enterContainer(.object, depth);
-                var keys = std.StringHashMap(void).init(self.allocator);
+                var keys: SeededKeySet = .empty;
                 var is_first = true;
                 while (try self.lexer.nextKey(&is_first)) |key_text| {
-                    const entry = try keys.getOrPut(key_text);
+                    const entry = try keys.getOrPutContext(self.allocator, key_text, self.keySeedContext());
                     if (entry.found_existing) {
                         try self.appendFieldPath(key_text, true);
                         return error.DuplicateKey;
@@ -1045,6 +1058,13 @@ const Decoder = struct {
 
     fn hasDiagnostic(self: *Decoder) bool {
         return @as(u64, @bitCast(self.vm.heap.protectedValue(self.diagnostic))) != 0;
+    }
+
+    fn keySeedContext(self: *Decoder) SeededKeyContext {
+        if (self.key_seed == null) {
+            self.key_seed = hash_seed.next();
+        }
+        return .{ .seed = self.key_seed.? };
     }
 
     fn appendFieldPath(self: *Decoder, name: []const u8, is_map_key: bool) !void {
